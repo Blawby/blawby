@@ -201,7 +201,7 @@ const isHandoff = (value: unknown): value is Handoff => isRecord(value) && value
 const isReview = (value: unknown): value is Review => isRecord(value) && typeof value.payment_method_id === 'string' && [value.subtotal, value.tax, value.tax_included, value.surcharge].every(Number.isSafeInteger) && value.total === (value.subtotal as number) + (value.tax as number) + (value.surcharge as number) && isRecord(value.method)
 const isConfirmation = (value: unknown): value is Confirmation => isRecord(value) && typeof value.status === 'string' && typeof value.requires_action === 'boolean' && typeof value.taken === 'boolean'
 const isReturn = (value: unknown): value is PaymentReturn => isRecord(value) && (value.state === 'processing' || value.state === 'taken' || value.state === 'expired' || (value.state === 'paid' && (
-  (value.kind === 'stay' && typeof value.activity_id === 'string' && typeof value.receipt_token === 'string')
+  ((value.kind === 'stay' || value.kind === 'order') && typeof value.activity_id === 'string' && typeof value.receipt_token === 'string')
   || (value.kind === 'booking' && typeof value.conversation_id === 'string' && typeof value.cancellation_token === 'string'))))
 
 const { data: handoff, status, error, execute: loadHandoff } = await useAsyncData(`payment-handoff:${paymentId}`, () => publicApiRequest<Handoff>(`/api/public/payments/${encodeURIComponent(paymentId)}`, { query: { claim: claim.value }, validate: isHandoff }), { server: false, immediate: Boolean(claim.value) && !returned })
@@ -282,6 +282,11 @@ const priceLines = computed(() => {
   const value = handoff.value
   if (!value) return []
   if (value.stay) return stayNightlyGroups(value.stay.nightly).map(({ price, nights }) => ({ label: t('stay.nightly_line', { price: money(price), nights: nightsLabel(nights) }), amount: money(price * nights) }))
+  // An order lists what it buys and its shipping, as the cart did.
+  if (value.order) return [
+    ...value.order.lines.map(line => ({ label: `${line.title}${line.variant_title ? ` · ${line.variant_title}` : ''} × ${line.quantity}`, amount: money(line.amount) })),
+    ...(value.order.shipping ? [{ label: `${t('shop.shipping')} · ${value.order.shipping.name}`, amount: money(value.order.shipping.amount) }] : []),
+  ]
   if (value.quantity === 1) return [{ label: value.title, amount: money(value.subtotal) }]
   return [{ label: t('payment.unit_line', { price: money(value.unit_amount), count: guests.value || value.quantity }), amount: money(value.subtotal) }]
 })

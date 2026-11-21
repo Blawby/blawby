@@ -118,8 +118,8 @@ MCP_DIAGNOSTICS_ENABLED = "true"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "blawby-production-v29"
-database_id = "ba04f645-2820-4813-83fa-4567850be3e1"
+database_name = "blawby-production-v30"
+database_id = "3d6cd489-972b-4ec8-9838-903adc178168"
 migrations_dir = "migrations"
 remote = false
 
@@ -227,8 +227,8 @@ WHATSAPP_DELIVERY_MODE = "provider"
 
 [[env.dev.d1_databases]]
 binding = "DB"
-database_name = "blawby-production-v29"
-database_id = "ba04f645-2820-4813-83fa-4567850be3e1"
+database_name = "blawby-production-v30"
+database_id = "3d6cd489-972b-4ec8-9838-903adc178168"
 migrations_dir = "migrations"
 remote = false
 
@@ -322,8 +322,8 @@ E2E_ALLOW_DEV_ROUTES = "true"
 
 [[env.staging.d1_databases]]
 binding = "DB"
-database_name = "blawby-staging-v29"
-database_id = "7d177cb1-aae2-4e99-b495-b0505f68802c"
+database_name = "blawby-staging-v30"
+database_id = "1fd06f33-e4bb-4a21-a18b-fe1004ab8a60"
 migrations_dir = "migrations"
 remote = false
 
@@ -428,8 +428,8 @@ WHATSAPP_DELIVERY_MODE = "log_only"
 
 [[env.e2e.d1_databases]]
 binding = "DB"
-database_name = "blawby-production-v29"
-database_id = "ba04f645-2820-4813-83fa-4567850be3e1"
+database_name = "blawby-production-v30"
+database_id = "3d6cd489-972b-4ec8-9838-903adc178168"
 migrations_dir = "migrations"
 remote = false
 

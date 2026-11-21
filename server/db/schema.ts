@@ -3,7 +3,6 @@ import type { OrganizationSettings } from '../../shared/organization-settings'
 import { INTEGRATION_PROVIDERS, NONPROFIT_STATUS_CANONICAL } from '../../shared/organization-settings'
 import type { MediaCategory } from '~/shared/media-placement-contract'
 import { relations, sql } from "drizzle-orm"
-import { PRODUCT_KINDS } from "../../shared/product-details"
 import { REVIEW_CATEGORY_KEYS, type ReviewCategory } from "../../shared/review-questions"
 import { sqliteTable, sqliteView, integer, text, real, unique, uniqueIndex, index, check, foreignKey, primaryKey } from "drizzle-orm/sqlite-core"
 import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core"

@@ -788,5 +788,6 @@
   "shop.your_details": "您的信息",
   "shop.note": "给卖家的留言",
   "shop.order_confirmed": "感谢您，订单 #{number} 已确认",
-  "shop.order_shipped": "已发货"
+  "shop.order_shipped": "已发货",
+  "shop.receipt": "收据"
 }

@@ -301,6 +301,10 @@ function productHydrationQueries(organizationId: string | { sql: string }, selec
       FROM product_stay_configs c JOIN products p ON p.organization_id = c.organization_id AND p.id = c.product_id
       JOIN product_booking_configs b ON b.organization_id = c.organization_id AND b.product_id = c.product_id AND b.unit = 'nights'
       WHERE c.organization_id = ${org} AND c.product_id IN (${selection.query})`, params },
+    // A tracked variant's stock at each location (Shopify's inventory levels).
+    { query: `SELECT l.product_variant_id, l.location_id, l.available FROM inventory_levels l
+      JOIN product_variants v ON v.organization_id = l.organization_id AND v.id = l.product_variant_id
+      WHERE l.organization_id = ${org} AND v.inventory_tracked = 1 AND v.product_id IN (${selection.query}) ORDER BY l.product_variant_id, l.location_id`, params },
   ]
 }
 
@@ -343,6 +347,7 @@ function hydrateProductRows(
   const collectionRows = rowsAt(4)
   const bookingRows = rowsAt(5)
   const pageRows = rowsAt(6)
+  const stockRows = rowsAt(8)
   for (const row of rowsAt(7)) {
     const product = byId.get(String(row.product_id))
     if (product) product.stay = {
@@ -399,6 +404,7 @@ function hydrateProductRows(
       sku: row.sku === null ? null : String(row.sku), active: Number(row.active) === 1,
       sort_order: Number(row.sort_order),
       ...mapVariantGoods(row),
+      inventory_levels: stockRows.filter(level => level.product_variant_id === row.id).map(level => ({ location_id: String(level.location_id), available: Number(level.available) })),
       prices: pricesByVariant.get(String(row.id)) ?? [],
     }
     byId.get(String(row.product_id))?.variants.push(variant)

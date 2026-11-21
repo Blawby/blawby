@@ -225,7 +225,7 @@ import { formatTime, MINUTE_TIME_PATTERN } from '~/utils/timezone'
 
 export const SECTION_KEYS = [
   'photo', 'kind', 'name', 'internal-name', 'price', 'description', 'page', 'order-url', 'attributes', 'publication', 'booking', 'locations', 'collections',
-  'guests', 'availability', 'arrival-time', 'directions', 'check-in-method', 'wifi', 'house-manual', 'house-rules', 'checkout-instructions', 'property-type', 'rooms', 'amenities', 'accessibility', 'cancellation', 'team', 'guest-safety', 'location', 'questions',
+  'options', 'shipping', 'guests', 'availability', 'arrival-time', 'directions', 'check-in-method', 'wifi', 'house-manual', 'house-rules', 'checkout-instructions', 'property-type', 'rooms', 'amenities', 'accessibility', 'cancellation', 'team', 'guest-safety', 'location', 'questions',
 ] as const
 export type SectionKey = typeof SECTION_KEYS[number]
 export type BookingConcern = 'enabled' | 'duration' | 'seatings' | 'capacity' | 'party' | 'guest-terms' | 'confirmation' | 'notice' | 'payment' | 'location' | 'assignment' | number
@@ -564,6 +564,8 @@ const sectionLabels: Record<SectionKey, string> = {
   'accessibility': 'Accessibility features',
   'cancellation': 'Cancellation policy',
   'team': 'Looked after by',
+  'options': 'Options and stock',
+  'shipping': 'Shipping',
   // Only a product with a kind has collections to choose.
   get collections() {
     if (!presentation.value) throw new Error('A product has no collections before its kind is chosen')
@@ -1349,7 +1351,7 @@ const activeNavigationItem = computed(() => {
  * beside this index. A row that leads into a level of its own — Bookings,
  * Pricing — would open that level too and push this index off the screen.
  */
-const LEAF_SECTIONS: readonly string[] = ['photo', 'internal-name', 'name', 'description', 'price', 'kind', 'order-url', 'property-type', 'rooms', 'guests', 'availability', 'arrival-time', 'directions', 'wifi', 'house-manual', 'house-rules', 'team']
+const LEAF_SECTIONS: readonly string[] = ['photo', 'internal-name', 'name', 'description', 'price', 'kind', 'order-url', 'options', 'shipping', 'property-type', 'rooms', 'guests', 'availability', 'arrival-time', 'directions', 'wifi', 'house-manual', 'house-rules', 'team']
 const autoOpenTarget = computed(() => draftStay.value && !arrivalTab.value ? null : navigationGroups.value[0]?.items.find(item => LEAF_SECTIONS.includes(item.id) && !(stayEditor.value && item.id === 'description') && item.to === sectionPath(item.id))?.to ?? null)
 
 const STAY_ROW_ORDER = ['publication', 'photo', 'internal-name', 'name', 'property-type', 'rooms', 'price', 'availability', 'guests', 'description', 'amenities', 'accessibility', 'location', 'house-rules', 'guest-safety', 'cancellation', 'agreement', 'team', 'questions', 'featured', 'collections']

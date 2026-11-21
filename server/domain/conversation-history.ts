@@ -206,6 +206,8 @@ export async function loadConversationPage(
     query: `WITH authorized AS MATERIALIZED (${access.query})
       SELECT c.*, o.name AS organization_name, COALESCE(l.timezone, o.timezone) AS timezone,
         CASE WHEN c.viewer_role = 'member' THEN ${SUPPORT_CONVERSATION_SQL('c')} ELSE 0 END AS support,
+        -- The order a buyer's conversation is about, for the people who send it.
+        ${head ? `CASE WHEN c.viewer_role = 'member' AND c.kind = 'contact' THEN (SELECT ord.id FROM orders ord WHERE ord.organization_id = c.organization_id AND ord.conversation_id = c.id) END` : 'NULL'} AS order_id,
         CASE WHEN c.viewer_role = 'member' AND c.kind = 'booking'
           THEN EXISTS (SELECT 1 FROM channel_threads t WHERE t.conversation_id = c.id) OR COALESCE(b.owner = 'channel', 0)
           ELSE 0 END AS airbnb,
@@ -303,6 +305,7 @@ export async function loadConversationPage(
       name: conversation.name, is_group: conversation.is_group === 1,
       created_by_user_id: role === 'member' ? conversation.created_by_user_id : null,
       booking_id: canReadBooking ? conversation.booking_id : null,
+      order_id: (context as { order_id?: string | null }).order_id ?? null,
       activity_path: activityPath,
       reservation: canReadBooking ? reservationInThread(context, { conversation, role }, now) : undefined,
       participants: roster.map(({ invitation_id, ...person }) => {

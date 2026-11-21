@@ -53,7 +53,7 @@ export const GOODS_TOOLS: McpToolDefinition[] = [
     inputSchema: { open: { type: 'boolean' }, conversation_id: { ...text, minLength: 1, description: 'Read the one order a conversation is about.' } },
     outputSchema: { type: 'object', properties: { orders: { type: 'array', items: order } }, required: ['orders'] } }),
   organizationTool({ name: 'fulfill_order', domain: 'goods', minimumRole: 'admin', description: 'Mark a paid order shipped, with its carrier and tracking, or collected (pickup, no tracking). Closes its fulfilment task, posts it in the order’s conversation and emails the buyer.',
-    inputSchema: { order_id: { ...text, minLength: 1 }, carrier: { ...text, maxLength: 100 }, tracking_number: { ...text, maxLength: 100 }, tracking_url: { ...text, maxLength: 500, pattern: '^https://' } }, required: ['order_id'],
+    inputSchema: { order_id: { ...text, minLength: 1 }, carrier: { ...text, maxLength: 100 }, tracking_number: { ...text, maxLength: 100 }, tracking_url: { ...text, maxLength: 500, pattern: '^https://\\S+$' } }, required: ['order_id'],
     outputSchema: { type: 'object', properties: { order }, required: ['order'] } }),
 ]
 

@@ -788,5 +788,6 @@
   "shop.your_details": "Vos coordonnées",
   "shop.note": "Message pour le vendeur",
   "shop.order_confirmed": "Merci, votre commande n° {number} est confirmée",
-  "shop.order_shipped": "Expédiée"
+  "shop.order_shipped": "Expédiée",
+  "shop.receipt": "Reçu"
 }

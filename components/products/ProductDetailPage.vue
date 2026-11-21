@@ -384,10 +384,10 @@
 
       <div v-else class="rounded-2xl bg-elevated p-6 sm:p-10 lg:p-12">
         <div :class="product.image?.public_url ? 'grid gap-10 lg:grid-cols-2 items-start' : 'max-w-3xl'">
-          <div v-if="product.image?.public_url">
+          <div v-if="shownImage?.public_url">
             <img
-              :src="product.image.public_url"
-              :alt="product.image.alt_text || product.name"
+              :src="shownImage.public_url"
+              :alt="shownImage.alt_text || product.name"
               class="aspect-square w-full rounded-2xl object-cover"
             >
           </div>
@@ -402,7 +402,8 @@
             </div>
             <p v-if="product.description" class="mt-6 text-base sm:text-lg leading-relaxed text-muted">{{ product.description }}</p>
             <p v-if="!isAvailable" class="mt-6 font-semibold text-muted">{{ t('site.common.temporarily_unavailable') }}</p>
-            <div class="mt-8 flex flex-wrap items-center gap-5">
+            <ProductBuyPanel v-if="product.kind === 'item' && isAvailable && !product.order_url" :product="product" :location-id="location?.id ?? null" class="mt-8" @variant="value => chosenVariantId = value" />
+            <div v-if="product.kind !== 'item' || product.order_url" class="mt-8 flex flex-wrap items-center gap-5">
               <TenantButton v-if="canEnquire" :to="enquiryPath">{{ t('site.experience_detail.enquire') }}</TenantButton>
               <TenantButton
                 v-if="canOrderExternally"
@@ -505,6 +506,7 @@
 </template>
 
 <script setup lang="ts">
+import ProductBuyPanel from '~/components/products/ProductBuyPanel.vue'
 import { useMounted } from '@vueuse/core'
 import { formatPhone } from '~/utils/phone'
 import WhoYouMeet from '~/components/booking/WhoYouMeet.vue'
@@ -711,16 +713,24 @@ const compareAtLabel = computed(() => {
  */
 /** The options a customer can actually choose. A retired variant is not one. */
 const sellableVariants = computed(() => props.product.variants.filter(variant => variant.active !== false))
+/** A physical item shows the chosen variant's own photo, as Shopify's product gallery does. */
+const chosenVariantId = ref<string | null>(null)
+const shownImage = computed(() => {
+  const assetId = props.product.variants.find(variant => variant.id === chosenVariantId.value)?.media_asset_id
+  return (assetId ? [props.product.image, ...props.product.gallery].find(image => image?.asset_id === assetId) : null) ?? props.product.image
+})
 
 const isAvailable = computed(() =>
   props.product.active
-  && (props.location ? props.product.locations.some(entry => entry.location_id === props.location?.id && entry.active) : Boolean(props.product.order_url || props.booking?.held_online))
+  && (props.location ? props.product.locations.some(entry => entry.location_id === props.location?.id && entry.active)
+    // A physical item ships or is collected from whichever location offers it.
+    : props.product.kind === 'item' ? props.product.locations.some(entry => entry.active) : Boolean(props.product.order_url || props.booking?.held_online))
   // Every option retired is the merchant having nothing left to sell here. The
   // booking form otherwise asked for an option it had none to offer.
   && (Boolean(props.product.order_url) || sellableVariants.value.length > 0))
 const canOrderExternally = computed(() => isAvailable.value && Boolean(props.product.order_url))
 const externalActionLabel = computed(() => props.product.kind === 'experience' || props.product.kind === 'service' || props.product.kind === 'stay' ? t('site.experience_detail.book_now') : t('site.cta.order_now'))
-const canEnquire = computed(() => props.product.kind !== 'experience' && isAvailable.value && !props.product.order_url && enquiryOnly.value)
+const canEnquire = computed(() => props.product.kind !== 'experience' && props.product.kind !== 'item' && isAvailable.value && !props.product.order_url && enquiryOnly.value)
 const canBook = computed(() => !privateExperiencePreview.value && (isStay.value
   ? !props.scopeRequired && isAvailable.value && offer.value !== null
   : !props.scopeRequired && Boolean(props.booking) && isAvailable.value && !props.product.order_url && !enquiryOnly.value && (props.vertical !== 'service' || offer.value !== null)))

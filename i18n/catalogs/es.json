@@ -788,5 +788,6 @@
   "shop.your_details": "Tus datos",
   "shop.note": "Nota para el vendedor",
   "shop.order_confirmed": "Gracias, tu pedido n.º {number} está confirmado",
-  "shop.order_shipped": "Enviado"
+  "shop.order_shipped": "Enviado",
+  "shop.receipt": "Recibo"
 }

@@ -788,5 +788,6 @@
   "shop.your_details": "お客様情報",
   "shop.note": "販売者へのメッセージ",
   "shop.order_confirmed": "ご注文 #{number} を承りました。ありがとうございます",
-  "shop.order_shipped": "発送済み"
+  "shop.order_shipped": "発送済み",
+  "shop.receipt": "領収書"
 }

@@ -170,12 +170,19 @@ export type OrderDelivery = { method: 'shipping'; country: string; shipping_rate
 export interface QuotedLine {
   product_id: string; product_variant_id: string; title: string; variant_title: string | null; sku: string | null
   quantity: number; unit_amount: number; amount: number; tax_code: string | null; tax_behavior: Price['tax_behavior']
-  made_to_order_quantity: number; image_asset_id: string | null
+  made_to_order_quantity: number; image_asset_id: string | null; image_url: string | null
+  /** Stock left at the order's location when tracked; null when not counted. */
+  available: number | null
 }
 export interface OrderQuote {
   currency: string; location: { id: string; title: string; timezone: string }
   lines: QuotedLine[]; subtotal: number; weight_grams: number | null
-  delivery_method: DeliveryMethod
+  /** Null while the buyer has not chosen how it reaches them: the cart is priced at the first location offering it. */
+  delivery_method: DeliveryMethod | null
+  /** Where the buyer may collect these items for free. */
+  pickup_locations: Array<{ id: string; title: string }>
+  /** The countries a location offering these items ships to. */
+  ship_to_countries: string[]
   /** The rates the buyer may choose, cheapest first; empty for pickup. */
   shipping_rates: Array<ShippingRate & { applies: true }>
   /** The local date the order should leave by, when the products state their shipping times. */
@@ -185,7 +192,7 @@ export interface OrderQuote {
 interface VariantFacts {
   id: string; product_id: string; name: string; sku: string | null; active: number; option_values: string; media_asset_id: string | null; weight_grams: number | null
   inventory_tracked: number; inventory_policy: InventoryPolicy; kind: string; product_name: string; product_active: number; published: number | null
-  tax_code: string | null; processing_days: number | null; made_to_order_days: number | null; product_options: string
+  tax_code: string | null; processing_days: number | null; made_to_order_days: number | null; product_options: string; image_url: string | null
 }
 
 /**
@@ -200,17 +207,20 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
     return { product_variant_id: line.product_variant_id, quantity: line.quantity as number }
   })
   if (new Set(lines.map(line => line.product_variant_id)).size !== lines.length) fail(400, 'VALIDATION_ERROR', 'Each variant is listed once with its quantity', 'lines')
-  const delivery = input.delivery
-  if (!isRecord(delivery) || (delivery.method !== 'shipping' && delivery.method !== 'pickup')) fail(400, 'VALIDATION_ERROR', 'delivery.method must be shipping or pickup', 'delivery.method')
-  const country = delivery.method === 'shipping' ? countryCodeSchema.safeParse(delivery.country) : null
+  const delivery = input.delivery === undefined || input.delivery === null ? null : input.delivery
+  if (delivery !== null && (!isRecord(delivery) || (delivery.method !== 'shipping' && delivery.method !== 'pickup'))) fail(400, 'VALIDATION_ERROR', 'delivery.method must be shipping or pickup', 'delivery.method')
+  const country = delivery?.method === 'shipping' ? countryCodeSchema.safeParse(delivery.country) : null
   if (country && !country.success) fail(400, 'VALIDATION_ERROR', 'delivery.country must be a two-letter country code', 'delivery.country')
-  if (delivery.method === 'pickup' && typeof delivery.location_id !== 'string') fail(400, 'VALIDATION_ERROR', 'delivery.location_id is required for pickup', 'delivery.location_id')
+  if (delivery?.method === 'pickup' && typeof delivery.location_id !== 'string') fail(400, 'VALIDATION_ERROR', 'delivery.location_id is required for pickup', 'delivery.location_id')
   const ids = d1JsonArray(lines.map(line => line.product_variant_id))
   const [variantRows, priceRows, offerRows, stockRows, locationRows, zoneRows, currencyRows] = await executeBatch(db, [
     { query: `SELECT v.id, v.product_id, v.name, v.sku, v.active, v.option_values, v.media_asset_id, v.weight_grams, v.inventory_tracked, v.inventory_policy,
-        p.kind, p.name AS product_name, p.active AS product_active, pub.published, p.tax_code, p.processing_days, p.made_to_order_days, p.options AS product_options
+        p.kind, p.name AS product_name, p.active AS product_active, pub.published, p.tax_code, p.processing_days, p.made_to_order_days, p.options AS product_options,
+        COALESCE(ma.public_url, (SELECT pa.public_url FROM media_placements mp JOIN media_assets pa ON pa.id = mp.asset_id
+          WHERE mp.organization_id = p.organization_id AND mp.owner_type = 'product' AND mp.owner_id = p.id AND mp.slot = 'image' ORDER BY mp.sort_order LIMIT 1)) AS image_url
       FROM product_variants v JOIN products p ON p.organization_id = v.organization_id AND p.id = v.product_id
       LEFT JOIN product_publications pub ON pub.organization_id = p.organization_id AND pub.product_id = p.id
+      LEFT JOIN media_assets ma ON ma.id = v.media_asset_id AND ma.organization_id = v.organization_id
       WHERE v.organization_id = ? AND v.id IN (SELECT value FROM json_each(?))`, params: [organizationId, ids] },
     { query: `SELECT * FROM prices WHERE organization_id = ? AND product_variant_id IN (SELECT value FROM json_each(?)) AND stay_date IS NULL AND weekend = 0`, params: [organizationId, ids] },
     { query: `SELECT pl.product_id, pl.location_id FROM product_locations pl JOIN product_variants v ON v.organization_id = pl.organization_id AND v.product_id = pl.product_id
@@ -235,10 +245,12 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
   }
   const productIds = [...new Set(variants.map(variant => variant.product_id))]
   const offering = locations.filter(location => productIds.every(productId => offers.some(offer => offer.product_id === productId && offer.location_id === location.id)))
-  const location = delivery.method === 'pickup'
-    ? offering.find(candidate => candidate.id === delivery.location_id && candidate.pickup_enabled === 1)
-    : offering.find(candidate => zoneRates.some(rate => rate.location_id === candidate.id && (JSON.parse(rate.countries) as string[]).includes(country!.data!)))
-  if (!location) fail(409, delivery.method === 'pickup' ? 'PICKUP_UNAVAILABLE' : 'SHIPPING_UNAVAILABLE', delivery.method === 'pickup' ? 'These items cannot be collected there' : 'These items do not ship to that country', 'delivery')
+  const location = delivery === null ? offering[0]
+    : delivery.method === 'pickup'
+      ? offering.find(candidate => candidate.id === delivery.location_id && candidate.pickup_enabled === 1)
+      : offering.find(candidate => zoneRates.some(rate => rate.location_id === candidate.id && (JSON.parse(rate.countries) as string[]).includes(country!.data!)))
+  if (!location) fail(409, delivery === null ? 'ITEM_UNAVAILABLE' : delivery.method === 'pickup' ? 'PICKUP_UNAVAILABLE' : 'SHIPPING_UNAVAILABLE',
+    delivery === null ? 'These items are not offered together at one location' : delivery.method === 'pickup' ? 'These items cannot be collected there' : 'These items do not ship to that country', 'delivery')
   const at_ = at.toISOString()
   const quoted = lines.map(line => {
     const variant = variants.find(row => row.id === line.product_variant_id)!
@@ -255,25 +267,29 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
       product_id: variant.product_id, product_variant_id: variant.id, title: variant.product_name,
       variant_title: optionValues.length ? variantTitle(optionValues) : null, sku: variant.sku,
       quantity: line.quantity, unit_amount: price.unit_amount, amount: price.unit_amount * line.quantity,
-      tax_code: variant.tax_code, tax_behavior: price.tax_behavior, made_to_order_quantity: madeToOrder, image_asset_id: variant.media_asset_id,
+      tax_code: variant.tax_code, tax_behavior: price.tax_behavior, made_to_order_quantity: madeToOrder, image_asset_id: variant.media_asset_id, image_url: variant.image_url,
+      available: variant.inventory_tracked === 1 ? available : null,
     }
   })
   const subtotal = quoted.reduce((sum, line) => sum + line.amount, 0)
   const weights = lines.map(line => variants.find(row => row.id === line.product_variant_id)!.weight_grams)
   const weight = weights.every(value => value !== null) ? lines.reduce((sum, line, index) => sum + (weights[index] as number) * line.quantity, 0) : null
-  const shippingRates = delivery.method === 'pickup' ? [] : zoneRates
+  const shippingRates = delivery?.method !== 'shipping' ? [] : zoneRates
     .filter(rate => rate.location_id === location.id && (JSON.parse(rate.countries) as string[]).includes(country!.data!) && rate.currency === currency)
     .filter(rate => (weight === null ? rate.min_weight_grams === null && rate.max_weight_grams === null : true) && rateApplies(rate, { weight_grams: weight ?? 0, subtotal }))
     .map(({ zone_id: _zone, location_id: _location, countries: _countries, ...rate }) => ({ id: rate.id, name: rate.name, currency: rate.currency, amount: rate.amount, min_weight_grams: rate.min_weight_grams,
       max_weight_grams: rate.max_weight_grams, min_subtotal: rate.min_subtotal, delivery_days_min: rate.delivery_days_min, delivery_days_max: rate.delivery_days_max, applies: true as const }))
-  if (delivery.method === 'shipping' && shippingRates.length === 0) fail(409, 'SHIPPING_UNAVAILABLE', 'No shipping rate covers this order', 'delivery')
+  if (delivery?.method === 'shipping' && shippingRates.length === 0) fail(409, 'SHIPPING_UNAVAILABLE', 'No shipping rate covers this order', 'delivery')
   const productDays = quoted.map(line => {
     const variant = variants.find(row => row.id === line.product_variant_id)!
     return line.made_to_order_quantity > 0 ? variant.made_to_order_days : variant.processing_days
   })
   const shipBy = productDays.every(days => days !== null) ? addBusinessDays(localDateAt(at, location.timezone), Math.max(0, ...(productDays as number[]))) : null
   return { currency, location: { id: location.id, title: location.title, timezone: location.timezone }, lines: quoted, subtotal, weight_grams: weight,
-    delivery_method: delivery.method, shipping_rates: shippingRates, ship_by: shipBy }
+    delivery_method: delivery === null ? null : delivery.method as DeliveryMethod,
+    ship_to_countries: [...new Set(zoneRates.filter(rate => offering.some(candidate => candidate.id === rate.location_id) && rate.currency === currency).flatMap(rate => JSON.parse(rate.countries) as string[]))].sort(),
+    pickup_locations: offering.filter(candidate => candidate.pickup_enabled === 1).map(candidate => ({ id: candidate.id, title: candidate.title })),
+    shipping_rates: shippingRates, ship_by: shipBy }
 }
 
 // ---------------------------------------------------------------------------
@@ -323,7 +339,9 @@ export async function createOrderCheckout(db: DbClient, env: CloudflareEnv, inpu
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(guest.email)) fail(400, 'VALIDATION_ERROR', 'Enter a valid email', 'guest_email')
   const note = trimmedText(input.note, 'note', 2000, false)
+  if (!isRecord(input.delivery)) fail(400, 'VALIDATION_ERROR', 'Choose shipping or pickup', 'delivery')
   const quote = await quoteOrder(db, input.organizationId, { lines: input.lines, delivery: input.delivery })
+  if (quote.delivery_method === null) throw new Error('A checkout quote has no delivery')
   let shippingDetails: ShippingDetails | null = null
   let shipping: OrderSnapshot['shipping'] = null
   if (quote.delivery_method === 'shipping') {

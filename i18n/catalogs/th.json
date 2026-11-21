@@ -788,5 +788,6 @@
   "shop.your_details": "ข้อมูลของคุณ",
   "shop.note": "ข้อความถึงผู้ขาย",
   "shop.order_confirmed": "ขอบคุณ คำสั่งซื้อ #{number} ได้รับการยืนยันแล้ว",
-  "shop.order_shipped": "จัดส่งแล้ว"
+  "shop.order_shipped": "จัดส่งแล้ว",
+  "shop.receipt": "ใบเสร็จ"
 }

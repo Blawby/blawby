@@ -34,6 +34,8 @@ export interface ProductVariant extends ProductVariantGoods {
   sku: string | null
   active: boolean
   sort_order: number
+  /** A tracked variant's stock at each location that counts it; empty when untracked. */
+  inventory_levels: Array<{ location_id: string; available: number }>
   prices: Price[]
 }
 

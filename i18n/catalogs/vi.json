@@ -788,5 +788,6 @@
   "shop.your_details": "Thông tin của bạn",
   "shop.note": "Ghi chú cho người bán",
   "shop.order_confirmed": "Cảm ơn bạn, đơn hàng #{number} đã được xác nhận",
-  "shop.order_shipped": "Đã gửi"
+  "shop.order_shipped": "Đã gửi",
+  "shop.receipt": "Biên lai"
 }

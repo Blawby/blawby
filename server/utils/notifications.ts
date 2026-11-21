@@ -33,13 +33,10 @@ import {
   guestStayConfirmedMessage,
   organizationInviteMessage,
   organizationInvitationAcceptedMessage,
-  reviewRequestMessage,
+  reviewRequestMessage, guestOrderConfirmedMessage, guestOrderShippedMessage 
 } from '~/server/notifications/guest-events'
 import type { BookingChangeAssignment, BookingChangeEventInput, ConversationRecord } from '~/server/notifications/events'
-import { orderPlacedMessage } from '~/server/notifications/events'
-import { guestOrderConfirmedMessage, guestOrderShippedMessage } from '~/server/notifications/guest-events'
-import type { MemberAlertMessage, NotificationMessage } from '~/server/notifications/messages'
-import {
+import { orderPlacedMessage,
   bookingCancelledMessage,
   bookingChangeMessage,
   bookingChangeWithoutMoney,
@@ -54,8 +51,8 @@ import {
   stayCancelledMessage,
   stayTurnoverAlert,
   taskAlertMessage,
-  REPLY_NOTE,
-} from '~/server/notifications/events'
+  REPLY_NOTE } from '~/server/notifications/events'
+import type { MemberAlertMessage, NotificationMessage } from '~/server/notifications/messages'
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { buildOwnerThreadInboxUrl, buildBuyerRequestActivityUrl, dashboardOrigin, destinationUnavailable, getPlatformDomain, platformOrigin, resolveDashboardSlugs } from '~/server/utils/dashboard-notification-links'
 import { insightsPath, reviewEditorPath } from '~/server/utils/dashboard-links'

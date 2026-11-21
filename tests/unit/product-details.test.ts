@@ -7,7 +7,7 @@ test('a product kind closes its descriptive fields and defaults to unfeatured', 
   assert.equal(assertProductKind('dish'), 'dish')
   assert.throws(() => assertProductKind(undefined), ProductDetailError)
   assert.throws(() => assertProductKind('other'), ProductDetailError)
-  assert.throws(() => assertProductKind('item'), ProductDetailError)
+  assert.equal(assertProductKind('item'), 'item')
   assert.deepEqual(validateProductDetails('dish', { allergens: ['Peanuts'], dietary_notes: ['Vegetarian'] }), { featured: false, allergens: ['Peanuts'], dietary_notes: ['Vegetarian'] })
   assert.throws(() => validateProductDetails('dish', { arbitrary: 'value' }), /not a field/)
   assert.throws(() => validateProductDetails('service', { allergens: ['Peanuts'] }), /not a field for service/)

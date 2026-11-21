@@ -788,5 +788,6 @@
   "shop.your_details": "您的資料",
   "shop.note": "給賣家的留言",
   "shop.order_confirmed": "感謝您，訂單 #{number} 已確認",
-  "shop.order_shipped": "已出貨"
+  "shop.order_shipped": "已出貨",
+  "shop.receipt": "收據"
 }

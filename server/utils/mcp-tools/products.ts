@@ -129,9 +129,10 @@ const variantObject = {
     hs_code: { type: ['string', 'null'], description: 'Harmonized System code for customs.' }, country_of_origin: { type: ['string', 'null'], description: 'ISO 3166-1 alpha-2.' },
     inventory_tracked: { type: 'boolean', description: 'Count stock per location (set_inventory).' },
     inventory_policy: { type: 'string', enum: ['deny', 'continue'], description: 'deny stops selling at zero; continue keeps selling and makes it to order.' },
+    inventory_levels: { type: 'array', items: { type: 'object', properties: { location_id: { type: 'string' }, available: { type: 'integer' } }, required: ['location_id', 'available'], additionalProperties: false }, description: 'A tracked variant’s stock at each location; empty when untracked.' },
     prices: { type: 'array', items: priceObject },
   },
-  required: ['id', 'product_id', 'name', 'sku', 'active', 'sort_order', 'prices', 'option_values', 'media_asset_id', 'weight_grams', 'length_mm', 'width_mm', 'height_mm', 'hs_code', 'country_of_origin', 'inventory_tracked', 'inventory_policy'],
+  required: ['id', 'product_id', 'name', 'sku', 'active', 'sort_order', 'prices', 'inventory_levels', 'option_values', 'media_asset_id', 'weight_grams', 'length_mm', 'width_mm', 'height_mm', 'hs_code', 'country_of_origin', 'inventory_tracked', 'inventory_policy'],
   additionalProperties: false,
 } as const
 

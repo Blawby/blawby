@@ -28,6 +28,11 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
       LEFT JOIN member_scheduling ms ON ms.member_id = m.id AND ms.organization_id = m.organizationId
       WHERE m.organizationId = ${organization} AND m.id IN (SELECT assigned_member_id FROM product_booking_configs WHERE organization_id = m.organizationId AND product_id = ?) AND (${readMembers} OR m.userId = ${BATCH_VIEWER.user})`,
     params: [...params, productId],
+  }, {
+    // A physical item's stock across the locations that count it, read with the rest of the editor.
+    query: `SELECT COALESCE(SUM(MAX(l.available, 0)), 0) AS available FROM inventory_levels l JOIN product_variants v ON v.organization_id = l.organization_id AND v.id = l.product_variant_id
+      WHERE l.organization_id = ${organization} AND v.product_id = ? AND v.inventory_tracked = 1`,
+    params: [...params, productId],
   }]
   return { queries, async read(rows: D1Result[], product: Product, locationId: string | null, context: Pick<ProductEditorContext, 'env' | 'organization'>) {
     const { env, organization } = context
@@ -38,21 +43,23 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
     if (!isCurrencyCode(currency)) throw new Error('Unsupported organization currency')
     const missing = (message: string): never => { throw new HTTPError({ statusCode: 404, message }) }
     const { locations } = locationPlan.read(rows.slice(0, locationPlan.queries.length), context.organization.id)
-    const collections = collectionPlan.read(rows.slice(locationPlan.queries.length, -1))
-    const assigned = (rows.at(-1)!.results as { name: string }[])[0]?.name ?? null
+    const collections = collectionPlan.read(rows.slice(locationPlan.queries.length, -2))
+    const assigned = (rows.at(-2)!.results as { name: string }[])[0]?.name ?? null
+    const stocked = Number((rows.at(-1)!.results as { available: number }[])[0]?.available ?? 0)
     if (product.kind === 'stay') return { locations, collections, offering: null, assigned_member_name: assigned }
     const location = locationId ? locations.find(place => place.id === locationId && product.locations.some(binding => binding.location_id === place.id)) ?? missing('Offering not found at this location') : null
     const service = product.kind === 'service'
     const dish = product.kind === 'dish'
     const experience = product.kind === 'experience'
+    const item = product.kind === 'item'
     const booking = product.booking
     const copy = getVerticalCopy(service ? 'service' : experience ? 'experience' : organization.vertical)
     const published = product.publications.some(row => row.organization_id === organization.id && row.published)
-    const description = dish ? 'Description' : service ? 'Short description' : 'What you’ll do'
+    const description = dish || item ? 'Description' : service ? 'Short description' : 'What you’ll do'
     const placeLabel = service ? 'Offices' : experience ? 'Venues' : 'Locations'
     const bookingLabel = service ? 'Consultations' : experience ? 'Bookings' : 'Scheduling'
     const priceLabel = location ? `Price at ${location.title}` : service ? 'Consultation pricing' : 'Price'
-    const title = dish ? 'Dish editor' : service ? 'Legal Services editor' : experience ? 'Experience editor' : 'Table editor'
+    const title = dish ? 'Dish editor' : service ? 'Legal Services editor' : experience ? 'Experience editor' : item ? 'Item editor' : 'Table editor'
     const web = `/dashboard/${encodeURIComponent(organization.slug)}/products/${encodeURIComponent(productId)}`
     const webParams = new URLSearchParams()
     if (locationId) webParams.set('location_id', locationId)
@@ -87,7 +94,13 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
         ...(product.page ? { native: 'page', query: { page_id: product.page.id } } : { native: 'create-page', query: params }),
       } : {}) }] : []),
       { ...leaf('price', priceLabel, prices), optional_detail: service && !booking && prices === 'No price set' },
-      ...(!dish && (!service || booking) ? [
+      ...(item ? [
+        leaf('options', 'Options and stock', [product.options.length ? `${product.options.map(option => option.name).join(', ')} · ${product.variants.length} variants` : null,
+          product.variants.some(variant => variant.inventory_tracked) ? `${stocked} in stock${product.variants.some(variant => variant.inventory_tracked && variant.inventory_policy === 'continue') ? ', then made to order' : ''}` : 'Stock not tracked'].filter(Boolean).join(' · ')),
+        leaf('shipping', 'Shipping', [product.processing_days === null ? null : `Ships in ${product.processing_days} days`, product.made_to_order_days === null ? null : `made to order ${product.made_to_order_days} days`,
+          product.variants[0]?.weight_grams ? `${product.variants[0].weight_grams / 1000} kg` : 'No parcel weight'].filter(Boolean).join(' · ')),
+      ] : []),
+      ...(!dish && !item && (!service || booking) ? [
         ...(booking ? [leaf('assignment', copy.assigneeLabel, assigned ?? 'Unassigned', { web: 'booking/assignment', readonly: !manages })] : []),
         leaf('booking', bookingLabel, booking ? `${booking.duration_minutes} minutes` : 'No booking calendar'),
         ...(booking ? [leaf('agreement', agreementLabel(product.kind), product.agreement_template ? 'Your template' : product.agreement?.file_name ?? 'None')] : []),
@@ -100,7 +113,7 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
         optional_detail: !dish && !product.collections.length }] : []),
       ...(!service || booking || product.locations.length ? [leaf('locations', placeLabel, [...locationsUsed.map(entry => entry.title), ...(booking?.held_online ? ['Online'] : [])].join(', '))] : []),
       { ...leaf('publication', 'Website visibility', published ? 'Published' : 'Hidden'), status: published ? 'success' : 'neutral' },
-      leaf('order-url', dish ? 'Ordering link' : service ? 'External consultation link' : 'External booking link', product.order_url ?? undefined),
+      leaf('order-url', dish ? 'Ordering link' : item ? 'External link' : service ? 'External consultation link' : 'External booking link', product.order_url ?? undefined),
       ...(manages ? [leaf('kind', 'Type', PRODUCT_KIND_LABELS[product.kind])] : []),
     ] }
     return { locations, collections, offering, assigned_member_name: assigned }

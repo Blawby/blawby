@@ -5,11 +5,29 @@ import type { ProductDetails, ProductDetailsPatch, ProductKind } from '~/shared/
 import type { SocialImageSource } from '~/utils/social-metadata'
 import type { StayPhotoRoom } from '~/shared/stay-photos'
 import type { StayHomeAccessibility } from '~/shared/stay-accessibility'
+import type { InventoryPolicy, ProductOption } from '~/shared/goods'
 
 export type ProductSource = 'manual' | 'template' | 'ai' | 'import' | 'copy'
 
+/** A variant's goods facts (Shopify's variant and inventory item): its option values, picture, parcel, customs and stock rule. */
+export interface ProductVariantGoods {
+  /** One value per product option, in the product's option order. */
+  option_values: string[]
+  /** The product photo this variant shows. */
+  media_asset_id: string | null
+  weight_grams: number | null
+  length_mm: number | null
+  width_mm: number | null
+  height_mm: number | null
+  hs_code: string | null
+  /** ISO 3166-1 alpha-2. */
+  country_of_origin: string | null
+  inventory_tracked: boolean
+  inventory_policy: InventoryPolicy
+}
+
 /** One buyable configuration. Every product has at least one. */
-export interface ProductVariant {
+export interface ProductVariant extends ProductVariantGoods {
   id: string
   product_id: string
   name: string
@@ -142,6 +160,11 @@ export interface Product {
   /** Validated string-to-string annotations. No domain behavior reads this. */
   metadata: Record<string, string>
   tax_code: string | null
+  /** Shopify's product options, whose values the variants combine. */
+  options: ProductOption[]
+  /** Business days to ship from stock, and to make to order past it; null is not stated. */
+  processing_days: number | null
+  made_to_order_days: number | null
   variants: ProductVariant[]
   /** Typed descriptive attributes, keyed by '<namespace>.<key>'. */
   details: ProductDetails
@@ -191,7 +214,7 @@ export interface ProductPage {
   title: string
 }
 
-export interface ProductVariantInput {
+export interface ProductVariantInput extends Partial<ProductVariantGoods> {
   id?: string
   name: string
   sku?: string | null
@@ -210,6 +233,9 @@ export interface CreateProductInput {
   marketing_features?: string[]
   metadata?: Record<string, string>
   tax_code?: string | null
+  options?: ProductOption[]
+  processing_days?: number | null
+  made_to_order_days?: number | null
   /** Omitted means one default variant is created. */
   variants?: ProductVariantInput[]
   details?: ProductDetails

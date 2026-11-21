@@ -32,7 +32,7 @@ register('../tests/unit/support/alias-hooks.mjs', import.meta.url)
 const DECLARED_ORGANIZATION_ROLES = new Set(Object.keys(organizationRoles))
 
 const MIGRATIONS_DIRECTORY = 'migrations'
-const PREVIOUS_EPOCH_DIRECTORIES = ['migrations-history/v27', 'migrations-history/v28']
+const PREVIOUS_EPOCH_DIRECTORIES = ['migrations-history/v29']
 const hash = value => createHash('sha256').update(value).digest('hex')
 const qi = value => `"${value.replaceAll('"', '""')}"`
 const assert = (condition, message) => { if (!condition) throw new Error(message) }
@@ -472,11 +472,6 @@ export async function transferDatabaseExport(sourcePath, targetPath, { payloadPa
       assert(digest(rows, tableColumns) === digest(stage.prepare(`SELECT * FROM ${qi(table)}`).all(), tableColumns), `${table}: copy differs`)
     }
     const forward = migrationFiles(sourceChain).slice(ledger.length).map(name => resolve(sourceChain, name))
-    if (sourceChain === PREVIOUS_EPOCH_DIRECTORIES[0]) {
-      // v28 was a new baseline of the end of v27. Its forward migrations apply to those same rows.
-      const nextEpoch = PREVIOUS_EPOCH_DIRECTORIES[1]
-      forward.push(...migrationFiles(nextEpoch).slice(1).map(name => resolve(nextEpoch, name)))
-    }
     for (const migration of forward) stage.exec(readFileSync(migration, 'utf8'))
     const unsupported = stage.prepare('SELECT organization_id, id, kind FROM products ORDER BY organization_id, id').all().filter(row => !PRODUCT_KINDS.includes(row.kind))
     assert(unsupported.length === 0, `Unsupported offerings: ${unsupported.map(row => `${row.organization_id}/${row.id} (${row.kind})`).join(', ')}; no rows were copied`)

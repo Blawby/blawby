@@ -36,6 +36,8 @@ import {
   reviewRequestMessage,
 } from '~/server/notifications/guest-events'
 import type { BookingChangeAssignment, BookingChangeEventInput, ConversationRecord } from '~/server/notifications/events'
+import { orderPlacedMessage } from '~/server/notifications/events'
+import { guestOrderConfirmedMessage, guestOrderShippedMessage } from '~/server/notifications/guest-events'
 import type { MemberAlertMessage, NotificationMessage } from '~/server/notifications/messages'
 import {
   bookingCancelledMessage,
@@ -2178,4 +2180,96 @@ export async function notifyTaskAssigned(env: NotificationEnv, db: DbClient, inp
 /** A job an owner or admin keeps for themselves starts today: the task alert, once per day. The organization's jobs wake sends it. */
 export async function notifyTaskStarting(env: NotificationEnv, db: DbClient, input: { organizationId: string; taskId: string; day: string; recipientUserIds: string[] }): Promise<void> {
   await notifyTaskPeople(env, db, { organizationId: input.organizationId, taskId: input.taskId, recipientUserIds: input.recipientUserIds, kind: 'starting', actorUserId: null, day: input.day })
+}
+
+/** A paid order: the business is told what to send and by when, and the buyer gets their receipt. */
+export async function notifyOrderPlaced(env: NotificationEnv, db: DbClient, organizationId: string, orderId: string) {
+  const { readOrder } = await import('~/server/domain/goods')
+  const order = await readOrder(db, organizationId, { orderId })
+  if (!order || order.status !== 'paid' || !order.conversation_id || !order.payment) throw new Error('A placed order needs its paid record, payment and conversation')
+  const guestContact = order.guest
+  if (!guestContact?.email || !guestContact.name) throw new Error('A placed order needs its buyer name and email')
+  if (!isCurrencyCode(order.currency)) throw new Error('The order has an unsupported currency')
+  const studio = organizationName({ organizationId, organizationName: order.organization_name })
+  const first = order.lines[0]
+  if (!first) throw new Error('A placed order has no items')
+  const threadContext = await getOpeningThreadContext(db, order.conversation_id)
+  const [inboxUrl, hero, logoUrl, guest, contact, notes, manageUrl] = await Promise.all([
+    buildOwnerThreadInboxUrl(env, db, { organizationId, locationId: order.location_id, threadId: order.conversation_id }),
+    messageHero(db, organizationId, { type: 'product', id: first.product_id }),
+    organizationLogo(db, organizationId),
+    guestPresentation(db, { organizationId, organizationName: studio, productId: first.product_id, productTitle: first.title, locationId: order.location_id }),
+    resolveLocationContact(db, organizationId, order.location_id),
+    guestNote(db, order.conversation_id),
+    buildBuyerRequestActivityUrl(env, db, { organizationId, threadId: order.conversation_id }),
+  ])
+  const items = order.lines.map(line => `${line.title}${line.variant_title ? ` (${line.variant_title})` : ''} × ${line.quantity}`)
+  const shipTo = orderAddressBlock(order.shipping_details)
+  const total = (locale: string) => formatMinorAmount(order.payment!.captured_amount, order.currency, locale)
+  const shipBy = (locale: string) => order.ship_by ? formatCalendarDate(order.ship_by, locale, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : null
+  const ownerMessage = orderPlacedMessage({
+    organizationName: studio, orderNumber: order.number, guestName: guestContact.name, guestEmail: guestContact.email, guestPhone: guestContact.phone,
+    items, total: total('en-US'), shipTo, pickupAt: order.delivery_method === 'pickup' ? order.location_title : null, shippingRate: order.shipping_rate_name,
+    shipBy: shipBy('en-US'), madeToOrder: order.lines.some(line => line.made_to_order_quantity > 0), notes, heroImageUrl: hero?.imageUrl ?? null, replyUrl: inboxUrl ?? '',
+  })
+  const guestMessage = guestOrderConfirmedMessage({
+    locale: guest.locale, guestName: guestContact.name, organizationName: guest.organizationName, organizationLogoUrl: logoUrl, orderNumber: order.number, items,
+    heroImageUrl: hero?.imageUrl ?? null, total: total(guest.locale), shipTo, pickupAt: order.delivery_method === 'pickup' ? order.location_title : null,
+    shipBy: shipBy(guest.locale), manageUrl, contactPhone: contact.contactPhone ?? null, contactEmail: contact.contactEmail ?? null,
+  })
+  const payload = { order_id: order.id, order_number: String(order.number), guest_name: guestContact.name, email: guestContact.email, organization_name: studio, deep_link: inboxUrl ?? '' }
+  const guestEmail = await renderNotificationEmail(guestMessage, { platformDomain: getPlatformDomain(env) })
+  const results = await Promise.allSettled([
+    notifyOwner(env, db, {
+      organizationId, organizationName: studio, locationId: order.location_id, template: 'new_order', title: ownerMessage.title, payload, message: ownerMessage,
+      source: { conversationId: order.conversation_id, messageId: anchorId(threadContext.subject) },
+    }),
+    sendEmailNotification(env, db, {
+      organizationId, organizationName: studio, locationId: order.location_id, to: guestContact.email, replyAs: { kind: 'guest' },
+      template: 'order_customer_confirmed', title: guestMessage.title, payload,
+      email: { subject: guestMessage.title, ...guestEmail },
+      delivery: threadDelivery(threadContext, 'guest_acknowledgement', 'email', 'order_customer_confirmed', guestContact.email),
+    }),
+  ])
+  raiseSettledFailures('notifyOrderPlaced', `orderId ${orderId}`, results)
+}
+
+/** The buyer is told their order shipped, with its tracking, or that it was collected. */
+export async function notifyOrderFulfilled(env: NotificationEnv, db: DbClient, organizationId: string, orderId: string) {
+  const { readOrder } = await import('~/server/domain/goods')
+  const order = await readOrder(db, organizationId, { orderId })
+  if (!order?.fulfilled_at || !order.conversation_id) throw new Error('A fulfilled order needs its fulfilment and conversation')
+  const guestContact = order.guest
+  if (!guestContact?.email || !guestContact.name) throw new Error('A fulfilled order needs its buyer name and email')
+  const studio = organizationName({ organizationId, organizationName: order.organization_name })
+  const first = order.lines[0]
+  if (!first) throw new Error('A fulfilled order has no items')
+  const threadContext = await getOpeningThreadContext(db, order.conversation_id)
+  const [hero, logoUrl, guest, contact, manageUrl] = await Promise.all([
+    messageHero(db, organizationId, { type: 'product', id: first.product_id }),
+    organizationLogo(db, organizationId),
+    guestPresentation(db, { organizationId, organizationName: studio, productId: first.product_id, productTitle: first.title, locationId: order.location_id }),
+    resolveLocationContact(db, organizationId, order.location_id),
+    buildBuyerRequestActivityUrl(env, db, { organizationId, threadId: order.conversation_id }),
+  ])
+  const message = guestOrderShippedMessage({
+    locale: guest.locale, guestName: guestContact.name, organizationName: guest.organizationName, organizationLogoUrl: logoUrl, orderNumber: order.number,
+    items: order.lines.map(line => `${line.title}${line.variant_title ? ` (${line.variant_title})` : ''} × ${line.quantity}`), heroImageUrl: hero?.imageUrl ?? null,
+    shipTo: order.delivery_method === 'shipping' ? orderAddressBlock(order.shipping_details) : null, pickupAt: order.delivery_method === 'pickup' ? order.location_title : null,
+    carrier: order.carrier, trackingNumber: order.tracking_number, trackingUrl: order.tracking_url, manageUrl,
+    contactPhone: contact.contactPhone ?? null, contactEmail: contact.contactEmail ?? null,
+  })
+  const payload = { order_id: order.id, order_number: String(order.number), guest_name: guestContact.name, email: guestContact.email, organization_name: studio }
+  await sendEmailNotification(env, db, {
+    organizationId, organizationName: studio, locationId: order.location_id, to: guestContact.email, replyAs: { kind: 'guest' },
+    template: 'order_customer_shipped', title: message.title, payload,
+    email: { subject: message.title, ...await renderNotificationEmail(message, { platformDomain: getPlatformDomain(env) }) },
+    delivery: threadDelivery(threadContext, 'guest_acknowledgement', 'email', 'order_customer_shipped', guestContact.email),
+  })
+}
+
+function orderAddressBlock(details: import('~/shared/goods').ShippingDetails | null): string | null {
+  if (!details) return null
+  const address = details.address
+  return [details.name, address.line1, address.line2, [address.postal_code, address.city].filter(Boolean).join(' '), address.state, address.country].filter(Boolean).join('\n')
 }

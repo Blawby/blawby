@@ -52,7 +52,7 @@ export interface Payment {
   buyer_user_id: string | null
   stripe_account_id: string
   livemode: number
-  subject_type: 'booking'
+  subject_type: 'booking' | 'order'
   subject_id: string | null
   location_id: string | null
   currency: string
@@ -177,9 +177,9 @@ export async function readPaymentDetails(db:DbClient,env:CloudflareEnv,organizat
   {query:'SELECT * FROM payments WHERE organization_id=? AND id=?',params:scope},
   {query:'SELECT r.* FROM payments p JOIN payment_refunds r ON r.payment_id=p.id WHERE p.organization_id=? AND p.id=?',params:scope},
   {query:'SELECT d.* FROM payments p JOIN payment_disputes d ON d.payment_id=p.id WHERE p.organization_id=? AND p.id=?',params:scope},
-  {query:`SELECT (SELECT c.id FROM conversations c WHERE c.booking_id=b.id AND c.kind='booking') AS conversation_id
-      FROM payments p JOIN bookings b ON p.subject_type='booking' AND b.id=p.subject_id AND b.organization_id=p.organization_id
-      WHERE p.organization_id=? AND p.id=?`,params:scope},
+  {query:`SELECT CASE p.subject_type WHEN 'order' THEN (SELECT o.conversation_id FROM orders o WHERE o.organization_id=p.organization_id AND o.id=p.subject_id)
+      ELSE (SELECT c.id FROM conversations c WHERE c.booking_id=p.subject_id AND c.organization_id=p.organization_id AND c.kind='booking') END AS conversation_id
+      FROM payments p WHERE p.organization_id=? AND p.id=? AND p.subject_id IS NOT NULL`,params:scope},
  ],{operation:'Read merchant payment detail'})
  const recorded=recordedResult!.results[0] as Payment|undefined
  if(!recorded)throw new HTTPError({statusCode:404,statusMessage:'Payment not found'})

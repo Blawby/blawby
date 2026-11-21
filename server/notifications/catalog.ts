@@ -22,6 +22,7 @@ import {
   messageReceived,
   taskAlertMessage,
   reviewReceivedMessage,
+  orderPlacedMessage,
 } from './events'
 import {
   articleAnnouncementMessage,
@@ -30,6 +31,8 @@ import {
   guestBookingReceivedMessage,
   guestContactReceivedMessage,
   guestStayConfirmedMessage,
+  guestOrderConfirmedMessage,
+  guestOrderShippedMessage,
   guestThreadReplyMessage,
   guestThreadStatusMessage,
   organizationInviteMessage,
@@ -232,6 +235,14 @@ export const NOTIFICATION_CATALOG: CatalogEntry[] = [
     audience: 'owner',
     title: 'Owner — new stay booked on the site',
     message: ownerAlert(stayBookedMessage(stayBooked)),
+  },
+  {
+    id: 'order-placed',
+    audience: 'owner',
+    title: 'Owner — new order paid on the site',
+    message: ownerAlert(orderPlacedMessage({ organizationName: studio, orderNumber: 1042, guestName: 'Somchai Vong', guestEmail: 'somchai@example.com', guestPhone: '+856 20 5555 0100',
+      items: ['Handmade ceramic chess set (Ruby reds) × 1'], total: '฿7,050', shipTo: 'Somchai Vong\nSisavangvong Road\n06000 Luang Prabang\nLA', pickupAt: null, shippingRate: 'Thailand Post EMS',
+      shipBy: 'Mon, Nov 24, 2026', madeToOrder: false, notes: 'Could you send a photo before it ships?', heroImageUrl: sampleCover, replyUrl: 'https://blawby.com/dashboard/pottery-house/messages/preview' })),
   },
   {
     id: 'stay-booked-member',
@@ -515,6 +526,8 @@ export const NOTIFICATION_CATALOG: CatalogEntry[] = [
   { id: 'guest-reservation-cancelled', audience: 'guest', title: 'Guest — table reservation cancelled', message: guestBookingCancelledMessage({ ...guestVisit, productTitle: 'Main Dining Room table', wasConfirmed: true, wording: 'reservation' }) },
   { id: 'guest-booking-received', audience: 'guest', title: 'Guest — booking request sent', message: guestBookingReceivedMessage({ ...guestVisit, guestName: 'Mina Park', organizationName: studio, productTitle: 'Pottery Wheel Class', date: 'Mon, Jul 20, 2026', time: '10:00 AM', status: 'pending', wording: 'booking' }) },
   { id: 'guest-stay-confirmed', audience: 'guest', title: 'Guest — stay confirmed', message: guestStayConfirmedMessage({ guestName: 'Mina Park', organizationName: 'Pinecone Stays', organizationLogoUrl: sampleLogo, homeName: 'Cedar Loft', heroImageUrl: sampleCover, checkIn: 'Fri, Nov 6, 2026 · from 15:00', checkOut: 'Mon, Nov 9, 2026 · by 11:00', nights: '3', guests: '2 adults', total: '$645.00', receiptUrl: 'https://blawby.com/bookings/stay?id=preview', checkInInstructions: 'The lockbox is to the left of the front door. Your code arrives the morning of check-in.', contactPhone: '+1 415 555 0100', contactEmail: 'hello@example.com' }) },
+  { id: 'guest-order-confirmed', audience: 'guest', title: 'Guest — order confirmed', message: guestOrderConfirmedMessage({ guestName: 'Somchai Vong', organizationName: studio, organizationLogoUrl: sampleLogo, orderNumber: 1042, items: ['Handmade ceramic chess set (Ruby reds) × 1'], heroImageUrl: sampleCover, total: '฿7,050', shipTo: 'Somchai Vong\nSisavangvong Road\n06000 Luang Prabang\nLA', pickupAt: null, shipBy: 'Mon, Nov 24, 2026', manageUrl: 'https://blawby.com/dashboard/account/activity/payment/preview', contactPhone: '+66 75 555 0100', contactEmail: 'hello@example.com' }) },
+  { id: 'guest-order-shipped', audience: 'guest', title: 'Guest — order shipped', message: guestOrderShippedMessage({ guestName: 'Somchai Vong', organizationName: studio, organizationLogoUrl: sampleLogo, orderNumber: 1042, items: ['Handmade ceramic chess set (Ruby reds) × 1'], heroImageUrl: sampleCover, shipTo: 'Somchai Vong\nSisavangvong Road\n06000 Luang Prabang\nLA', pickupAt: null, carrier: 'Thailand Post EMS', trackingNumber: 'EE123456789TH', trackingUrl: 'https://track.thailandpost.co.th/?trackNumber=EE123456789TH', manageUrl: 'https://blawby.com/dashboard/account/activity/payment/preview', contactPhone: '+66 75 555 0100', contactEmail: 'hello@example.com' }) },
   { id: 'guest-booking-cancelled', audience: 'guest', title: 'Guest — booking cancelled', message: guestBookingCancelledMessage({ ...guestVisit, guestName: 'Mina Park', organizationName: studio, productTitle: 'Pottery Wheel Class', date: 'Mon, Jul 20, 2026', time: '10:00 AM', wasConfirmed: false, wording: 'booking' }) },
   { id: 'guest-contact-received', audience: 'guest', title: 'Guest — message sent', message: guestContactReceivedMessage({ guestName: 'Jordan Lee', organizationName: restaurant, organizationLogoUrl: sampleLogo, subject: 'General', productTitle: 'Pottery Wheel Class', message: 'Hi, do you have vegan options and parking nearby?', consentAcknowledged: true }) },
   { id: 'guest-thread-reply', audience: 'guest', title: 'Guest — a reply from the business', message: guestThreadReplyMessage({ organizationName: restaurant, organizationLogoUrl: sampleLogo, body: 'Hi Jordan,\n\nYes — we have a full vegan menu, and there is street parking on Soi 3 right outside. See you Tuesday!' }) },

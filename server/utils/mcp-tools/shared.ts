@@ -930,6 +930,15 @@ export const EXPECTED_TOOL_ANNOTATIONS = {
   complete_task: { ...D, openWorldHint: true },
   skip_task: D,
   list_opportunities: R,
+  get_inventory: R,
+  set_inventory: W,
+  list_shipping_zones: R,
+  save_shipping_zone: W,
+  delete_shipping_zone: D,
+  set_pickup: W,
+  list_orders: R,
+  // Emails the buyer.
+  fulfill_order: { ...W, openWorldHint: true },
 } as const satisfies Record<string, McpToolAnnotations>
 
 export function buildToolAnnotationsByName() {

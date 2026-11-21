@@ -425,6 +425,7 @@ async function complete(): Promise<true | undefined> {
       return
     }
     if (done.kind === 'stay') await navigateTo({ path: localePath('/bookings/stay'), query: { id: done.activity_id }, hash: `#${done.receipt_token}` }, { replace: true })
+    else if (done.kind === 'order') await navigateTo({ path: localePath('/orders/confirmed'), query: { id: done.activity_id }, hash: `#${done.receipt_token}` }, { replace: true })
     else {
       if (done.booking && organization?.id) {
         paidReceipt.value = { organizationId: organization.id, id: done.conversation_id, token: done.cancellation_token, booking: done.booking }

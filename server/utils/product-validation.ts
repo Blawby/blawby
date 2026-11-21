@@ -1,5 +1,6 @@
 import { HTTPError } from 'nitro'
-import type { ProductVariantInput } from '~/server/types/products'
+import type { ProductVariantGoods, ProductVariantInput } from '~/server/types/products'
+import { INVENTORY_POLICIES } from '~/shared/goods'
 import { PRODUCT_LIMITS, PRODUCT_METADATA_KEY, PRODUCT_SLUG } from '~/shared/product-limits'
 
 export { PRODUCT_LIMITS, PRODUCT_SLUG }
@@ -89,12 +90,43 @@ export function validateProductSlug(value: unknown, field = 'slug'): string {
   return normalized
 }
 
-export interface NormalizedProductVariant {
+export interface NormalizedProductVariant extends ProductVariantGoods {
   id?: string
   name: string
   sku: string | null
   active: boolean
   sort_order: number
+}
+
+const optionalPositiveInteger = (value: unknown, field: string, max: number): number | null => {
+  if (value === undefined || value === null) return null
+  if (!Number.isSafeInteger(value) || (value as number) <= 0 || (value as number) > max) invalid(`${field} must be a whole number from 1 to ${max}`)
+  return value as number
+}
+
+/** A variant's goods facts, defaulted as a variant sold one way with nothing stated. */
+export function validateVariantGoods(variant: Partial<ProductVariantGoods>, field: string): ProductVariantGoods {
+  const optionValues = variant.option_values ?? []
+  if (!Array.isArray(optionValues) || optionValues.length > 3 || optionValues.some(value => typeof value !== 'string' || !value.trim() || value.length > 100)) invalid(`${field}.option_values must be up to three option values`)
+  const hsCode = normalizeOptionalProductString(variant.hs_code, `${field}.hs_code`, 12)
+  if (hsCode !== null && !/^[0-9.]{6,12}$/u.test(hsCode)) invalid(`${field}.hs_code must be a 6–10 digit HS code`)
+  const origin = normalizeOptionalProductString(variant.country_of_origin, `${field}.country_of_origin`, 2)?.toUpperCase() ?? null
+  if (origin !== null && !/^[A-Z]{2}$/u.test(origin)) invalid(`${field}.country_of_origin must be a two-letter country code`)
+  const policy = variant.inventory_policy ?? 'deny'
+  if (!(INVENTORY_POLICIES as readonly string[]).includes(policy)) invalid(`${field}.inventory_policy must be deny or continue`)
+  if (variant.inventory_tracked !== undefined && typeof variant.inventory_tracked !== 'boolean') invalid(`${field}.inventory_tracked must be true or false`)
+  return {
+    option_values: optionValues.map(value => value.trim()),
+    media_asset_id: normalizeOptionalProductString(variant.media_asset_id, `${field}.media_asset_id`, 100),
+    weight_grams: optionalPositiveInteger(variant.weight_grams, `${field}.weight_grams`, 1_000_000),
+    length_mm: optionalPositiveInteger(variant.length_mm, `${field}.length_mm`, 10_000),
+    width_mm: optionalPositiveInteger(variant.width_mm, `${field}.width_mm`, 10_000),
+    height_mm: optionalPositiveInteger(variant.height_mm, `${field}.height_mm`, 10_000),
+    hs_code: hsCode,
+    country_of_origin: origin,
+    inventory_tracked: variant.inventory_tracked ?? false,
+    inventory_policy: policy,
+  }
 }
 
 export function validateProductVariants(value: unknown): NormalizedProductVariant[] {
@@ -113,6 +145,7 @@ export function validateProductVariants(value: unknown): NormalizedProductVarian
       sku: normalizeOptionalProductString(variant.sku, `variants[${index}].sku`, PRODUCT_LIMITS.sku),
       active: variant.active ?? true,
       sort_order: variant.sort_order ?? index,
+      ...validateVariantGoods(variant, `variants[${index}]`),
     }
   })
 }

@@ -66,7 +66,7 @@ interface BookingContact {
   idempotencyKey: string
 }
 
-async function bookingRateLimit(db: DbClient, env: CloudflareEnv, ipHash: string): Promise<string | null> {
+export async function bookingRateLimit(db: DbClient, env: CloudflareEnv, ipHash: string): Promise<string | null> {
   if (import.meta.dev || env.E2E_ALLOW_DEV_ROUTES === 'true') return null
   const hourWindow = Math.floor(Date.now() / 3_600_000)
   if (!await incrementHourlyRateLimit(db, `rate:book:ip:${ipHash}:${hourWindow}`, IP_HOURLY_LIMIT, 3_600_000)) {

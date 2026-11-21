@@ -273,6 +273,28 @@ export async function createPaymentCheckout(db: DbClient, env: CloudflareEnv, in
       throw error
     }
   }
+  const savedCards = await openPaymentIntent(db, stripe, {
+    paymentId: id, organizationId: input.organizationId, idempotencyKey: key, retry: Boolean(previous), amount, currency: price.currency,
+    connected, methodConfigurationId, surcharge, description: projectionTitle, buyerUserId: input.buyerUserId, buyer: input.buyer ?? null,
+  })
+  await publishCheckout(savedCards)
+  return handoff(id)
+}
+
+/**
+ * The PaymentIntent for a saved checkout, on the business's connected account:
+ * manual capture for cards and Link so the purchase is saved before capture,
+ * the business's payment method configuration, and Stripe's surcharge
+ * validation when the business surcharges. A first call Stripe rejects
+ * releases the checkout's hold. Returns how many saved cards were offered.
+ */
+export async function openPaymentIntent(db: DbClient, stripe: Stripe, input: {
+  paymentId: string; organizationId: string; idempotencyKey: string; retry: boolean; amount: number; currency: string
+  connected: Pick<StripeConnectedAccount, 'stripe_account_id' | 'livemode'>; methodConfigurationId: string; surcharge: number | null
+  description: string; buyerUserId: string | null; buyer: ConnectedBuyer | null
+}): Promise<number> {
+  const { connected, paymentId: id } = input
+  if (!connected.stripe_account_id) throw new Error('Checkout has no connected account')
   // A signed-in buyer's Customer at this business: the Payment Element offers, saves and removes their cards here only.
   const customer = input.buyerUserId ? await connectedBuyerCustomer(db, stripe, input.buyer ?? input.buyerUserId, connected.stripe_account_id, connected.livemode) : null
   const stripeAccount = connected.stripe_account_id
@@ -280,33 +302,35 @@ export async function createPaymentCheckout(db: DbClient, env: CloudflareEnv, in
   const monthly = installments !== null
   if (monthly && !customer) throw new Error('A stay paid monthly has no guest Customer to keep its card on')
   try {
-    const intent = await createWithStripeMetadata(stripe, 'payment', id, Boolean(previous), metadata => stripe.paymentIntents.create({
-      amount, currency: price.currency.toLowerCase(),
+    const intent = await createWithStripeMetadata(stripe, 'payment', id, input.retry, metadata => stripe.paymentIntents.create({
+      amount: input.amount, currency: input.currency.toLowerCase(),
       ...(customer ? { customer: customer.customerId } : {}),
       // Stripe selects eligible methods from the business's connected configuration.
-      payment_method_configuration: methodConfigurationId,
+      payment_method_configuration: input.methodConfigurationId,
       automatic_payment_methods: { enabled: true, allow_redirects: 'always' },
-      // Cards and Link are authorized before the booking is saved. ACH clears asynchronously.
+      // Cards and Link are authorized before the purchase is saved. ACH clears asynchronously.
       payment_method_options: { card: { capture_method: 'manual' }, link: { capture_method: 'manual' } },
       ...(monthly ? { setup_future_usage: 'off_session' } : {}),
       application_fee_amount: 0,
-      description: projectionTitle,
+      description: input.description,
       metadata,
       // Stripe reports, per card, whether a surcharge may apply and how much at most; the amount is set when the buyer confirms.
-      ...(surcharge !== null ? { amount_details: { surcharge: { enforce_validation: 'enabled' } } } : {}),
-    } as Stripe.PaymentIntentCreateParams, { stripeAccount, idempotencyKey: key }))
+      ...(input.surcharge !== null ? { amount_details: { surcharge: { enforce_validation: 'enabled' } } } : {}),
+    } as Stripe.PaymentIntentCreateParams, { stripeAccount, idempotencyKey: input.idempotencyKey }))
     if (intent.livemode !== connected.livemode || !intent.client_secret) throw new Error('Stripe returned a PaymentIntent outside the connected mode')
     const linked = await execute(db, 'UPDATE payments SET stripe_payment_intent_id=?,updated_at=? WHERE id=? AND organization_id=?', [intent.id, new Date().toISOString(), id, input.organizationId])
     if (linked.meta.changes !== 1) throw new HTTPError({ statusCode: 404, statusMessage: 'Payment not found' })
   } catch(error) {
     // A prior attempt may have reached Stripe even when its response was lost.
     // Only a first-call content/auth rejection proves no intent was created.
-    const rejected=!previous&&(error instanceof stripe.errors.StripeInvalidRequestError||error instanceof stripe.errors.StripeAuthenticationError||error instanceof stripe.errors.StripePermissionError)&&error.headers?.['stripe-should-retry']!=='true'
+    const rejected=!input.retry&&(error instanceof stripe.errors.StripeInvalidRequestError||error instanceof stripe.errors.StripeAuthenticationError||error instanceof stripe.errors.StripePermissionError)&&error.headers?.['stripe-should-retry']!=='true'
     if (rejected) {
-      await execute(db, "UPDATE payment_checkout_holds SET status='released' WHERE payment_id=? AND status='active'", [id])
+      await executeBatch(db, [
+        { query: "UPDATE payment_checkout_holds SET status='released' WHERE payment_id=? AND status='active'", params: [id] },
+        { query: "UPDATE orders SET status='released', updated_at=? WHERE organization_id=? AND id=(SELECT subject_id FROM payments WHERE id=? AND subject_type='order') AND status='pending'", params: [new Date().toISOString(), input.organizationId, id] },
+      ], { operation: 'Release rejected checkout' })
     }
     throw error
   }
-  await publishCheckout(customer?.savedCards ?? 0)
-  return handoff(id)
+  return customer?.savedCards ?? 0
 }

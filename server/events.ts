@@ -53,8 +53,10 @@ export type DomainEvent =
   | {
       type: 'payment.captured'; organization_id: string; payment_id: string; notice: PaymentFinancialEvent
       intent_created: number; saved_method_id: string | null
-      booking: { unit: 'nights'; id: string } | { unit: 'slot'; conversation_id: string } | null
+      booking: { unit: 'nights'; id: string } | { unit: 'slot'; conversation_id: string } | { unit: 'order'; id: string } | null
     }
+  /** A paid order was shipped or collected: the buyer is told. */
+  | { type: 'order.fulfilled'; organization_id: string; order_id: string }
 
 type EventDeliveryOptions = { delaySeconds: number }
 export interface EventsEnv { DB?: D1Database; EVENTS?: { send(_event: DomainEvent, _options?: EventDeliveryOptions): Promise<void> } }
@@ -187,6 +189,11 @@ export async function consumeEvent(env: CloudflareEnv, event: DomainEvent): Prom
   if (event.type === 'payment.financial' || event.type === 'payment.captured') {
     const { notifyRecordedPayment } = await import('~/server/domain/payments/events')
     await notifyRecordedPayment(env, event)
+    return
+  }
+  if (event.type === 'order.fulfilled') {
+    const { notifyOrderFulfilled } = await import('~/server/utils/notifications')
+    await notifyOrderFulfilled(env, env.DB, event.organization_id, event.order_id)
     return
   }
   if (event.type === 'stay.checkout_expired') {

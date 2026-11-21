@@ -36,19 +36,20 @@ export async function notifyPaymentFinancialEvent(db: DbClient, stripe: Stripe, 
   // paid. A failure is told here only when a booking was committed: an
   // in-flight checkout decline is resolved on the pay page, not alerted to the
   // business.
-  const checkout = payment.subject_type === 'booking'
-  if (checkout && input.kind === 'payment_failed' && !payment.subject_id) return
+  // An order is a checkout too: its own placed notice states what was paid, and a decline before capture is the pay page's.
+  const checkout = payment.subject_type === 'booking' || payment.subject_type === 'order'
+  if (checkout && input.kind === 'payment_failed' && (payment.subject_type === 'order' ? payment.captured_amount === 0 : !payment.subject_id)) return
   const guestKind = (input.kind.startsWith('refund_') || input.kind === 'payment_failed' || (!checkout && input.kind.startsWith('payment_'))) ? input.kind as GuestPaymentNotificationKind : null
   const ownerAlert = !checkout || input.kind !== 'payment_captured'
   // A deleted merchant and an unclaimed contact have no application audience.
   // The verified return can still claim the purchase and then notify its buyer.
   if (!organization && (!payment.buyer_user_id || !guestKind)) return
-  const snapshot = JSON.parse(payment.price_snapshot_json) as Record<string, unknown> & { title?: unknown; stay?: { guest?: { email?: unknown } } }
+  const snapshot = JSON.parse(payment.price_snapshot_json) as Record<string, unknown> & { title?: unknown; stay?: { guest?: { email?: unknown } }; order?: { guest?: { email?: unknown } } }
   if (typeof snapshot.title !== 'string' || !snapshot.title.trim() || !isCurrencyCode(payment.currency)) throw new Error('Payments notification requires its immutable item and currency')
   let email: string | null = null
   if (guestKind && checkout) {
     // The address the guest booked with, which their confirmation went to.
-    const booked = snapshot.stay
+    const booked = snapshot.order ? snapshot.order.guest?.email : snapshot.stay
       ? snapshot.stay.guest?.email
       : (await queryFirst<{ email: string | null }>(db, `SELECT json_extract(r.payload_json, '$.guest.email') AS email FROM payment_checkout_holds h JOIN conversations r ON r.id = h.conversation_id AND r.organization_id = h.organization_id WHERE h.payment_id = ? AND h.organization_id = ?`, [payment.id, payment.organization_id]))?.email
     if (typeof booked !== 'string' || !booked) throw new Error('Paid checkout has no guest email to notify')

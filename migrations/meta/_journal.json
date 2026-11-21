@@ -5,22 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1795066648705,
+      "when": 1795244005908,
       "tag": "0000_baseline",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1795085903689,
-      "tag": "0001_maintenance_tasks",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1795251605765,
-      "tag": "0002_booking_deposits",
       "breakpoints": true
     }
   ]

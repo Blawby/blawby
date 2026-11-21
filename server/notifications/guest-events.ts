@@ -471,3 +471,75 @@ export function articleAnnouncementMessage(input: {
     category: 'product_news',
   }
 }
+
+export interface GuestOrderInput {
+  locale?: string
+  guestName: string
+  organizationName: string
+  organizationLogoUrl: string | null
+  orderNumber: number
+  /** One line per item: "Handmade ceramic chess set (Ruby reds) × 1". */
+  items: string[]
+  heroImageUrl: string | null
+  total: string
+  /** The shipping address as one block, or null for pickup. */
+  shipTo: string | null
+  pickupAt: string | null
+  shipBy: string | null
+  manageUrl?: string | null
+  contactPhone?: string | null
+  contactEmail?: string | null
+}
+
+/** A paid order's receipt to its buyer, as Shopify's order confirmation. */
+export function guestOrderConfirmedMessage(input: GuestOrderInput): NotificationMessage {
+  const locale = guestLocale(input)
+  const labels = locale.messages
+  return {
+    locale: locale.locale,
+    title: labels['email.subject.order_confirmed']!.replace('{number}', String(input.orderNumber)),
+    preheader: input.items.join(', '),
+    hero: input.heroImageUrl ? { imageUrl: input.heroImageUrl, alt: input.items[0] ?? '' } : null,
+    facts: facts(
+      fact('items', labels['order.items']!, input.items.join('\n')),
+      fact('total', labels['payment.paid']!, input.total),
+      fact('shipTo', labels['order.ship_to']!, input.shipTo),
+      fact('pickupAt', labels['order.pickup_at']!, input.pickupAt),
+      fact('shipBy', labels['order.ships_by']!, input.shipBy),
+    ),
+    primaryAction: manageAction(input),
+    sections: contactSection({ ...input, organizationLogoUrl: input.organizationLogoUrl, date: '', time: '', partySize: '' }),
+    emailPurpose: 'transactional',
+    emailReason: labels['email.reason.order']!.replace('{organization}', input.organizationName),
+    category: 'reservations_bookings',
+    organizationName: input.organizationName,
+    organizationLogoUrl: input.organizationLogoUrl,
+  }
+}
+
+/** The buyer's notice that their order left the business, with the carrier's tracking. */
+export function guestOrderShippedMessage(input: Omit<GuestOrderInput, 'total' | 'shipBy'> & { carrier: string | null; trackingNumber: string | null; trackingUrl: string | null }): NotificationMessage {
+  const locale = guestLocale(input)
+  const labels = locale.messages
+  const collected = input.shipTo === null
+  return {
+    locale: locale.locale,
+    title: labels[collected ? 'email.subject.order_collected' : 'email.subject.order_shipped']!.replace('{number}', String(input.orderNumber)),
+    preheader: input.items.join(', '),
+    hero: input.heroImageUrl ? { imageUrl: input.heroImageUrl, alt: input.items[0] ?? '' } : null,
+    facts: facts(
+      fact('items', labels['order.items']!, input.items.join('\n')),
+      fact('carrier', labels['order.carrier']!, input.carrier),
+      fact('trackingNumber', labels['order.tracking_number']!, input.trackingNumber),
+      fact('shipTo', labels['order.ship_to']!, input.shipTo),
+    ),
+    primaryAction: input.trackingUrl ? { url: input.trackingUrl, label: labels['order.track']! } : manageAction(input),
+    secondaryAction: input.trackingUrl ? manageAction(input) : undefined,
+    sections: contactSection({ ...input, organizationLogoUrl: input.organizationLogoUrl, date: '', time: '', partySize: '' }),
+    emailPurpose: 'transactional',
+    emailReason: labels['email.reason.order']!.replace('{organization}', input.organizationName),
+    category: 'reservations_bookings',
+    organizationName: input.organizationName,
+    organizationLogoUrl: input.organizationLogoUrl,
+  }
+}

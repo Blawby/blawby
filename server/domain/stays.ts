@@ -1347,7 +1347,6 @@ export function stayDetailSelection(organization: BatchQuery, stay: string | Bat
       'method', method, 'paid_on', paid_on, 'reference', reference, 'note', note, 'period_start', period_start, 'created_at', created_at, 'created_by', created_by))
       FROM (SELECT * FROM offline_payments WHERE organization_id = s.organization_id AND booking_id = s.id AND purpose = 'payment' ORDER BY paid_on, created_at)
     ) AS offline_payments_json,
-    (SELECT COALESCE(SUM(amount_minor), 0) FROM offline_payments WHERE organization_id = s.organization_id AND booking_id = s.id AND purpose = 'deposit_withheld') AS deposit_withheld_minor,
     (SELECT json_extract(price_snapshot_json, '$.installments') FROM payments WHERE organization_id = s.organization_id AND subject_type = 'booking' AND subject_id = s.id ORDER BY created_at, id LIMIT 1) AS installments_json,
     (SELECT json_group_array(json_object('payment_id', id, 'period_start', json_extract(price_snapshot_json, '$.installment.period_start'), 'currency', currency, 'amount_minor', amount, 'captured_minor', captured_amount,
       'refunded_minor', refunded_amount, 'receipt_url', receipt_url, 'created_at', created_at))
@@ -1363,15 +1362,16 @@ export function stayDetailSelection(organization: BatchQuery, stay: string | Bat
 
 export function stayDetailFrom<A extends StayAccess>(access: A, row: unknown): StayDetailView<A> {
   if (!row) fail(404, 'STAY_NOT_FOUND', 'That stay is not in this organization')
-  const { offline_payments_json: offline, online_payments_json: online, deposit_withheld_minor: withheld, installments_json: plan, guest_image_url, ...record } = row as Record<string, unknown>
-    & Pick<StayDetail, 'guest_image_url'> & { offline_payments_json?: string; online_payments_json?: string; deposit_withheld_minor?: number; installments_json?: string | null }
+  const { offline_payments_json: offline, online_payments_json: online, installments_json: plan, guest_image_url, ...record } = row as Record<string, unknown>
+    & Pick<StayDetail, 'guest_image_url'> & { offline_payments_json?: string; online_payments_json?: string; installments_json?: string | null }
   const stay = mapStay(record)
   if (!access.manage) return stayTurnover(stay) as StayDetailView<A>
   if (offline === undefined || online === undefined) throw new Error('The stay detail query did not return its payment data')
   const payments = JSON.parse(offline) as StayPayment[]
   const onlinePayments = JSON.parse(online) as StayOnlinePayment[]
-  // A deposit kept for damage is the business's money; the deposit itself is not.
-  const paid = payments.reduce((sum, payment) => sum + payment.amount_minor, 0) + (withheld ?? 0) + onlinePayments.reduce((sum, payment) => sum + payment.captured_minor - payment.refunded_minor, 0)
+  // What the guest paid for the stay. A deposit, held or kept for damage, is not payment for the nights:
+  // counting what was kept turned a stay paid in full into an overpaid one.
+  const paid = payments.reduce((sum, payment) => sum + payment.amount_minor, 0) + onlinePayments.reduce((sum, payment) => sum + payment.captured_minor - payment.refunded_minor, 0)
   const status = isChannelManagedStay(stay) ? null
     : paid === 0 ? 'unpaid' : paid < stay.total_minor ? 'partial' : paid === stay.total_minor ? 'paid' : 'overpaid'
   return { ...stay, guest_image_url, payments, online_payments: onlinePayments, online_payment: onlinePayments[0] ?? null, installments: stayLedger(stay, plan ?? null, onlinePayments, payments), paid_minor: paid, payment_status: status } as StayDetailView<A>

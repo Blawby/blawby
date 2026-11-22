@@ -317,8 +317,8 @@ test('a channel stay is read-only here and is paid through its channel; an app s
     await assert.rejects(recordDepositEntry(db, depositor, stay.id, { kind: 'withheld', amount_minor: 60_000, paid_on: '2026-11-05', note: 'Too much', idempotency_key: 'dep-y' }), code('DEPOSIT_INSUFFICIENT'))
     const kept = await recordDepositEntry(db, depositor, stay.id, { kind: 'withheld', amount_minor: 10_000, paid_on: '2026-11-05', note: 'Broken lamp', idempotency_key: 'dep-2' })
     assert.deepEqual([kept.deposit.held_minor, kept.deposit.withheld_minor], [40_000, 10_000])
-    // What was kept is the business's money.
-    assert.equal((await getStay(db, manager, stay.id)).paid_minor, 55_000)
+    // What was kept is the business's money, but not payment for the nights.
+    assert.equal((await getStay(db, manager, stay.id)).paid_minor, 45_000)
     // Two returns of everything at once: only one can take what is held.
     const returns = await Promise.allSettled(['dep-3', 'dep-4'].map(key => recordDepositEntry(db, depositor, stay.id, { kind: 'returned', amount_minor: 40_000, method: 'bank_transfer', paid_on: '2026-11-06', idempotency_key: key })))
     assert.deepEqual(returns.map(result => result.status).sort(), ['fulfilled', 'rejected'])

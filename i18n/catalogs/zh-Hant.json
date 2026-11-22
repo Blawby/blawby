@@ -801,5 +801,6 @@
   "shop.still_needed": "尚需填寫：{fields}",
   "shop.partly_made_to_order": "現貨 {stock} 件，訂製 {made} 件",
   "shop.free": "免費",
-  "order.ready_by": "可取貨日期"
+  "order.ready_by": "可取貨日期",
+  "order.number": "訂單 #{number}"
 }

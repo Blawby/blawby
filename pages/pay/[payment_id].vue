@@ -43,6 +43,11 @@
           </section>
 
           <!-- Changing a stay cancels the old checkout, then restores its dates and party on the home's page. -->
+          <!-- An order names itself and where it goes, as Shopify's review step does. -->
+          <div v-if="handoff.order" class="border-t border-default pt-5 text-sm" data-payment-order>
+            <h3 class="font-semibold text-highlighted">{{ t('order.number', { number: handoff.order.number }) }}</h3>
+            <p v-if="shipTo" class="mt-1 whitespace-pre-line text-default"><span class="text-muted">{{ t('order.ship_to') }}</span>{{ '\n' }}{{ shipTo }}</p>
+          </div>
           <div v-if="handoff.stay" class="flex items-start justify-between gap-4 border-t border-default pt-5" data-payment-stay>
             <div>
               <h3 class="text-sm font-semibold text-highlighted">{{ t('payment.dates') }}</h3>
@@ -281,6 +286,13 @@ const offeringPath = computed(() => {
   return localePath(presentationForProduct({ kind: value.kind as ProductKind }).productPath(value.location_slug ?? '', value.product_slug))
 })
 const termsPath = computed(() => policySummary.value ? '#booking-policy' : handoff.value?.order ? localePath('/policies/terms') : '')
+// Where an order is sent, as the buyer typed it; none for pickup.
+const shipTo = computed(() => {
+  const details = handoff.value?.order?.shipping_details
+  if (!details) return ''
+  const address = details.address
+  return [details.name, address.line1, address.line2, [address.postal_code, address.city].filter(Boolean).join(' '), address.state, address.country].filter(Boolean).join('\n')
+})
 // An order is bought under the site's terms of service, not a booking's terms.
 const termsLabel = computed(() => handoff.value?.order ? t('site_pages.terms') : t('payment.booking_terms'))
 

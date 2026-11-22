@@ -801,5 +801,6 @@
   "shop.still_needed": "Falta: {fields}",
   "shop.partly_made_to_order": "{stock} en stock, {made} por encargo",
   "shop.free": "Gratis",
-  "order.ready_by": "Listo para recoger el"
+  "order.ready_by": "Listo para recoger el",
+  "order.number": "Pedido #{number}"
 }

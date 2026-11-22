@@ -801,5 +801,6 @@
   "shop.still_needed": "Còn thiếu: {fields}",
   "shop.partly_made_to_order": "{stock} có sẵn, {made} làm theo đơn",
   "shop.free": "Miễn phí",
-  "order.ready_by": "Sẵn sàng nhận trước"
+  "order.ready_by": "Sẵn sàng nhận trước",
+  "order.number": "Đơn hàng #{number}"
 }

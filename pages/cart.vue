@@ -16,10 +16,10 @@
           <section class="space-y-3">
             <h2 class="text-lg font-semibold text-default">{{ t('shop.delivery') }}</h2>
             <div class="grid grid-cols-2 gap-3">
-              <button v-if="quote.ship_to_countries.length" type="button" class="rounded-xl p-4 text-left ring-1" :class="method === 'shipping' ? 'ring-2 ring-[var(--ui-text-highlighted)]' : 'ring-default'" :aria-pressed="method === 'shipping'" @click="method = 'shipping'">
+              <button v-if="quote.ship_to_countries.length" type="button" class="rounded-xl p-4 text-left ring-1" :class="method === 'shipping' ? 'ring-2 ring-[var(--ui-text-highlighted)]' : 'ring-default'" :aria-pressed="method === 'shipping'" :aria-label="t('shop.ship')" @click="method = 'shipping'">
                 <span class="block font-medium text-default">{{ t('shop.ship') }}</span>
               </button>
-              <button v-if="quote.pickup_locations.length" type="button" class="rounded-xl p-4 text-left ring-1" :class="method === 'pickup' ? 'ring-2 ring-[var(--ui-text-highlighted)]' : 'ring-default'" :aria-pressed="method === 'pickup'" @click="method = 'pickup'">
+              <button v-if="quote.pickup_locations.length" type="button" class="rounded-xl p-4 text-left ring-1" :class="method === 'pickup' ? 'ring-2 ring-[var(--ui-text-highlighted)]' : 'ring-default'" :aria-pressed="method === 'pickup'" :aria-label="t('shop.pickup_free', { place: quote.pickup_locations[0]!.title })" @click="method = 'pickup'">
                 <span class="block font-medium text-default">{{ t('shop.pickup') }}</span>
                 <span class="block text-sm text-muted">{{ t('shop.pickup_free', { place: quote.pickup_locations[0]!.title }) }}</span>
               </button>

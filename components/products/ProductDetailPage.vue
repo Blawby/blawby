@@ -663,7 +663,8 @@ const breadcrumbs = computed(() => [
   { to: localePath('/'), label: t('site.experience_detail.home') },
   { to: localePath(props.pageDocument ? '/services' : props.presentation.collectionPath), label: collectionLabel.value },
   // A home is its own page, so no branch stands between it and its index.
-  ...(props.location && props.presentation.locationCollectionSegment !== 'stays' ? [{ to: localePath(props.presentation.locationCollectionSegment === 'experiences'
+  // An item's page, like a home's, is the site's own: no branch stands between it and its index.
+  ...(props.location && props.presentation.locationCollectionSegment !== 'stays' && props.product.kind !== 'item' ? [{ to: localePath(props.presentation.locationCollectionSegment === 'experiences'
     ? `/locations/${encodeURIComponent(props.location.slug)}/experiences`
     : productLocationCollectionPath(props.vertical, props.location.slug)), label: props.location.title }] : []),
   { to: localePath(props.pageDocument?.path ?? props.presentation.productPath(props.location?.slug ?? '', props.product.slug)), label: displayTitle.value },

@@ -27,6 +27,7 @@ export default {
     "pickup_at": "Pickup at",
     "ships_by": "Ships by",
     "ready_by": "Ready by",
+    "number": "Order #{number}",
     "carrier": "Carrier",
     "tracking_number": "Tracking number",
     "track": "Track your order",

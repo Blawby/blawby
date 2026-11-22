@@ -127,6 +127,22 @@ export function preparePaymentPerformance(
     const byTitle = new Map<string, { title: string; image_url: string | null; paid: number; count: number }>()
     for (const payment of payments) {
       const snapshot = paymentSnapshot(payment)
+      // An order earns for each product it sold, not under its "X and 1 more" title: what it kept is shared across its lines by their amounts.
+      const order = (snapshot as { order?: { lines: Array<{ title: string; amount: number }> } }).order
+      if (order?.lines.length) {
+        const kept = payment.captured_amount - payment.refunded_amount
+        const total = order.lines.reduce((sum, line) => sum + line.amount, 0)
+        let left = kept
+        order.lines.forEach((line, index) => {
+          const share = index === order.lines.length - 1 ? left : total ? Math.round(kept * line.amount / total) : 0
+          left -= share
+          const entry = byTitle.get(line.title) ?? { title: line.title, image_url: null, paid: 0, count: 0 }
+          entry.paid += share
+          entry.count += 1
+          byTitle.set(line.title, entry)
+        })
+        continue
+      }
       const picture = payment.product_id ? products.get(payment.product_id)
         : !payment.booking_id && 'stay' in snapshot && payment.location_id ? locations.get(payment.location_id) : null
       const entry = byTitle.get(snapshot.title) ?? { title: snapshot.title, image_url: picture?.imageUrl ?? null, paid: 0, count: 0 }

@@ -10,7 +10,7 @@
     <button type="button" class="flex w-full items-center justify-between gap-4 p-4 text-left">
       <span class="min-w-0">
         <span class="block text-base font-semibold text-highlighted">Order #{{ order.number }}</span>
-        <span class="block truncate text-sm text-muted">{{ statusLine }}<template v-if="order.fulfilled_at"> <NuxtTime :datetime="order.fulfilled_at" locale="en" weekday="short" month="short" day="numeric" /></template></span>
+        <span class="block truncate text-sm text-muted">{{ statusLine }}<template v-if="order.fulfilled_at">{{ ' ' }}<NuxtTime :datetime="order.fulfilled_at" locale="en" weekday="short" month="short" day="numeric" /></template></span>
       </span>
       <span class="flex shrink-0 items-center gap-2">
         <span class="text-base font-semibold text-highlighted">{{ money(paid) }}</span>

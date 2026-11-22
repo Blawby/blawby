@@ -801,5 +801,6 @@
   "shop.still_needed": "Noch erforderlich: {fields}",
   "shop.partly_made_to_order": "{stock} auf Lager, {made} auf Bestellung gefertigt",
   "shop.free": "Kostenlos",
-  "order.ready_by": "Abholbereit ab"
+  "order.ready_by": "Abholbereit ab",
+  "order.number": "Bestellung #{number}"
 }

@@ -22,7 +22,8 @@
             {{ t('site.menu_page.updated', { date: menuUpdated }) }}
           </p>
         </div>
-        <div v-if="locationChoices.length > 1 && !locationId" class="mt-8 flex flex-wrap justify-center gap-3">
+        <!-- Branch pages exist only where the site publishes them; a lodging site's /products has none to link to. -->
+        <div v-if="locationChoices.length > 1 && !locationId && hasPublicLocationPages(vertical)" class="mt-8 flex flex-wrap justify-center gap-3">
           <NuxtLink
             v-for="location in locationChoices"
             :key="location.id"
@@ -264,6 +265,7 @@ import type { CurrencyCode } from '~/shared/currencies'
 import { formatProductMoney, formatProductPriceRange, summarizeProductPrices } from '~/utils/product-money'
 import { minorAmountToMajor } from '~/shared/prices'
 import { PRICING_NOTE_HANDLE } from '~/shared/product-details'
+import { hasPublicLocationPages } from '~/utils/site-routing'
 import { groupProductsByCollection, presentationForProduct, productCtaKey, productLocationCollectionPath, staySpecLabels } from '~/utils/product-presentation'
 import { addressPlaceName, type PostalAddress } from '~/utils/postal-address'
 import type { PublicLocationArea } from '~/types/public-location'

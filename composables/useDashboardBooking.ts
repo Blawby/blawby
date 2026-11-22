@@ -33,7 +33,8 @@ export function isBookingDetailsResponse(value: unknown): value is { booking: Da
     && (value.booking.type === 'booking'
       ? typeof value.booking.conversation_id === 'string' && typeof value.booking.booking_id === 'string' && value.booking.payment_id === null
       : value.booking.type === 'payment' && typeof value.booking.payment_id === 'string'
-        && value.booking.conversation_id === null && value.booking.booking_id === null)
+        // An order's payment carries its order conversation; any other purchase has none.
+        && (value.booking.conversation_id === null || typeof value.booking.conversation_id === 'string') && value.booking.booking_id === null)
     && typeof value.booking.organization_id === 'string'
     && (value.booking.guest_name === null || typeof value.booking.guest_name === 'string')
     && (value.booking.notes === null || typeof value.booking.notes === 'string')

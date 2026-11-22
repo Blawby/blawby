@@ -801,5 +801,6 @@
   "shop.still_needed": "未入力：{fields}",
   "shop.partly_made_to_order": "在庫{stock}点、受注制作{made}点",
   "shop.free": "無料",
-  "order.ready_by": "受け取り可能日"
+  "order.ready_by": "受け取り可能日",
+  "order.number": "ご注文 #{number}"
 }

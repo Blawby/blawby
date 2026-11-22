@@ -101,7 +101,7 @@ function entryText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
-function eventText(message: Pick<MessageRow, 'event_name' | 'body' | 'id' | 'payload_json'>, actor: string, guestName: string, buyer: boolean, airbnb: boolean, reader?: { userId: string; guest: boolean }): string {
+function eventText(message: Pick<MessageRow, 'event_name' | 'body' | 'id' | 'payload_json'>, actor: string, guestName: string, buyer: boolean, airbnb: boolean, reader?: { userId: string; booker: boolean }): string {
   const name = message.event_name ?? ''
   const action = name.split('.').at(-1)
   const noun = name.startsWith('stay.') || airbnb ? 'reservation' : 'booking'
@@ -151,7 +151,7 @@ function presentEntries(
         : authorKind === 'guest' ? guestViewer ? 'You' : guestName
         : mine ? 'You' : !guestViewer && name ? firstName(name) : context.organization_name
       items.push({ type: 'event', id: message.id, sequence: message.sequence, sent_at: message.occurred_at,
-        text: eventText(message, actor, guestName, guestViewer, Boolean(airbnb), mine ? undefined : { userId, guest: guestViewer }),
+        text: eventText(message, actor, guestName, guestViewer, Boolean(airbnb), mine ? undefined : { userId, booker: guestViewer && conversation.user_id === userId }),
         ...(message.event_name === 'agreement.sent' ? { agreement: true as const } : {}) })
       continue
     }

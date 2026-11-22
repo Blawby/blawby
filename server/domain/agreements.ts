@@ -549,7 +549,9 @@ export async function signedAgreementDocument(env: CloudflareEnv, conversation: 
   const fingerprint = await sha256(original)
   const signatures = state.signers.map(signer => ({ signer, signed: signedSchema.parse(payload(signer.signature!)), at: signer.signature!.occurred_at }))
   if (signatures.some(({ signed }) => signed.sha256 !== fingerprint)) throw new Error(`The ${agreement.label.toLowerCase()} in storage is not the one that was signed`)
-  const pdf = await PDFDocument.load(original)
+  // The signed document is the same file each time it is opened: its dates are the signing's, not the download's.
+  const pdf = await PDFDocument.load(original, { updateMetadata: false })
+  pdf.setModificationDate(new Date(agreement.completed_at!))
   pdf.registerFontkit(fontkit)
   const [script, regular, bold] = await Promise.all([pdf.embedFont(StandardFonts.TimesRomanItalic), pdf.embedFont(StandardFonts.Helvetica), pdf.embedFont(StandardFonts.HelveticaBold)])
 

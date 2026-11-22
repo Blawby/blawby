@@ -250,7 +250,7 @@ function presentConversationList(rows: ListRow[], opts: ListGuestThreadsOptions,
     const message: LatestMessage | undefined = row.latest_author_kind !== null && row.latest_occurred_at !== null ? {
       authorKind: row.latest_author_kind, actorUserId: row.latest_author_user_id, actorName: row.latest_actor_name, eventName: row.latest_event_name,
       text: row.latest_body && row.latest_signers && row.latest_author_user_id !== opts.userId
-        ? agreementRequestLine(row.latest_body, JSON.parse(row.latest_signers), { userId: opts.userId, guest: Boolean(opts.buyerAudience) }) : row.latest_body,
+        ? agreementRequestLine(row.latest_body, JSON.parse(row.latest_signers), { userId: opts.userId, booker: Boolean(opts.buyerAudience) && row.user_id === opts.userId }) : row.latest_body,
       photos: row.latest_photos,
       sentAt: row.latest_provider_inserted_at ? providerInstant(row.latest_provider_inserted_at) : row.latest_occurred_at,
     } : undefined

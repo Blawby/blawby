@@ -17,7 +17,8 @@
             <button v-if="context.current.status !== 'signed'" type="button" :class="rowClass" data-testid="booking-agreement-replace" @click="startOver">
               <UIcon name="i-lucide-send" class="size-5 shrink-0" /><span class="min-w-0 flex-1">{{ context.current.source === 'listing' ? 'Send a document for this booking' : 'Replace document' }}</span><UIcon name="i-lucide-chevron-right" class="size-4 text-muted" />
             </button>
-            <button type="button" :class="rowClass" :disabled="busy !== null" data-testid="booking-agreement-store" @click="storePicker?.click()">
+            <!-- A document everyone signed here is complete: a copy added over it would hide it. -->
+            <button v-if="context.current.status !== 'signed'" type="button" :class="rowClass" :disabled="busy !== null" data-testid="booking-agreement-store" @click="storePicker?.click()">
               <UIcon name="i-lucide-upload" class="size-5 shrink-0" /><span class="min-w-0 flex-1">{{ busy === 'store' ? 'Uploading…' : 'Add a signed copy' }}</span><UIcon name="i-lucide-chevron-right" class="size-4 text-muted" />
             </button>
             <button v-if="context.current.source === 'booking' && context.current.status !== 'signed'" type="button" :class="rowClass" :disabled="busy !== null" data-testid="booking-agreement-cancel" @click="cancelRequest">
@@ -269,6 +270,7 @@ function chooseDocument(event: Event) {
   const chosen = input.files?.[0] ?? null
   input.value = ''
   if (!chosen) return
+  filled = false
   draft.file = chosen
   draft.fields = []
   pdf = null
@@ -334,6 +336,7 @@ async function useTemplate() {
     const bytes = Uint8Array.from(atob(answer.pdf_base64), char => char.charCodeAt(0))
     draft.file = new File([bytes], answer.file_name, { type: 'application/pdf' })
     draft.fields = answer.fields
+    filled = true
     for (const field of draft.fields) fieldKeys.set(field, `${field.signer_key}:${field.kind}:${placed++}`)
     pdf = null
   } catch (failure) {
@@ -345,8 +348,15 @@ async function useTemplate() {
   await openWorkspace()
 }
 
+/** The draft was filled from the template, not chosen by the business: leaving its workspace leaves no upload behind. */
+let filled = false
 function closeWorkspace() {
   workspace.value = false
+  if (filled && !sending.value) {
+    draft.file = null
+    draft.fields = []
+    filled = false
+  }
 }
 
 let rendering = 0

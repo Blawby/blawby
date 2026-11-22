@@ -210,7 +210,8 @@ export async function reconcilePaymentIntent(db:DbClient,stripe:Stripe,payment:P
       } catch (error) {
         if (!(error instanceof OrderStockUnavailableError)) throw error
         orderStatus = 'released'
-        await execute(db, releaseOrderQuery(payment).query, releaseOrderQuery(payment).params ?? [])
+        const released = releaseOrderQuery(payment)
+        await execute(db, released.query, released.params ?? [])
       }
     }
   }

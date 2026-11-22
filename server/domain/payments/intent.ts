@@ -314,8 +314,9 @@ export async function reviewPayment(db: DbClient, env: CloudflareEnv, organizati
 async function calculateTax(stripe: Stripe, payment: Payment, snapshot: ReturnType<typeof snapshotOf>, method: Stripe.PaymentMethod, buyerIp: string | null) {
   const address = method.billing_details.address
   const order = snapshot.order
-  // Goods are taxed where they are delivered: the shipping address, or the pickup location's country by the buyer's billing address.
-  const shipped = order?.shipping_details?.address
+  // Goods are taxed where they are delivered: the shipping address, or the location where they are collected.
+  if (order?.delivery_method === 'pickup' && !order.pickup_address) throw new HTTPError({ statusCode: 409, statusMessage: 'The pickup location has no address to calculate tax for', data: { code: 'pickup_address_missing' } })
+  const shipped = order?.shipping_details?.address ?? order?.pickup_address
   const located = shipped
     ? { address: { country: shipped.country, line1: shipped.line1, line2: shipped.line2, city: shipped.city, state: shipped.state, postal_code: shipped.postal_code }, address_source: 'shipping' as const }
     : address?.country
@@ -432,7 +433,7 @@ async function paymentReceipt(db: DbClient, env: CloudflareEnv, payment: Payment
     // The order is read by its conversation, as the buyer's account reads it.
     const order = await queryFirst<{ number: number; conversation_id: string | null; status: string }>(db, 'SELECT number, conversation_id, status FROM orders WHERE organization_id = ? AND id = ?', [payment.organization_id, payment.subject_id])
     if (order?.status !== 'paid' || !order.conversation_id) throw new HTTPError({ statusCode: 409, statusMessage: 'Payment was received, but the order could not be confirmed', data: { code: 'payment_order_unconfirmed' } })
-    return { state: 'paid', kind: 'order', order_number: order.number, activity_id: order.conversation_id, receipt_token: (await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET ?? '', order.conversation_id)).token }
+    return { state: 'paid', kind: 'order', order_number: order.number, activity_id: order.conversation_id, receipt_token: (await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, order.conversation_id)).token }
   }
   if (receipt?.status !== 'converted') throw new Error('Captured payment has no saved booking')
   if (payment.subject_type !== 'booking') throw new Error(`Payment subject ${payment.subject_type} has no guest confirmation`)
@@ -440,9 +441,9 @@ async function paymentReceipt(db: DbClient, env: CloudflareEnv, payment: Payment
   if (!conversationId) throw new Error('Converted hold has no booking conversation')
   if (receipt.session_id === null) {
     // A stay is read by its conversation, as the guest's account reads it.
-    return { state: 'paid', kind: 'stay', activity_id: conversationId, receipt_token: (await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET ?? '', conversationId)).token }
+    return { state: 'paid', kind: 'stay', activity_id: conversationId, receipt_token: (await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, conversationId)).token }
   }
-  const cancellation = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET ?? '', conversationId)
+  const cancellation = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, conversationId)
   if (await hashReservationCancelToken(cancellation.token) !== receipt.receipt_cancellation_hash) throw new Error('Paid booking is missing its receipt capability')
   return { state: 'paid', kind: 'booking', conversation_id: conversationId, cancellation_token: cancellation.token }
 }
@@ -492,7 +493,7 @@ export async function completePaymentReturn(db: DbClient, env: CloudflareEnv, or
     if (!userId && visitId && receiptLanguage && sessionBuyer) userId = await sessionBuyer()
     const originalBuyer = visitId && userId && userId === payment.buyer_user_id
       ? originalCheckoutClaim(payment.id, userId, await tokenHash(claim), new Date().toISOString()) : null
-    const cancellation = visitId && originalBuyer ? await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET ?? '', visitId) : null
+    const cancellation = visitId && originalBuyer ? await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, visitId) : null
     const visit = visitId && cancellation ? await visitReceipt(visitId, cancellation.token) : null
     // A visit with a receipt plan checks for the webhook's capture in the same
     // batch that can claim the booking itself.

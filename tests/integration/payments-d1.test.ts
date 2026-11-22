@@ -1876,6 +1876,11 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
     calls.push(`create:${body.get('amount')}`)
     return Response.json({ id: `pi_${id}`, object: 'payment_intent', client_secret: `pi_${id}_secret`, livemode: false, amount: Number(body.get('amount')), currency: 'usd', status: 'requires_payment_method', metadata: { blawby_payment_id: id } })
    }
+   if (url.pathname === '/v1/refunds' && init?.method === 'POST') {
+    const paid = body.get('payment_intent')!
+    calls.push(`refund:${paid.slice(3)}`)
+    return Response.json({ id: `re_${paid}`, object: 'refund', amount: 10000, currency: 'usd', status: 'succeeded', payment_intent: paid, reason: 'requested_by_customer', metadata: { blawby_refund_id: body.get('metadata[blawby_refund_id]') } })
+   }
    const [, , resource, id, action] = url.pathname.split('/')
    const paymentId = id!.replace(/^(pi|ch)_/u, '')
    const charge = { id: `ch_${paymentId}`, object: 'charge', livemode: false, amount: 10000, currency: 'usd', created: 1_790_000_000, payment_intent: `pi_${paymentId}`, receipt_url: 'https://pay.stripe.com/receipts/order', billing_details: { email: 'buyer@example.com' } }
@@ -1934,6 +1939,16 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
   assert.equal(await db.prepare('SELECT o.status FROM orders o JOIN payments p ON p.subject_id = o.id WHERE p.id = ?').bind(raced.payment_id).first('status'), 'released')
   assert.equal((await requirePayment(db, ORG, raced.payment_id)).captured_amount, 0)
   assert.deepEqual((await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'celadon'").first('available')), -1)
+
+  // A method Stripe captures at once (a redirect) for a set sold out meanwhile is refunded in full and its order released.
+  await db.prepare("UPDATE inventory_levels SET available = 1 WHERE product_variant_id = 'ruby'").run()
+  const redirected = await checkout('redirected-order')
+  await db.prepare("UPDATE inventory_levels SET available = 0 WHERE product_variant_id = 'ruby'").run()
+  statuses[redirected.payment_id] = 'succeeded'
+  await processPaymentEvent(db, getStripe(env), { ...authorized(redirected.payment_id), id: `evt_succeeded_${redirected.payment_id}`, type: 'payment_intent.succeeded' } as unknown as Stripe.Event, env)
+  assert.deepEqual(calls.slice(-1), [`refund:${redirected.payment_id}`])
+  assert.equal(await db.prepare('SELECT o.status FROM orders o JOIN payments p ON p.subject_id = o.id WHERE p.id = ?').bind(redirected.payment_id).first('status'), 'released')
+  assert.deepEqual(await db.prepare('SELECT captured_amount, refunded_amount FROM payments WHERE id = ?').bind(redirected.payment_id).first(), { captured_amount: 10000, refunded_amount: 10000 })
 
   // Shipping it closes the task and tells the buyer in their conversation.
   const shipped = await fulfillOrder(db, env, { organizationId: ORG, orderId: paid!.id, actorId: 'host', carrier: 'Thailand Post EMS', tracking_number: 'EE123456789TH', tracking_url: null })

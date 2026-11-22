@@ -15,7 +15,7 @@ export default defineHandler(async (event) => {
   const token = readBearerToken(event.req.headers.get('authorization'))
   if (!token) throw new HTTPError({ statusCode: 401, statusMessage: 'Open your order from the link in your confirmation email' })
   const env = cloudflareEnv(event)
-  const expected = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET ?? '', activityId)
+  const expected = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, activityId)
   if (await hashReservationCancelToken(token) !== await hashReservationCancelToken(expected.token)) throw new HTTPError({ statusCode: 404, statusMessage: 'Order not found' })
   const order = await readOrder(env.DB, organizationId, { conversationId: activityId })
   if (!order || order.status === 'pending' || order.status === 'released') throw new HTTPError({ statusCode: 404, statusMessage: 'Order not found' })

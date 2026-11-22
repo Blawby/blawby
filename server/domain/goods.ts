@@ -66,6 +66,16 @@ export async function setInventoryLevels(db: DbClient, input: { organizationId: 
   return readInventoryLevels(db, input.organizationId, input.productId)
 }
 
+/** Stripe's address shape, from a location's stored Google postal address. */
+export interface StripeAddress { line1: string; line2: string | null; city: string | null; state: string | null; postal_code: string | null; country: string }
+function stripeAddress(stored: string | null): StripeAddress | null {
+  if (!stored) return null
+  const address = JSON.parse(stored) as { regionCode: string; addressLines: string[]; locality?: string; administrativeArea?: string; postalCode?: string }
+  const [line1, ...rest] = address.addressLines
+  if (!line1) return null
+  return { line1, line2: rest.join(', ') || null, city: address.locality ?? null, state: address.administrativeArea ?? null, postal_code: address.postalCode ?? null, country: address.regionCode }
+}
+
 // ---------------------------------------------------------------------------
 // Shipping zones and pickup
 // ---------------------------------------------------------------------------
@@ -73,12 +83,24 @@ export async function setInventoryLevels(db: DbClient, input: { organizationId: 
 export interface ShippingRate { id: string; name: string; currency: string; amount: number; min_weight_grams: number | null; max_weight_grams: number | null; min_subtotal: number | null; delivery_days_min: number | null; delivery_days_max: number | null }
 export interface ShippingZone { id: string; location_id: string; name: string; countries: string[]; rates: ShippingRate[] }
 
+/** Where the business ships from and to, and where buyers can collect: one batch. */
+export async function readShippingSettings(db: DbClient, organizationId: string) {
+  const [zoneRows, rateRows, locationRows] = await executeBatch(db, [
+    { query: 'SELECT id, location_id, name, countries FROM shipping_zones WHERE organization_id = ? ORDER BY location_id, created_at, id', params: [organizationId] },
+    { query: 'SELECT * FROM shipping_rates WHERE organization_id = ? ORDER BY sort_order, id', params: [organizationId] },
+    { query: "SELECT id, title, pickup_enabled FROM business_locations WHERE organization_id = ? AND status = 'active' ORDER BY created_at, id", params: [organizationId] },
+  ], { operation: 'Read shipping settings' })
+  const zones = (zoneRows?.results ?? []) as Array<{ id: string; location_id: string; name: string; countries: string }>
+  const rates = (rateRows?.results ?? []) as Array<ShippingRate & { shipping_zone_id: string }>
+  const locations = (locationRows?.results ?? []) as Array<{ id: string; title: string; pickup_enabled: number }>
+  return {
+    zones: zones.map(zone => ({ ...zone, countries: JSON.parse(zone.countries) as string[], rates: rates.filter(rate => rate.shipping_zone_id === zone.id).map(({ shipping_zone_id: _zone, ...rate }) => rate) })),
+    locations: locations.map(location => ({ ...location, pickup_enabled: location.pickup_enabled === 1 })),
+  }
+}
+
 export async function listShippingZones(db: DbClient, organizationId: string): Promise<ShippingZone[]> {
-  const [zones, rates] = await Promise.all([
-    queryAll<{ id: string; location_id: string; name: string; countries: string }>(db, 'SELECT id, location_id, name, countries FROM shipping_zones WHERE organization_id = ? ORDER BY location_id, created_at, id', [organizationId]),
-    queryAll<ShippingRate & { shipping_zone_id: string }>(db, 'SELECT * FROM shipping_rates WHERE organization_id = ? ORDER BY sort_order, id', [organizationId]),
-  ])
-  return zones.map(zone => ({ ...zone, countries: JSON.parse(zone.countries) as string[], rates: rates.filter(rate => rate.shipping_zone_id === zone.id).map(({ shipping_zone_id: _zone, ...rate }) => rate) }))
+  return (await readShippingSettings(db, organizationId)).zones
 }
 
 export interface ShippingZoneInput {
@@ -175,7 +197,9 @@ export interface QuotedLine {
   available: number | null
 }
 export interface OrderQuote {
-  currency: string; location: { id: string; title: string; timezone: string }
+  currency: string
+  /** Where the order is sent from or collected at; `address` is the location's postal address in Stripe's shape, or null when it has none. */
+  location: { id: string; title: string; timezone: string; address: StripeAddress | null }
   lines: QuotedLine[]; subtotal: number; weight_grams: number | null
   /** Null while the buyer has not chosen how it reaches them: the cart is priced at the first location offering it. */
   delivery_method: DeliveryMethod | null
@@ -226,7 +250,7 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
     { query: `SELECT pl.product_id, pl.location_id FROM product_locations pl JOIN product_variants v ON v.organization_id = pl.organization_id AND v.product_id = pl.product_id
       WHERE pl.organization_id = ? AND pl.active = 1 AND v.id IN (SELECT value FROM json_each(?))`, params: [organizationId, ids] },
     { query: 'SELECT product_variant_id, location_id, available FROM inventory_levels WHERE organization_id = ? AND product_variant_id IN (SELECT value FROM json_each(?))', params: [organizationId, ids] },
-    { query: "SELECT id, title, timezone, pickup_enabled FROM business_locations WHERE organization_id = ? AND status = 'active' ORDER BY created_at, id", params: [organizationId] },
+    { query: "SELECT id, title, timezone, pickup_enabled, address FROM business_locations WHERE organization_id = ? AND status = 'active' ORDER BY created_at, id", params: [organizationId] },
     { query: `SELECT z.id AS zone_id, z.location_id, z.countries, r.* FROM shipping_zones z JOIN shipping_rates r ON r.organization_id = z.organization_id AND r.shipping_zone_id = z.id
       WHERE z.organization_id = ? ORDER BY r.amount, r.sort_order`, params: [organizationId] },
     { query: 'SELECT default_currency FROM organization WHERE id = ?', params: [organizationId] },
@@ -235,7 +259,7 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
   const prices = (priceRows?.results ?? []) as unknown as Price[]
   const offers = (offerRows?.results ?? []) as Array<{ product_id: string; location_id: string }>
   const stock = (stockRows?.results ?? []) as Array<{ product_variant_id: string; location_id: string; available: number }>
-  const locations = (locationRows?.results ?? []) as Array<{ id: string; title: string; timezone: string; pickup_enabled: number }>
+  const locations = (locationRows?.results ?? []) as Array<{ id: string; title: string; timezone: string; pickup_enabled: number; address: string | null }>
   const zoneRates = (zoneRows?.results ?? []) as Array<ShippingRate & { zone_id: string; location_id: string; countries: string }>
   const currency = (currencyRows?.results[0] as { default_currency: string | null } | undefined)?.default_currency
   if (!currency) fail(409, 'CURRENCY_REQUIRED', 'This business has not set its currency')
@@ -285,7 +309,7 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
     return line.made_to_order_quantity > 0 ? variant.made_to_order_days : variant.processing_days
   })
   const shipBy = productDays.every(days => days !== null) ? addBusinessDays(localDateAt(at, location.timezone), Math.max(0, ...(productDays as number[]))) : null
-  return { currency, location: { id: location.id, title: location.title, timezone: location.timezone }, lines: quoted, subtotal, weight_grams: weight,
+  return { currency, location: { id: location.id, title: location.title, timezone: location.timezone, address: stripeAddress(location.address) }, lines: quoted, subtotal, weight_grams: weight,
     delivery_method: delivery === null ? null : delivery.method as DeliveryMethod,
     ship_to_countries: [...new Set(zoneRates.filter(rate => offering.some(candidate => candidate.id === rate.location_id) && rate.currency === currency).flatMap(rate => JSON.parse(rate.countries) as string[]))].sort(),
     pickup_locations: offering.filter(candidate => candidate.pickup_enabled === 1).map(candidate => ({ id: candidate.id, title: candidate.title })),
@@ -306,6 +330,8 @@ export interface OrderSnapshot {
   ship_by: string | null
   /** The end of the ship-by day where it ships from, the fulfilment task's due instant. */
   ship_by_due_at: string | null
+  /** A pickup order is taxed where it is collected: the location's address. */
+  pickup_address?: StripeAddress | null
 }
 
 export function orderSnapshotOf(snapshot: Record<string, unknown>): OrderSnapshot | null {
@@ -329,7 +355,7 @@ const trimmedText = (value: unknown, field: string, max: number, required: boole
 }
 
 /** Freezes the order and its price on a payment, then opens its PaymentIntent. A retry with the same key reopens it. */
-export async function createOrderCheckout(db: DbClient, env: CloudflareEnv, input: OrderCheckoutInput): Promise<PaymentHandoff> {
+export async function createOrderCheckout(db: DbClient, env: CloudflareEnv, input: OrderCheckoutInput, attempt = 1): Promise<PaymentHandoff> {
   const key = input.idempotencyKey.trim()
   if (!key || key.length > 200) fail(400, 'VALIDATION_ERROR', 'An idempotency key of 1–200 characters is required', 'idempotency_key')
   const guest = {
@@ -383,6 +409,7 @@ export async function createOrderCheckout(db: DbClient, env: CloudflareEnv, inpu
       id: orderId, location_id: quote.location.id, delivery_method: quote.delivery_method,
       lines: quote.lines.map(({ product_id, product_variant_id, title: lineTitle, variant_title, quantity, unit_amount, amount, tax_code, tax_behavior }) => ({ product_id, product_variant_id, title: lineTitle, variant_title, quantity, unit_amount, amount, tax_code, tax_behavior })),
       shipping, shipping_details: shippingDetails, guest, note, ship_by: quote.ship_by,
+      ...(quote.delivery_method === 'pickup' ? { pickup_address: quote.location.address } : {}),
       ship_by_due_at: quote.ship_by ? localDateTimeToInstant(quote.ship_by, '23:59', quote.location.timezone, 'compatible').toISOString() : null,
     }
     const purchase = {
@@ -411,7 +438,9 @@ export async function createOrderCheckout(db: DbClient, env: CloudflareEnv, inpu
     ]
     try { await executeBatch(db, queries, { operation: 'Save order checkout' }) }
     catch (error) {
-      if (await readCheckoutAttempt(db, input.organizationId, key)) return createOrderCheckout(db, env, input)
+      if (await readCheckoutAttempt(db, input.organizationId, key)) return createOrderCheckout(db, env, input, attempt)
+      // Two buyers took the same next order number; the later one takes the one after it.
+      if (attempt < 3 && error instanceof Error && /orders\.organization_id, orders\.number|orders_org_number_unique/u.test(error.message + String((error as { cause?: unknown }).cause ?? ''))) return createOrderCheckout(db, env, input, attempt + 1)
       throw error
     }
   }

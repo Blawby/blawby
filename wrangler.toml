@@ -323,7 +323,7 @@ E2E_ALLOW_DEV_ROUTES = "true"
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "blawby-staging-v30"
-database_id = "1fd06f33-e4bb-4a21-a18b-fe1004ab8a60"
+database_id = "ee3f01f1-a43b-4d4f-8f59-2d297a822088"
 migrations_dir = "migrations"
 remote = false
 

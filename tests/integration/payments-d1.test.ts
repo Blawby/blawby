@@ -1911,6 +1911,11 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
   const rate = (id: string, name: string, amount: number, band: { min_weight_grams?: number; max_weight_grams?: number }) => ({ id, name, amount, min_weight_grams: band.min_weight_grams ?? null, max_weight_grams: band.max_weight_grams ?? null, min_subtotal: null, delivery_days_min: null, delivery_days_max: null })
   const renamed = await saveShippingZone(db, ORG, 'laos', { updated_at: NOW, location_id: 'studio', name: 'Laos by post', countries: ['LA'], rates: [rate('ems', 'EMS', 1000, { max_weight_grams: 10000 }), rate('freight', 'Freight', 5000, { min_weight_grams: 10000 })] })
   assert.deepEqual(renamed.rates.map(entry => entry.id).sort(), ['ems', 'freight'])
+  // A save in the same instant as the last still advances the revision: a stale editor's revision never matches again.
+  await db.prepare("UPDATE shipping_zones SET updated_at = '2999-01-01T00:00:00.000Z' WHERE id = 'laos'").run()
+  const bumped = await saveShippingZone(db, ORG, 'laos', { updated_at: '2999-01-01T00:00:00.000Z', location_id: 'studio', name: 'Laos by post', countries: ['LA'], rates: renamed.rates.map(entry => rate(entry.id, entry.name, entry.amount, { min_weight_grams: entry.min_weight_grams ?? undefined, max_weight_grams: entry.max_weight_grams ?? undefined })) })
+  assert.equal(bumped.updated_at, '2999-01-01T00:00:00.001Z')
+  await db.prepare("UPDATE shipping_zones SET updated_at = ? WHERE id = 'laos'").bind(renamed.updated_at).run()
   await assert.rejects(() => saveShippingZone(db, ORG, 'laos', { updated_at: renamed.updated_at, location_id: 'studio', name: 'Laos by post', countries: ['LA'], rates: [rate('ems', 'EMS', 1000, { max_weight_grams: 10000 }), rate('deleted-rate', 'Gone', 2000, {})] }),
     error => error instanceof HTTPError && (error.data as { code: string }).code === 'SHIPPING_ZONE_NOT_FOUND')
   // A save edited from the revision before the rename cannot drop rates it never saw.
@@ -1937,6 +1942,9 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
   assert.deepEqual((await db.prepare('SELECT product_variant_id, available FROM inventory_levels ORDER BY product_variant_id').all()).results, [{ product_variant_id: 'celadon', available: -1 }, { product_variant_id: 'ruby', available: 0 }])
   assert.equal(await db.prepare("SELECT kind FROM conversations WHERE id = ?").bind(paid!.conversation_id).first('kind'), 'contact')
   assert.equal(await db.prepare("SELECT count(*) n FROM tasks WHERE kind = 'order_fulfillment' AND subject_type = 'order' AND subject_id = ? AND status = 'open' AND due_at IS NOT NULL").bind(paid!.id).first('n'), 1)
+  // Settled as quoted (Ruby reds from stock, Celadon made to order): the quoted date, and the task due at the end of that day.
+  assert.equal(paid?.ship_by, quote.ship_by)
+  assert.equal(await db.prepare("SELECT due_at FROM tasks WHERE subject_id = ?").bind(paid!.id).first('due_at'), new Date(`${quote.ship_by}T23:59:00+07:00`).toISOString())
   await events.drain(env, 'payment.captured')
   // The receipt lists what was paid as Shopify's does: subtotal, the shipping rate, total.
   const receipt = String(await db.prepare("SELECT email_json FROM guest_thread_deliveries WHERE email_json LIKE '%#1001 confirmed%'").first('email_json'))

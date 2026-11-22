@@ -195,7 +195,18 @@ async function save() {
     // The options were saved; read the new version so the next save is not refused, keeping the typed stock to retry.
     if (committed) {
       keepDraft = true
-      try { await p.reload() }
+      try {
+        // The stock may already be written: its baseline is read again, or Save stays blocked by the failed read.
+        await loadLevels().catch(cause => { levelsError.value = getErrorMessage(cause, 'Stock could not be read') })
+        await p.reload()
+        // The committed prices are now the baseline: a retry finds them unchanged rather than "changed since this page opened".
+        for (const row of rows.value) {
+          const variant = row.id ? product.value?.variants.find(entry => entry.id === row.id) : undefined
+          const price = variant ? neutralPrice(variant) : null
+          row.price_id = price?.id ?? null
+          row.opened_price = price ? minorAmountToMajor(price.unit_amount, price.currency) : ''
+        }
+      }
       catch (reloadCause) { error.value = `${error.value}. ${getErrorMessage(reloadCause, 'Reload the page before saving again')}` }
       finally { keepDraft = false }
     }

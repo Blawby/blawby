@@ -107,18 +107,19 @@ function eventText(message: Pick<MessageRow, 'event_name' | 'body' | 'id'>, acto
   if (name.startsWith('booking_change.') && (action === 'accepted' || action === 'declined' || action === 'withdrawn')) {
     return `${buyer ? 'Your' : `${guestName}’s`} change was ${action}${airbnb ? ' on Airbnb' : ''}`
   }
+  // An agreement's record reads as its actor's own act: "Eva signed the rental agreement".
+  // It comes before the booking's own actions: agreement.cancelled withdraws a document, not the booking.
+  if (name.startsWith('agreement.')) {
+    const act = entryText(message.body)
+    if (!act) throw new HTTPError({ statusCode: 500, message: `The agreement activity ${name} has nothing to say`, data: { code: 'INVALID_CONVERSATION_EVENT', field: 'body', entry_id: message.id } })
+    return `${actor} ${act.charAt(0).toLowerCase()}${act.slice(1)}`
+  }
   if (action === 'guest_cancelled') return `${buyer ? 'You' : guestName} canceled the ${noun}`
   if (action === 'cancel' || action === 'cancelled') return `${actor} canceled the ${noun}`
   if (action === 'confirm' || action === 'confirmed') return `${actor} confirmed the ${noun}`
   if (action === 'reject') return `${actor} declined the ${noun}`
   if (action === 'no_show') return `${actor} marked the ${noun} as a no-show`
   if (name === 'review.requested') return 'Review invitation sent'
-  // An agreement's record reads as its actor's own act: "Eva signed the rental agreement".
-  if (name.startsWith('agreement.')) {
-    const act = entryText(message.body)
-    if (!act) throw new HTTPError({ statusCode: 500, message: `The agreement activity ${name} has nothing to say`, data: { code: 'INVALID_CONVERSATION_EVENT', field: 'body', entry_id: message.id } })
-    return `${actor} ${act.charAt(0).toLowerCase()}${act.slice(1)}`
-  }
   const firstLine = entryText(message.body)?.split('\n')[0]?.trim()
   if (firstLine) return firstLine
   throw new HTTPError({ statusCode: 500, message: `The conversation activity ${name} has nothing to say`, data: { code: 'INVALID_CONVERSATION_EVENT', field: 'event_name', entry_id: message.id } })

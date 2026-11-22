@@ -223,7 +223,8 @@ export async function auditTargetInvariants(target) {
     SELECT DISTINCT role FROM member WHERE role IS NOT NULL
     UNION SELECT DISTINCT role FROM invitation WHERE role IS NOT NULL AND status = 'pending'
   `).all().map(row => String(row.role))
-  const undeclared = roles.filter(role => !DECLARED_ORGANIZATION_ROLES.has(role))
+  // A member holds several roles, stored comma-separated as Better Auth stores them; each must be declared.
+  const undeclared = roles.filter(role => role.split(',').some(name => !DECLARED_ORGANIZATION_ROLES.has(name.trim())))
   results.push({ name: 'organization_roles_are_declared', violations: undeclared.length, undeclared })
   // The R2 keys are the ones this transfer rewrites, and the objects were
   // copied to organizations/<id>/ in R2, outside this file. So every active

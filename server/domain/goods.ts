@@ -417,7 +417,7 @@ export async function createOrderCheckout(db: DbClient, env: CloudflareEnv, inpu
   }
   const savedCards = await openPaymentIntent(db, stripe, {
     paymentId: id, organizationId: input.organizationId, idempotencyKey: `checkout:${input.organizationId}:${key}`, retry: Boolean(previous), amount: total, currency: quote.currency,
-    connected, methodConfigurationId, surcharge, description: title, buyerUserId: input.buyerUserId, buyer: input.buyer ?? null,
+    connected, methodConfigurationId, surcharge, description: title, buyerUserId: input.buyerUserId, buyer: input.buyer ?? null, saveCard: false,
   })
   await publishEvent(env, { type: 'payment.checkout_started', organization_id: input.organizationId, payment_id: id, saved_cards_offered: savedCards })
   return handoff

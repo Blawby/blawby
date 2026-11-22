@@ -189,6 +189,7 @@ CREATE TABLE `bookings` (
 	`policy_json` text NOT NULL,
 	`total_minor` integer,
 	`currency` text,
+	`deposit_minor` integer,
 	`idempotency_key` text,
 	`version` integer DEFAULT 1 NOT NULL,
 	`channel` text DEFAULT 'direct' NOT NULL,
@@ -1090,6 +1091,8 @@ CREATE TABLE `offline_payments` (
 	`paid_on` text NOT NULL,
 	`reference` text,
 	`note` text,
+	`purpose` text DEFAULT 'payment' NOT NULL,
+	`period_start` text,
 	`idempotency_key` text NOT NULL,
 	`created_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) NOT NULL,
 	`created_by` text NOT NULL,
@@ -2516,7 +2519,8 @@ CREATE VIEW `occupied_stay_nights` AS
   SELECT n.organization_id, b.booked_product_id, n.date, n.booking_id FROM bookings b
   JOIN stay_nights n ON n.organization_id = b.organization_id AND n.booking_id = b.id
   WHERE b.status = 'confirmed' AND b.booked_product_id IS NOT NULL AND b.booked_product_id <> n.product_id
-;--> statement-breakpoint
+;
+--> statement-breakpoint
 CREATE TRIGGER apply_invited_listing_access
 AFTER INSERT ON member
 WHEN EXISTS (

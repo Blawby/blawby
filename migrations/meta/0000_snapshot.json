@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "371e2341-e46e-40ce-a539-587023dbd73e",
+  "id": "a1cf7c43-4d50-47b6-8ac3-54d4e8042634",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "account": {
@@ -1262,6 +1262,13 @@
         "currency": {
           "name": "currency",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "deposit_minor": {
+          "name": "deposit_minor",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -7514,6 +7521,21 @@
         },
         "note": {
           "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "purpose": {
+          "name": "purpose",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'payment'"
+        },
+        "period_start": {
+          "name": "period_start",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

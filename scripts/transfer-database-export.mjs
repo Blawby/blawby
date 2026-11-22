@@ -481,7 +481,9 @@ export async function transferDatabaseExport(sourcePath, targetPath, { payloadPa
     target.pragma('foreign_keys = OFF')
     target.transaction(() => {
       for (const table of names) {
-        const targetColumns = columns(target, table)
+        // A column new in the target takes its declared default; every column the source has is copied.
+        const stageColumns = columns(stage, table)
+        const targetColumns = columns(target, table).filter(name => stageColumns.includes(name))
         const rows = transferRows(stage, table, targetColumns.map(qi).join(','))
         const insert = target.prepare(`INSERT INTO ${qi(table)} (${targetColumns.map(qi).join(',')}) VALUES (${targetColumns.map(() => '?').join(',')})`)
         for (const row of rows) insert.run(...targetColumns.map(name => row[name]))

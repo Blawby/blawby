@@ -275,7 +275,7 @@ export async function createPaymentCheckout(db: DbClient, env: CloudflareEnv, in
   }
   const savedCards = await openPaymentIntent(db, stripe, {
     paymentId: id, organizationId: input.organizationId, idempotencyKey: key, retry: Boolean(previous), amount, currency: price.currency,
-    connected, methodConfigurationId, surcharge, description: projectionTitle, buyerUserId: input.buyerUserId, buyer: input.buyer ?? null,
+    connected, methodConfigurationId, surcharge, description: projectionTitle, buyerUserId: input.buyerUserId, buyer: input.buyer ?? null, saveCard: installments !== null,
   })
   await publishCheckout(savedCards)
   return handoff(id)
@@ -292,6 +292,8 @@ export async function openPaymentIntent(db: DbClient, stripe: Stripe, input: {
   paymentId: string; organizationId: string; idempotencyKey: string; retry: boolean; amount: number; currency: string
   connected: Pick<StripeConnectedAccount, 'stripe_account_id' | 'livemode'>; methodConfigurationId: string; surcharge: number | null
   description: string; buyerUserId: string | null; buyer: ConnectedBuyer | null
+  /** A long stay's later months are charged to the card saved with its first, on the guest's Customer at this business. */
+  saveCard: boolean
 }): Promise<number> {
   const { connected, paymentId: id } = input
   if (!connected.stripe_account_id) throw new Error('Checkout has no connected account')
@@ -299,7 +301,7 @@ export async function openPaymentIntent(db: DbClient, stripe: Stripe, input: {
   const customer = input.buyerUserId ? await connectedBuyerCustomer(db, stripe, input.buyer ?? input.buyerUserId, connected.stripe_account_id, connected.livemode) : null
   const stripeAccount = connected.stripe_account_id
   // The card a long stay's later months are charged to is saved with the first, on the guest's Customer at this business.
-  const monthly = installments !== null
+  const monthly = input.saveCard
   if (monthly && !customer) throw new Error('A stay paid monthly has no guest Customer to keep its card on')
   try {
     const intent = await createWithStripeMetadata(stripe, 'payment', id, input.retry, metadata => stripe.paymentIntents.create({

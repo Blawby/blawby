@@ -155,9 +155,11 @@
         </div>
       </footer>
 
-      <!-- Signature adoption: the app's modal, which keeps focus inside it and the sheet behind it inert. -->
+      <!-- Signature adoption: the app's modal, which keeps focus inside it and the sheet behind it inert.
+           It joins the sheet on the body: the dashboard's own overlay layer sits below the sheet, and hid it. -->
       <UModal
         v-model:open="adoptionModalOpen"
+        portal="body"
         :title="`Sign ${agreement.label}`"
         :ui="{ overlay: 'z-[110]', content: 'z-[110] max-w-md', title: 'text-center text-base' }"
         data-testid="signature-adoption-dialog"

@@ -54,6 +54,29 @@ export const STAY_PRESENTATION: ProductPresentation = {
 }
 
 /**
+ * A physical item reads the same on every vertical and theme: one page of the
+ * site's own, named by its slug, whichever branches stock it. schema.org calls
+ * it a Product.
+ */
+export const ITEM_PRESENTATION: ProductPresentation = {
+  feature: 'products',
+  collectionPath: '/products',
+  locationCollectionSegment: 'products',
+  productPath: (_locationSlug, productSlug) => `/products/${encodeURIComponent(productSlug)}`,
+  collectionLabel: 'Products',
+  itemLabel: 'Product',
+  itemLabelPlural: 'Products',
+  collectionGroupLabel: 'Collection',
+  collectionGroupLabelPlural: 'Collections',
+  structuredDataType: 'Product',
+}
+
+/** Kinds whose page is the site's own (/experiences/, /stays/, /products/<slug>) rather than a branch's. */
+export function hasSiteProductPage(kind: string | null | undefined): boolean {
+  return kind === 'experience' || kind === 'stay' || kind === 'item'
+}
+
+/**
  * The catalog sections a site's navigation offers, in order, each only when
  * the site has something on it, linked where the site's vertical lists them.
  * Header, footer and sitemap read this one list.
@@ -78,9 +101,9 @@ export function publicLocationPath(location: { slug: string }): string {
   return `/locations/${encodeURIComponent(location.slug)}`
 }
 
-/** The site-wide item page a path names — /experiences/<slug> or /stays/<slug> — or null. */
+/** The site-wide item page a path names — /experiences/, /stays/ or /products/<slug> — or null. */
 export function parseSiteProductPath(path: string): { surface: SiteProductSurface, slug: string } | null {
-  const match = /^\/(experiences|stays)\/([^/]+)$/.exec(path)
+  const match = /^\/(experiences|stays|products)\/([^/]+)$/.exec(path)
   if (!match) return null
   let slug: string
   try {
@@ -103,6 +126,7 @@ export function productCtaKey(kind: string | null | undefined): string {
 /** The surface this product is read on, and the paths and words that go with it. */
 export function presentationForProduct(product: Pick<Product, 'kind'>, themeId?: string): ProductPresentation {
   if (product.kind === 'stay') return STAY_PRESENTATION
+  if (product.kind === 'item') return ITEM_PRESENTATION
   return product.kind === 'experience' ? EXPERIENCE_PRESENTATION : product.kind === 'dish' ? requireProductPresentation('restaurant') : requireProductPresentation('service', themeId)
 }
 

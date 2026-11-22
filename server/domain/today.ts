@@ -220,6 +220,22 @@ async function presentToday(
         done: available ? null : { path: `/api/organizations/${encodeURIComponent(viewer.organization_id)}/tasks/${encodeURIComponent(work.id)}/complete` } })
       continue
     }
+    if (work.kind === 'order_fulfillment') {
+      // A paid order is today's work from the moment it is paid until it is sent or collected, as Shopify lists unfulfilled orders; its conversation holds the order panel.
+      if (range !== 'today' || !(work.assigned_to_viewer || manage)) continue
+      if (work.order_number === null || !work.order_conversation_id) throw new Error(`Order task ${work.id} has no order`)
+      const buyer = first(work.order_guest_name) ?? 'the buyer'
+      const dueDay = work.due_at ? localDateAt(new Date(work.due_at), work.timezone) : null
+      const shipBy = dueDay === null ? null : dueDay < today(work.timezone) ? `Overdue since ${formatCalendarDate(dueDay, 'en', { weekday: 'short', month: 'short', day: 'numeric' })}` : `Ship by ${formatCalendarDate(dueDay, 'en', { weekday: 'short', month: 'short', day: 'numeric' })}`
+      const pickup = work.order_delivery_method === 'pickup'
+      add({ id: `task:${work.id}`, noun: 'task', order: [1, work.due_at ?? ''], bookings: [], day: today(work.timezone),
+        when: pickup ? 'Pickup' : shipBy, image_url: null, icon: 'i-lucide-list-checks',
+        // The place is said only where it matters: where a pickup is collected.
+        headline: pickup ? `Order #${work.order_number} for pickup by ${buyer}` : `Ship order #${work.order_number} to ${buyer}`, line: pickup ? work.location_title : null,
+        action: { title: 'Open order', detail: pickup ? 'Mark as collected when it is picked up' : 'Mark as shipped with its tracking' },
+        to: guestConversationPath(viewer.slug, work.order_conversation_id), draft: null })
+      continue
+    }
     if (work.kind === 'maintenance') {
       // A repair: its person's card, which they close in one tap, and every repair for the people who manage the business.
       if (!work.assigned_to_viewer && !manage) continue

@@ -56,9 +56,9 @@ export const CUSTOMER_SITE: PublicSiteDefinition = {
   sitemap: {
     // Authored pages are listed from published documents, never assumed from a business type.
     exactPaths: ['/', '/services', '/menu', '/products', '/experiences', '/stays', '/contact', '/blog', '/docs', '/locations', '/reservations', '/posts', '/photos', '/qa', '/reviews'],
-    dynamicPrefixes: ['/blog/', '/docs/', '/services/', '/experiences/', '/stays/', '/locations/', '/posts/'],
+    dynamicPrefixes: ['/blog/', '/docs/', '/services/', '/experiences/', '/stays/', '/products/', '/locations/', '/posts/'],
   },
-  nonIndexableExactPaths: ['/contact/confirmed', '/bookings/cancel', '/bookings/confirmed', '/login', '/signup', '/forgot-password', '/reset-password', '/accept-invitation'],
+  nonIndexableExactPaths: ['/cart', '/orders/confirmed', '/contact/confirmed', '/bookings/cancel', '/bookings/confirmed', '/login', '/signup', '/forgot-password', '/reset-password', '/accept-invitation'],
   pageDocuments: {
     recipes: {
       home: '/', about: '/about', contact: '/contact', reservations: '/reservations',

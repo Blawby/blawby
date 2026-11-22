@@ -36,14 +36,16 @@ async function paymentPictures(db: DbClient, organizationId: string, payments: r
   if (!payments.length) return new Map()
   const subjects = await queryAll<PaymentSubject>(db, `
     SELECT p.id, b.id AS booking_id, b.product_id, pr.name, b.starts_at, b.ends_at, b.timezone,
-      ${includeBuyer ? `COALESCE(json_extract(r.payload_json, '$.guest.name'), json_extract(bc.payload_json, '$.guest.name'), CASE WHEN COALESCE(u."isAnonymous", 0) = 0 THEN u.name END)` : 'NULL'} AS buyer_name
+      ${includeBuyer ? `COALESCE(json_extract(r.payload_json, '$.guest.name'), json_extract(bc.payload_json, '$.guest.name'), json_extract(oc.payload_json, '$.guest.name'), CASE WHEN COALESCE(u."isAnonymous", 0) = 0 THEN u.name END)` : 'NULL'} AS buyer_name
       FROM payments p
       ${paymentBookingJoin}
       LEFT JOIN products pr ON pr.id = b.product_id AND pr.organization_id = b.organization_id
       ${includeBuyer ? `LEFT JOIN user u ON u.id = p.buyer_user_id
       LEFT JOIN payment_checkout_holds h ON h.payment_id = p.id
       LEFT JOIN conversations r ON r.id = h.conversation_id AND r.organization_id = p.organization_id
-      LEFT JOIN conversations bc ON bc.booking_id = b.id AND bc.organization_id = p.organization_id AND bc.kind = 'booking'` : ''}
+      LEFT JOIN conversations bc ON bc.booking_id = b.id AND bc.organization_id = p.organization_id AND bc.kind = 'booking'
+      LEFT JOIN orders o ON p.subject_type = 'order' AND o.id = p.subject_id AND o.organization_id = p.organization_id
+      LEFT JOIN conversations oc ON oc.id = o.conversation_id AND oc.organization_id = p.organization_id` : ''}
      WHERE p.organization_id = ? AND p.id IN (SELECT value FROM json_each(?))`,
   [organizationId, JSON.stringify(payments.map(payment => payment.id))])
   const byId = new Map(subjects.map(row => [row.id, row]))
@@ -125,6 +127,22 @@ export function preparePaymentPerformance(
     const byTitle = new Map<string, { title: string; image_url: string | null; paid: number; count: number }>()
     for (const payment of payments) {
       const snapshot = paymentSnapshot(payment)
+      // An order earns for each product it sold, not under its "X and 1 more" title: what it kept is shared across its lines by their amounts.
+      const order = (snapshot as { order?: { lines: Array<{ title: string; amount: number }> } }).order
+      if (order?.lines.length) {
+        const kept = payment.captured_amount - payment.refunded_amount
+        const total = order.lines.reduce((sum, line) => sum + line.amount, 0)
+        let left = kept
+        order.lines.forEach((line, index) => {
+          const share = index === order.lines.length - 1 ? left : total ? Math.round(kept * line.amount / total) : 0
+          left -= share
+          const entry = byTitle.get(line.title) ?? { title: line.title, image_url: null, paid: 0, count: 0 }
+          entry.paid += share
+          entry.count += 1
+          byTitle.set(line.title, entry)
+        })
+        continue
+      }
       const picture = payment.product_id ? products.get(payment.product_id)
         : !payment.booking_id && 'stay' in snapshot && payment.location_id ? locations.get(payment.location_id) : null
       const entry = byTitle.get(snapshot.title) ?? { title: snapshot.title, image_url: picture?.imageUrl ?? null, paid: 0, count: 0 }

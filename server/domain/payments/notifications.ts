@@ -24,6 +24,16 @@ export interface PaymentFinancialEvent {
   responseDueBy?: string | null
 }
 
+/** How a receipt names the charge's payment method: "Visa - 4242", or the method's type. */
+export function chargePaymentMethod(charge: Stripe.Charge): string | null {
+  const card = charge.payment_method_details?.card
+  if (card) {
+    const brand = card.brand ? card.brand.charAt(0).toUpperCase() + card.brand.slice(1) : ''
+    return card.last4 ? (brand ? `${brand} - ${card.last4}` : `- ${card.last4}`) : brand || null
+  }
+  return charge.payment_method_details?.type ?? null
+}
+
 export async function publishPaymentNotification(env: CloudflareEnv, payment: Pick<Payment, 'organization_id' | 'id'>, notice: PaymentFinancialEvent): Promise<void> {
   await publishEvent(env, { type: 'payment.financial', organization_id: payment.organization_id, payment_id: payment.id, notice })
 }
@@ -36,19 +46,22 @@ export async function notifyPaymentFinancialEvent(db: DbClient, stripe: Stripe, 
   // paid. A failure is told here only when a booking was committed: an
   // in-flight checkout decline is resolved on the pay page, not alerted to the
   // business.
-  const checkout = payment.subject_type === 'booking'
-  if (checkout && input.kind === 'payment_failed' && !payment.subject_id) return
+  // An order is a checkout too: its own placed notice states what was paid, and a decline before capture is the pay page's.
+  const checkout = payment.subject_type === 'booking' || payment.subject_type === 'order'
+  if (checkout && input.kind === 'payment_failed' && payment.subject_type === 'booking' && !payment.subject_id) return
+  // An order's failed payment is told as the order's cancellation (order.cancelled), which says it was not charged; a decline before then is the pay page's.
+  if (input.kind === 'payment_failed' && payment.subject_type === 'order') return
   const guestKind = (input.kind.startsWith('refund_') || input.kind === 'payment_failed' || (!checkout && input.kind.startsWith('payment_'))) ? input.kind as GuestPaymentNotificationKind : null
   const ownerAlert = !checkout || input.kind !== 'payment_captured'
   // A deleted merchant and an unclaimed contact have no application audience.
   // The verified return can still claim the purchase and then notify its buyer.
   if (!organization && (!payment.buyer_user_id || !guestKind)) return
-  const snapshot = JSON.parse(payment.price_snapshot_json) as Record<string, unknown> & { title?: unknown; stay?: { guest?: { email?: unknown } } }
+  const snapshot = JSON.parse(payment.price_snapshot_json) as Record<string, unknown> & { title?: unknown; stay?: { guest?: { email?: unknown } }; order?: { guest?: { email?: unknown } } }
   if (typeof snapshot.title !== 'string' || !snapshot.title.trim() || !isCurrencyCode(payment.currency)) throw new Error('Payments notification requires its immutable item and currency')
   let email: string | null = null
   if (guestKind && checkout) {
     // The address the guest booked with, which their confirmation went to.
-    const booked = snapshot.stay
+    const booked = snapshot.order ? snapshot.order.guest?.email : snapshot.stay
       ? snapshot.stay.guest?.email
       : (await queryFirst<{ email: string | null }>(db, `SELECT json_extract(r.payload_json, '$.guest.email') AS email FROM payment_checkout_holds h JOIN conversations r ON r.id = h.conversation_id AND r.organization_id = h.organization_id WHERE h.payment_id = ? AND h.organization_id = ?`, [payment.id, payment.organization_id]))?.email
     if (typeof booked !== 'string' || !booked) throw new Error('Paid checkout has no guest email to notify')
@@ -70,13 +83,7 @@ export async function notifyPaymentFinancialEvent(db: DbClient, stripe: Stripe, 
     receiptNumber = charge.receipt_number ?? null
     const rawCharge = charge as unknown as Record<string, unknown>
     if (typeof rawCharge.invoice === 'string') invoiceNumber = rawCharge.invoice
-    if (charge.payment_method_details?.card) {
-      const card = charge.payment_method_details.card
-      const brand = card.brand ? (card.brand.charAt(0).toUpperCase() + card.brand.slice(1)) : ''
-      paymentMethod = card.last4 ? (brand ? `${brand} - ${card.last4}` : `- ${card.last4}`) : brand || null
-    } else if (charge.payment_method_details?.type) {
-      paymentMethod = charge.payment_method_details.type
-    }
+    paymentMethod = chargePaymentMethod(charge)
     if (charge.created) {
       paidAt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(charge.created * 1000))
     }
@@ -87,16 +94,18 @@ export async function notifyPaymentFinancialEvent(db: DbClient, stripe: Stripe, 
   const eventKey = `payments:${payment.stripe_account_id}:${payment.livemode}:${input.nativeId}:${input.status}:${input.kind}`
   // Session and approved stay checkouts already have a guest conversation.
   const nights = Boolean(snapshot.stay)
-  const waitingInConversation = checkout && (!nights || approvedStayBooking(snapshot) !== null)
+  const waitingInConversation = payment.subject_type === 'booking' && (!nights || approvedStayBooking(snapshot) !== null)
   const hold = waitingInConversation && organization ? await queryFirst<{ conversation_id: string | null }>(db, 'SELECT conversation_id FROM payment_checkout_holds WHERE payment_id=? AND organization_id=?', [payment.id, payment.organization_id]) : null
   if (waitingInConversation && organization && !hold?.conversation_id) throw new Error('Booking payment notification has no guest conversation')
-  const booking = checkout && payment.subject_id && organization ? await queryFirst<{ conversation_id: string | null }>(db, "SELECT (SELECT c.id FROM conversations c WHERE c.booking_id = b.id AND c.kind = 'booking') AS conversation_id FROM bookings b WHERE b.organization_id=? AND b.id=?", [payment.organization_id, payment.subject_id]) : null
-  const threadId = hold?.conversation_id ?? booking?.conversation_id ?? null
+  const booking = payment.subject_type === 'booking' && payment.subject_id && organization ? await queryFirst<{ conversation_id: string | null }>(db, "SELECT (SELECT c.id FROM conversations c WHERE c.booking_id = b.id AND c.kind = 'booking') AS conversation_id FROM bookings b WHERE b.organization_id=? AND b.id=?", [payment.organization_id, payment.subject_id]) : null
+  // An order's conversation is opened when it is paid.
+  const order = payment.subject_type === 'order' && organization ? await queryFirst<{ conversation_id: string | null }>(db, 'SELECT conversation_id FROM orders WHERE organization_id=? AND id=?', [payment.organization_id, payment.subject_id]) : null
+  const threadId = hold?.conversation_id ?? booking?.conversation_id ?? order?.conversation_id ?? null
   if (booking && booking.conversation_id !== threadId) throw new Error('Booking payment notification conversation does not match its booking')
   const deepLink = organization ? `${dashboardOrigin(env, { orgSlug: organization.slug, locationSlug: null })}${booking && payment.subject_id ? `/bookings/${encodeURIComponent(payment.subject_id)}` : `/earnings/transactions/${encodeURIComponent(payment.id)}`}` : null
   // A purchase refunded because its capacity had gone is refunded without being asked, so the buyer is told why.
   const refundedForCapacity = (input.kind === 'refund_pending' || input.kind === 'refund_succeeded') && await queryFirst(db, "SELECT 1 FROM payment_refunds WHERE payment_id=? AND stripe_refund_id=? AND idempotency_key LIKE 'unfulfillable:%'", [payment.id, input.nativeId])
-  const refundReason = !refundedForCapacity ? null : `What you paid for was taken before your payment completed, so your booking could not be made and your payment ${input.kind === 'refund_pending' ? 'will be' : 'has been'} refunded in full.`
+  const refundReason = !refundedForCapacity ? null : `What you paid for was taken before your payment completed, so your ${payment.subject_type === 'order' ? 'order' : 'booking'} could not be made and your payment ${input.kind === 'refund_pending' ? 'will be' : 'has been'} refunded in full.`
   const actionLabel = input.kind === 'payment_captured' ? 'View in Dashboard' : 'View details'
   const details = {
     organizationName: organization?.name ?? null, amount: input.amount, currency: payment.currency, productTitle: snapshot.title, action: deepLink ? { url: deepLink, label: actionLabel } : null,
@@ -112,7 +121,8 @@ export async function notifyPaymentFinancialEvent(db: DbClient, stripe: Stripe, 
   const event: PaymentNotificationEvent = input.kind === 'dispute_needs_response' ? { ...details, kind: input.kind, responseDueBy: input.responseDueBy } : { ...details, kind: input.kind }
   const ownerMessage = deepLink ? ownerPaymentMessage({ ...event, action: { url: deepLink, label: actionLabel } }) : undefined
   let sourceEntryId: string | null = null
-  if (threadId && ownerMessage) {
+  // An order's conversation opens with the order itself; Stripe's "Congratulations" capture notice would only repeat it there.
+  if (threadId && ownerMessage && !(payment.subject_type === 'order' && input.kind === 'payment_captured')) {
     const message = await appendMessage(db, {
       conversationId: threadId, authorKind: PLATFORM_MESSAGE_AUTHOR_KIND, authorUserId: null,
       eventName: `payment.${input.kind}`,

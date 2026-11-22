@@ -471,3 +471,120 @@ export function articleAnnouncementMessage(input: {
     category: 'product_news',
   }
 }
+
+export interface GuestOrderInput {
+  locale?: string
+  guestName: string
+  organizationName: string
+  organizationLogoUrl: string | null
+  orderNumber: number
+  /** One line per item: "Handmade ceramic chess set (Ruby reds) × 1". */
+  items: string[]
+  heroImageUrl: string | null
+  total: string
+  /** The shipping address as one block, or null for pickup. */
+  shipTo: string | null
+  pickupAt: string | null
+  shipBy: string | null
+  manageUrl?: string | null
+  contactPhone?: string | null
+  contactEmail?: string | null
+}
+
+/** What the buyer paid, line by line, as Shopify's confirmation lists it: formatted amounts in the buyer's locale. */
+export interface GuestOrderCharges {
+  subtotal: string
+  /** The rate's name and amount ("Thailand Post EMS · ฿500"); null for pickup. */
+  shipping: string | null
+  tax: string | null
+  surcharge: string | null
+  /** The card or method charged ("Visa - 4242"), as Stripe reports it. */
+  paymentMethod: string | null
+}
+
+/** A paid order's receipt to its buyer, as Shopify's order confirmation. */
+export function guestOrderConfirmedMessage(input: GuestOrderInput & { charges: GuestOrderCharges }): NotificationMessage {
+  const locale = guestLocale(input)
+  const labels = locale.messages
+  return {
+    locale: locale.locale,
+    title: labels['email.subject.order_confirmed']!.replace('{number}', String(input.orderNumber)),
+    preheader: input.items.join(', '),
+    hero: input.heroImageUrl ? { imageUrl: input.heroImageUrl, alt: input.items[0] ?? '' } : null,
+    facts: facts(
+      fact('items', labels['order.items']!, input.items.join('\n')),
+      fact('subtotal', labels['shop.subtotal']!, input.charges.subtotal),
+      fact('shipping', labels['shop.shipping']!, input.charges.shipping),
+      fact('tax', labels['payment.tax']!, input.charges.tax),
+      fact('surcharge', labels['payment.surcharge']!, input.charges.surcharge),
+      fact('total', labels['payment.total']!, input.total),
+      fact('paymentMethod', labels['order.payment_method']!, input.charges.paymentMethod),
+      fact('shipTo', labels['order.ship_to']!, input.shipTo),
+      fact('pickupAt', labels['order.pickup_at']!, input.pickupAt),
+      // A collected order is ready by its date; a sent one ships by it.
+      fact('shipBy', labels[input.pickupAt ? 'order.ready_by' : 'order.ships_by']!, input.shipBy),
+    ),
+    primaryAction: manageAction(input),
+    sections: contactSection({ ...input, organizationLogoUrl: input.organizationLogoUrl, date: '', time: '', partySize: '' }),
+    emailPurpose: 'transactional',
+    emailReason: labels['email.reason.order']!.replace('{organization}', input.organizationName),
+    category: 'reservations_bookings',
+    organizationName: input.organizationName,
+    organizationLogoUrl: input.organizationLogoUrl,
+  }
+}
+
+/**
+ * The buyer's notice that their order is off, as Shopify's order cancelled:
+ * either the payment never completed (nothing was charged) or the business
+ * refunded it in full before it shipped (the refund is its own email).
+ */
+export function guestOrderCancelledMessage(input: Omit<GuestOrderInput, 'shipBy' | 'shipTo' | 'pickupAt'> & { reason: 'unpaid' | 'refunded' }): NotificationMessage {
+  const locale = guestLocale(input)
+  const labels = locale.messages
+  return {
+    locale: locale.locale,
+    title: labels['email.subject.order_cancelled']!.replace('{number}', String(input.orderNumber)),
+    preheader: input.items.join(', '),
+    hero: input.heroImageUrl ? { imageUrl: input.heroImageUrl, alt: input.items[0] ?? '' } : null,
+    intro: labels[input.reason === 'unpaid' ? 'order.cancelled_unpaid' : 'order.cancelled_refunded']!,
+    facts: facts(
+      fact('items', labels['order.items']!, input.items.join('\n')),
+      fact('total', labels[input.reason === 'unpaid' ? 'payment.total' : 'payment.paid']!, input.total),
+    ),
+    primaryAction: manageAction(input),
+    sections: contactSection({ ...input, organizationLogoUrl: input.organizationLogoUrl, date: '', time: '', partySize: '' }),
+    emailPurpose: 'transactional',
+    emailReason: labels['email.reason.order']!.replace('{organization}', input.organizationName),
+    category: 'reservations_bookings',
+    organizationName: input.organizationName,
+    organizationLogoUrl: input.organizationLogoUrl,
+  }
+}
+
+/** The buyer's notice that their order left the business, with the carrier's tracking. */
+export function guestOrderShippedMessage(input: Omit<GuestOrderInput, 'total' | 'shipBy'> & { carrier: string | null; trackingNumber: string | null; trackingUrl: string | null }): NotificationMessage {
+  const locale = guestLocale(input)
+  const labels = locale.messages
+  const collected = input.shipTo === null
+  return {
+    locale: locale.locale,
+    title: labels[collected ? 'email.subject.order_collected' : 'email.subject.order_shipped']!.replace('{number}', String(input.orderNumber)),
+    preheader: input.items.join(', '),
+    hero: input.heroImageUrl ? { imageUrl: input.heroImageUrl, alt: input.items[0] ?? '' } : null,
+    facts: facts(
+      fact('items', labels['order.items']!, input.items.join('\n')),
+      fact('carrier', labels['order.carrier']!, input.carrier),
+      fact('trackingNumber', labels['order.tracking_number']!, input.trackingNumber),
+      fact('shipTo', labels['order.ship_to']!, input.shipTo),
+    ),
+    primaryAction: input.trackingUrl ? { url: input.trackingUrl, label: labels['order.track']! } : manageAction(input),
+    secondaryAction: input.trackingUrl ? manageAction(input) : undefined,
+    sections: contactSection({ ...input, organizationLogoUrl: input.organizationLogoUrl, date: '', time: '', partySize: '' }),
+    emailPurpose: 'transactional',
+    emailReason: labels['email.reason.order']!.replace('{organization}', input.organizationName),
+    category: 'reservations_bookings',
+    organizationName: input.organizationName,
+    organizationLogoUrl: input.organizationLogoUrl,
+  }
+}

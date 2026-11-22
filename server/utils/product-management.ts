@@ -39,7 +39,7 @@ import {
   type PriceSelection,
 } from '~/shared/prices'
 import { assertProductKind, patchProductDetails, validateProductDetails, validateStayAlarmDetails, ProductDetailError, PRICING_NOTE_HANDLE, PRODUCT_KINDS, type ProductDetailValue, type ProductKind } from '~/shared/product-details'
-import { presentationForProduct, type CatalogCounts } from '~/utils/product-presentation'
+import { hasSiteProductPage, presentationForProduct, type CatalogCounts } from '~/utils/product-presentation'
 import { preparePublicTenantOrigin } from '~/server/utils/public-base'
 import { FormQuestionDefinitionError, formQuestionsRevision, normalizeFormQuestionsInput, parseStoredFormQuestions } from '~/shared/form-questions'
 
@@ -77,7 +77,9 @@ import type {
   SetCollectionProductsInput,
   UpdateCollectionInput,
   UpdateProductInput,
+  ProductVariantGoods,
 } from '~/server/types/products'
+import { PRODUCT_VARIANT_GOODS_FIELDS, optionValuesMatch, parseOptionValues, parseProductOptions, productOptionsSchema, type InventoryPolicy, type ProductOption } from '~/shared/goods'
 import {
   PRODUCT_LIMITS,
   normalizeOptionalProductString,
@@ -87,6 +89,7 @@ import {
   validateProductOrderUrl,
   validateProductUnitLabel,
   validateProductVariants,
+  validateVariantGoods,
   type NormalizedProductVariant,
 } from '~/server/utils/product-validation'
 
@@ -190,7 +193,7 @@ function parseJsonObject(value: unknown, field: string): Record<string, string> 
 
 const PRODUCT_COLUMNS = `
   p.id, p.organization_id, p.name, p.slug, p.description, p.active, p.order_url, p.unit_label,
-  p.marketing_features, p.metadata, p.tax_code, p.source,
+  p.marketing_features, p.metadata, p.tax_code, p.options, p.processing_days, p.made_to_order_days, p.source,
   p.kind, p.details_json, p.created_at, p.updated_at, p.created_by, p.updated_by,
   EXISTS (SELECT 1 FROM media_placements tp WHERE tp.organization_id = p.organization_id AND tp.owner_type = 'product' AND tp.owner_id = p.id AND tp.slot = 'agreement_template' AND tp.status = 'active') AS has_agreement_template
 `
@@ -208,6 +211,9 @@ function mapProductRow(row: Row): Product {
     marketing_features: parseJsonArray<string>(row.marketing_features, 'marketing_features'),
     metadata: parseJsonObject(row.metadata, 'metadata'),
     tax_code: row.tax_code === null ? null : String(row.tax_code),
+    options: parseProductOptions(String(row.options)),
+    processing_days: row.processing_days === null ? null : Number(row.processing_days),
+    made_to_order_days: row.made_to_order_days === null ? null : Number(row.made_to_order_days),
     variants: [],
     kind: assertProductKind(row.kind),
     details: validateProductDetails(assertProductKind(row.kind), JSON.parse(String(row.details_json))),
@@ -266,7 +272,7 @@ function productHydrationQueries(organizationId: string | { sql: string }, selec
   const org = typeof organizationId === 'string' ? '?' : organizationId.sql
   const params = [...(typeof organizationId === 'string' ? [organizationId] : []), ...selection.params ?? []]
   return [
-    { query: `SELECT id, product_id, name, sku, active, sort_order FROM product_variants
+    { query: `SELECT id, product_id, name, sku, active, sort_order, ${VARIANT_GOODS_COLUMNS} FROM product_variants
       WHERE organization_id = ${org} AND product_id IN (${selection.query}) ORDER BY sort_order, id`, params },
     // Variants first, then each one's prices by index. Joined the other way
     // the planner walked every price of the site and re-read the product list
@@ -295,6 +301,10 @@ function productHydrationQueries(organizationId: string | { sql: string }, selec
       FROM product_stay_configs c JOIN products p ON p.organization_id = c.organization_id AND p.id = c.product_id
       JOIN product_booking_configs b ON b.organization_id = c.organization_id AND b.product_id = c.product_id AND b.unit = 'nights'
       WHERE c.organization_id = ${org} AND c.product_id IN (${selection.query})`, params },
+    // A tracked variant's stock at each location (Shopify's inventory levels).
+    { query: `SELECT l.product_variant_id, l.location_id, l.available FROM inventory_levels l
+      JOIN product_variants v ON v.organization_id = l.organization_id AND v.id = l.product_variant_id
+      WHERE l.organization_id = ${org} AND v.inventory_tracked = 1 AND v.product_id IN (${selection.query}) ORDER BY l.product_variant_id, l.location_id`, params },
   ]
 }
 
@@ -337,6 +347,7 @@ function hydrateProductRows(
   const collectionRows = rowsAt(4)
   const bookingRows = rowsAt(5)
   const pageRows = rowsAt(6)
+  const stockRows = rowsAt(8)
   for (const row of rowsAt(7)) {
     const product = byId.get(String(row.product_id))
     if (product) product.stay = {
@@ -392,6 +403,8 @@ function hydrateProductRows(
       id: String(row.id), product_id: String(row.product_id), name: String(row.name),
       sku: row.sku === null ? null : String(row.sku), active: Number(row.active) === 1,
       sort_order: Number(row.sort_order),
+      ...mapVariantGoods(row),
+      inventory_levels: stockRows.filter(level => level.product_variant_id === row.id).map(level => ({ location_id: String(level.location_id), available: Number(level.available) })),
       prices: pricesByVariant.get(String(row.id)) ?? [],
     }
     byId.get(String(row.product_id))?.variants.push(variant)
@@ -477,7 +490,7 @@ export function prepareProductPublicPresentation(organization: string | { sql: s
     checkoutSellerQuery(typeof organization === 'string' ? { query: '?', params: [organization] } : { query: organization.sql, params: [] }), ...pagePlan.queries],
     async read([published, originRow, locations, schedules, seller, ...pageRows]: D1Result[], db: DbClient, env: CloudflareEnv, product: Product, organizationCurrency?: string | null) {
       const organizationId = product.organization_id
-      const siteProduct = product.kind === 'experience' || product.kind === 'stay'
+      const siteProduct = hasSiteProductPage(product.kind)
       const path = siteProduct ? presentationForProduct(product).productPath('', product.slug) : product.page?.path ?? null
       const scheduledScopes = scheduleScopesFromRows(schedules!.results as BookingScheduleScopeRow[]).get(productId) ?? new Set<string | null>()
       const readiness = product.kind === 'experience' || product.kind === 'stay' || product.booking
@@ -929,7 +942,7 @@ export function normalizePriceInput(input: PriceInput, defaultCurrency: Currency
   return normalized
 }
 
-interface PlannedVariant {
+interface PlannedVariant extends ProductVariantGoods {
   id: string
   name: string
   sku: string | null
@@ -950,6 +963,9 @@ interface PlannedProduct {
   marketing_features: string[]
   metadata: Record<string, string>
   tax_code: string | null
+  options: ProductOption[]
+  processing_days: number | null
+  made_to_order_days: number | null
   variants: PlannedVariant[]
   details: Record<string, ProductDetailValue>
   source: ProductSource
@@ -1206,7 +1222,7 @@ async function planProduct(
   catch (error) { if (!(error instanceof ProductDetailError)) throw error; invalid(error.message) }
   const name = requireTrimmedProductString(input.name, 'name', PRODUCT_LIMITS.name)
   const variants = input.variants === undefined
-    ? [{ name, sku: null, active: true, sort_order: 0 } satisfies NormalizedProductVariant]
+    ? [{ name, sku: null, active: true, sort_order: 0, ...validateVariantGoods({}, 'variants[0]') } satisfies NormalizedProductVariant]
     : validateProductVariants(input.variants)
 
   await assertSuppliedIdsBelongHere(db, organizationId, context.existingId ?? null, variants, context.idOwners)
@@ -1223,9 +1239,13 @@ async function planProduct(
     sku: variant.sku,
     active: variant.active,
     sort_order: variant.sort_order,
+    ...variantGoods(variant),
     prices: (declaredVariants[index]?.prices ?? []).map((price, priceIndex) =>
       normalizePriceInput(price, defaultCurrency, `variants[${index}].prices[${priceIndex}]`)),
   }))
+  // A variant's photo is one of this organization's images; the foreign key alone would admit another's.
+  const variantPhotos = [...new Set(plannedVariants.flatMap(variant => variant.media_asset_id ? [variant.media_asset_id] : []))]
+  await hydrateMediaAssetRefs(db, { organizationId, refs: variantPhotos.map(asset_id => ({ asset_id })), allowedKinds: ['image'], fieldName: 'variants.media_asset_id' })
   const stay = await planStayConfig(db, organizationId, kind, input.stay && { ...input.stay, internal_name: Object.hasOwn(input.stay, 'internal_name') ? input.stay.internal_name : name }, context.stayResponsibility)
   if (stay) {
     try { validateStayAlarmDetails(input.details ?? {}, stay.amenity_answers) }
@@ -1248,6 +1268,7 @@ async function planProduct(
     marketing_features: validateProductMarketingFeatures(input.marketing_features),
     metadata: validateProductMetadata(input.metadata),
     tax_code: normalizeOptionalProductString(input.tax_code, 'tax_code', PRODUCT_LIMITS.taxCode),
+    ...planGoods(kind, input, plannedVariants),
     variants: plannedVariants,
     kind,
     details: validateProductDetails(kind, input.details ?? {}),
@@ -1327,19 +1348,21 @@ function productWrites(
   const writes: BatchQuery[] = [{
     query: upsert
       ? `INSERT INTO products (id, organization_id, name, slug, description, active, order_url, unit_label,
-             marketing_features, metadata, tax_code, source, kind, details_json, created_at, updated_at, created_by, updated_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${options.expectedUpdatedAt === undefined ? '?' : 'CASE WHEN EXISTS (SELECT 1 FROM products WHERE organization_id=? AND id=? AND updated_at=?) THEN ? ELSE NULL END'}, ?, ?)
+             marketing_features, metadata, tax_code, options, processing_days, made_to_order_days, source, kind, details_json, created_at, updated_at, created_by, updated_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${options.expectedUpdatedAt === undefined ? '?' : 'CASE WHEN EXISTS (SELECT 1 FROM products WHERE organization_id=? AND id=? AND updated_at=?) THEN ? ELSE NULL END'}, ?, ?)
            ON CONFLICT (id) DO UPDATE SET name = excluded.name, slug = excluded.slug, description = excluded.description,
              active = excluded.active, order_url = excluded.order_url, unit_label = excluded.unit_label,
              marketing_features = excluded.marketing_features, metadata = excluded.metadata,
-             tax_code = excluded.tax_code, kind = excluded.kind, details_json = excluded.details_json, updated_at = excluded.updated_at, updated_by = excluded.updated_by
+             tax_code = excluded.tax_code, options = excluded.options, processing_days = excluded.processing_days, made_to_order_days = excluded.made_to_order_days,
+             kind = excluded.kind, details_json = excluded.details_json, updated_at = excluded.updated_at, updated_by = excluded.updated_by
            WHERE products.organization_id = excluded.organization_id`
       : `INSERT INTO products (id, organization_id, name, slug, description, active, order_url, unit_label,
-             marketing_features, metadata, tax_code, source, kind, details_json, created_at, updated_at, created_by, updated_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             marketing_features, metadata, tax_code, options, processing_days, made_to_order_days, source, kind, details_json, created_at, updated_at, created_by, updated_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     params: [planned.id, organizationId, planned.name, planned.slug, planned.description, planned.active ? 1 : 0,
       planned.order_url, planned.unit_label, JSON.stringify(planned.marketing_features),
-      JSON.stringify(planned.metadata), planned.tax_code, planned.source, planned.kind, JSON.stringify(planned.details), now,
+      JSON.stringify(planned.metadata), planned.tax_code, JSON.stringify(planned.options), planned.processing_days, planned.made_to_order_days,
+      planned.source, planned.kind, JSON.stringify(planned.details), now,
       ...(options.expectedUpdatedAt === undefined ? [] : [organizationId, planned.id, options.expectedUpdatedAt]), now, actor.actorId, actor.actorId],
   }]
 
@@ -1406,14 +1429,15 @@ function productWrites(
   for (const variant of planned.variants) {
     if (!options.variantIds || options.variantIds.has(variant.id)) writes.push({
       query: upsert
-        ? `INSERT INTO product_variants (id, organization_id, product_id, name, sku, active, sort_order, created_at, updated_at, created_by, updated_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ? `INSERT INTO product_variants (id, organization_id, product_id, name, sku, active, sort_order, ${VARIANT_GOODS_COLUMNS}, created_at, updated_at, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ${VARIANT_GOODS_PLACEHOLDERS}, ?, ?, ?, ?)
              ON CONFLICT (id) DO UPDATE SET name = excluded.name, sku = excluded.sku, active = excluded.active,
-               sort_order = excluded.sort_order, updated_at = excluded.updated_at, updated_by = excluded.updated_by
+               sort_order = excluded.sort_order, ${PRODUCT_VARIANT_GOODS_FIELDS.map(field => `${field} = excluded.${field}`).join(', ')},
+               updated_at = excluded.updated_at, updated_by = excluded.updated_by
              WHERE product_variants.organization_id = excluded.organization_id AND product_variants.product_id = excluded.product_id`
-        : `INSERT INTO product_variants (id, organization_id, product_id, name, sku, active, sort_order, created_at, updated_at, created_by, updated_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      params: [variant.id, organizationId, planned.id, variant.name, variant.sku, variant.active ? 1 : 0, variant.sort_order, now, now, actor.actorId, actor.actorId],
+        : `INSERT INTO product_variants (id, organization_id, product_id, name, sku, active, sort_order, ${VARIANT_GOODS_COLUMNS}, created_at, updated_at, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ${VARIANT_GOODS_PLACEHOLDERS}, ?, ?, ?, ?)`,
+      params: [variant.id, organizationId, planned.id, variant.name, variant.sku, variant.active ? 1 : 0, variant.sort_order, ...variantGoodsParams(variant), now, now, actor.actorId, actor.actorId],
     })
     for (const price of options.writePrices ? variant.prices : []) {
       if (options.priceIds && !options.priceIds.has(price.id)) continue
@@ -1884,6 +1908,9 @@ async function planProductUpdate(db: DbClient, input: {
     marketing_features: patch.marketing_features ?? current.marketing_features,
     metadata: patch.metadata ?? current.metadata,
     tax_code: patch.tax_code === undefined ? current.tax_code : patch.tax_code,
+    options: patch.options ?? current.options,
+    processing_days: patch.processing_days === undefined ? current.processing_days : patch.processing_days,
+    made_to_order_days: patch.made_to_order_days === undefined ? current.made_to_order_days : patch.made_to_order_days,
     variants,
     details,
     // The location a home is at is fixed: a patch naming another one is refused, never merged.
@@ -1920,7 +1947,7 @@ async function planProductUpdate(db: DbClient, input: {
     stay: planned.stay && current.stay ? Object.fromEntries(Object.keys(planned.stay).map(key => [key, current.stay![key as keyof ProductStayConfig]])) : current.stay,
   }
   const changedFields: string[] = [...(input.additionalChangedFields ?? [])]
-  for (const field of ['kind', 'name', 'description', 'active', 'order_url', 'unit_label', 'marketing_features', 'metadata', 'tax_code', 'variants', 'details', 'stay'] as const) {
+  for (const field of ['kind', 'name', 'description', 'active', 'order_url', 'unit_label', 'marketing_features', 'metadata', 'tax_code', 'options', 'processing_days', 'made_to_order_days', 'variants', 'details', 'stay'] as const) {
     if (await creationRequestHash(planned[field]) !== await creationRequestHash(comparableCurrent[field])) changedFields.push(field)
   }
 
@@ -1938,6 +1965,7 @@ async function planProductUpdate(db: DbClient, input: {
   const variantIds = new Set(planned.variants.filter(variant => {
     const before = current.variants.find(candidate => candidate.id === variant.id)
     return !before || variant.name !== before.name || variant.sku !== before.sku || variant.active !== before.active || variant.sort_order !== before.sort_order
+      || PRODUCT_VARIANT_GOODS_FIELDS.some(field => JSON.stringify(variant[field]) !== JSON.stringify(before[field]))
   }).map(variant => variant.id))
   const writes: BatchQuery[] = changedFields.length ? [
     // Only explicit replacement removes prices; merged omissions remain in the plan.
@@ -1990,7 +2018,62 @@ async function planProductUpdate(db: DbClient, input: {
 
 const variantInput = (variant: ProductVariant) => ({
   id: variant.id, name: variant.name, sku: variant.sku, active: variant.active, sort_order: variant.sort_order,
+  ...variantGoods(variant),
 })
+
+function variantGoods(variant: ProductVariantGoods): ProductVariantGoods {
+  return { option_values: variant.option_values, media_asset_id: variant.media_asset_id, weight_grams: variant.weight_grams, length_mm: variant.length_mm,
+    width_mm: variant.width_mm, height_mm: variant.height_mm, hs_code: variant.hs_code, country_of_origin: variant.country_of_origin,
+    inventory_tracked: variant.inventory_tracked, inventory_policy: variant.inventory_policy }
+}
+
+const VARIANT_GOODS_COLUMNS = PRODUCT_VARIANT_GOODS_FIELDS.join(', ')
+const VARIANT_GOODS_PLACEHOLDERS = PRODUCT_VARIANT_GOODS_FIELDS.map(() => '?').join(', ')
+
+function variantGoodsParams(variant: ProductVariantGoods): unknown[] {
+  return [JSON.stringify(variant.option_values), variant.media_asset_id, variant.weight_grams, variant.length_mm, variant.width_mm, variant.height_mm,
+    variant.hs_code, variant.country_of_origin, variant.inventory_tracked ? 1 : 0, variant.inventory_policy]
+}
+
+function mapVariantGoods(row: Row): ProductVariantGoods {
+  const number = (value: unknown) => value === null ? null : Number(value)
+  return {
+    option_values: parseOptionValues(String(row.option_values)), media_asset_id: row.media_asset_id === null ? null : String(row.media_asset_id),
+    weight_grams: number(row.weight_grams), length_mm: number(row.length_mm), width_mm: number(row.width_mm), height_mm: number(row.height_mm),
+    hs_code: row.hs_code === null ? null : String(row.hs_code), country_of_origin: row.country_of_origin === null ? null : String(row.country_of_origin),
+    inventory_tracked: Number(row.inventory_tracked) === 1, inventory_policy: String(row.inventory_policy) as InventoryPolicy,
+  }
+}
+
+/**
+ * A product's options and fulfilment days. Options are a physical item's
+ * (Shopify's): each variant names one value per option, every variant a
+ * distinct combination. Other kinds are sold one way per variant name.
+ */
+function planGoods(kind: ProductKind, input: Pick<CreateProductInput, 'options' | 'processing_days' | 'made_to_order_days'>, variants: readonly ProductVariantGoods[]) {
+  const parsedOptions = productOptionsSchema.safeParse(input.options ?? [])
+  if (!parsedOptions.success) invalid(`options: ${parsedOptions.error.issues[0]?.message ?? 'invalid'}`)
+  const options = parsedOptions.data
+  const days = (value: unknown, field: string) => {
+    if (value === undefined || value === null) return null
+    if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > 365) invalid(`${field} must be 0–365 business days`)
+    return value as number
+  }
+  const goods = { options, processing_days: days(input.processing_days, 'processing_days'), made_to_order_days: days(input.made_to_order_days, 'made_to_order_days') }
+  if (kind !== 'item') {
+    if (options.length || goods.processing_days !== null || goods.made_to_order_days !== null) invalid('Only a physical item has options and shipping times')
+    if (variants.some(variant => variant.option_values.length || variant.inventory_tracked || variant.weight_grams !== null)) invalid('Only a physical item has option values, stock and parcels')
+    return goods
+  }
+  const seen = new Set<string>()
+  variants.forEach((variant, index) => {
+    if (!optionValuesMatch(options, variant.option_values)) invalid(`variants[${index}].option_values must name one value of each option, in order`)
+    const key = JSON.stringify(variant.option_values)
+    if (seen.has(key)) invalid(`variants[${index}] repeats the option values of another variant`)
+    seen.add(key)
+  })
+  return goods
+}
 const priceInput = (price: Price): PriceInput => ({
   id: price.id, unit_amount: price.unit_amount, currency: price.currency, location_id: price.location_id, active: price.active,
   type: price.type, recurring_interval: price.recurring_interval, recurring_interval_count: price.recurring_interval_count,

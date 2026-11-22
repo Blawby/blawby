@@ -285,7 +285,7 @@ function prepareDashboardProductMetadata(organizationId: { sql: string }, produc
       const { publicUrl, publicUrls } = await links.read(rows.slice(mediaEnd, linksEnd), db, env, product, organization.default_currency)
       const details = await navigation?.read(rows.slice(linksEnd, navigationEnd), hydrated!, locationId, context)
       const hostProfilePublished = product.stay ? rows[navigationEnd]!.results.length > 0 : null
-      const previewToken = editor && canPreview && isOrganizationWideRole(organization.role) && ['dish', 'experience', 'service'].includes(product.kind)
+      const previewToken = editor && canPreview && isOrganizationWideRole(organization.role) && ['dish', 'experience', 'service', 'item'].includes(product.kind)
         ? await editorPreviewToken(env.PREVIEW_SECRET, organizationId) : null
       let previewUrl: string | null = null
       if (product.kind === 'stay' && organization.subdomain && canPreview) {

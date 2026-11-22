@@ -141,7 +141,7 @@
             Add your first photo
           </span>
         </template>
-        <span v-else-if="(dishEditor || experienceEditor || legalEditor) && item.icon" class="flex items-start gap-3">
+        <span v-else-if="!stayEditor && item.icon" class="flex items-start gap-3">
           <UIcon :name="item.icon" class="size-6 shrink-0" aria-hidden="true" />
           <span class="whitespace-pre-line break-words">{{ item.summary }}</span>
         </span>
@@ -156,7 +156,7 @@
           <span class="block">{{ item.summary }}{{ product?.stay?.cancellation_policy ? ' for short-term stays' : '' }}</span>
           <span v-if="product?.stay?.long_term_cancellation_policy" class="block">{{ STAY_LONG_TERM_CANCELLATION_POLICIES[product.stay.long_term_cancellation_policy].label }} for long-term stays</span>
         </span>
-        <span v-else :class="arrivalTab || dishEditor || experienceEditor || legalEditor ? 'line-clamp-4 whitespace-pre-line break-words' : item.id === 'description' ? 'line-clamp-4' : undefined">{{ item.summary }}</span>
+        <span v-else :class="arrivalTab || !stayEditor ? 'line-clamp-4 whitespace-pre-line break-words' : item.id === 'description' ? 'line-clamp-4' : undefined">{{ item.summary }}</span>
       </template>
     </EditorNavigationList>
     <UDropdownMenu v-if="additionalDetails.length && !loadError" :items="additionalDetails">
@@ -225,7 +225,7 @@ import { formatTime, MINUTE_TIME_PATTERN } from '~/utils/timezone'
 
 export const SECTION_KEYS = [
   'photo', 'kind', 'name', 'internal-name', 'price', 'description', 'page', 'order-url', 'attributes', 'publication', 'booking', 'locations', 'collections',
-  'guests', 'availability', 'arrival-time', 'directions', 'check-in-method', 'wifi', 'house-manual', 'house-rules', 'checkout-instructions', 'property-type', 'rooms', 'amenities', 'accessibility', 'cancellation', 'team', 'guest-safety', 'location', 'questions',
+  'options', 'shipping', 'guests', 'availability', 'arrival-time', 'directions', 'check-in-method', 'wifi', 'house-manual', 'house-rules', 'checkout-instructions', 'property-type', 'rooms', 'amenities', 'accessibility', 'cancellation', 'team', 'guest-safety', 'location', 'questions',
 ] as const
 export type SectionKey = typeof SECTION_KEYS[number]
 export type BookingConcern = 'enabled' | 'duration' | 'seatings' | 'capacity' | 'party' | 'guest-terms' | 'confirmation' | 'notice' | 'payment' | 'location' | 'assignment' | number
@@ -340,6 +340,8 @@ export interface ProductEditor {
   product: ComputedRef<Product | null>
   /** Saved publication state, separate from the visibility leaf's draft. */
   published: ComputedRef<boolean>
+  /** The saved item's public page, or a dish's page at each of its locations; empty while nothing is public. */
+  publicLinks: ComputedRef<Array<{ key: string; label: string | null; url: string }>>
   bookingOffering: ComputedRef<boolean>
   itemLabel: ComputedRef<string>
   currency: string
@@ -564,6 +566,8 @@ const sectionLabels: Record<SectionKey, string> = {
   'accessibility': 'Accessibility features',
   'cancellation': 'Cancellation policy',
   'team': 'Looked after by',
+  'options': 'Options and stock',
+  'shipping': 'Shipping',
   // Only a product with a kind has collections to choose.
   get collections() {
     if (!presentation.value) throw new Error('A product has no collections before its kind is chosen')
@@ -638,7 +642,7 @@ const dishEditor = computed(() => product.value?.kind === 'dish')
 const experienceEditor = computed(() => product.value?.kind === 'experience')
 const legalEditor = computed(() => product.value?.kind === 'service')
 const bookingCopy = computed(() => getVerticalCopy((product.value?.kind ?? form.kind) === 'service' ? 'service' : 'experience', 'en'))
-const summaryCards = computed(() => stayEditor.value || dishEditor.value || experienceEditor.value || legalEditor.value)
+const summaryCards = computed(() => ['stay', 'dish', 'experience', 'service', 'item'].includes(product.value?.kind ?? ''))
 const arrivalTab = computed(() => stayEditor.value && (route.query.guide === 'arrival' || (STAY_ARRIVAL_SECTIONS as readonly string[]).includes(detailKey.value ?? '')))
 async function changeStayTab(value: string | number) {
   if (saving.value || value === (arrivalTab.value ? 'arrival' : 'space')) return
@@ -720,7 +724,7 @@ async function saveArrival(fields: readonly StayArrivalField[], target?: string)
   }
 }
 const runtimeConfig = useRuntimeConfig()
-const previewTitle = computed(() => arrivalTab.value ? 'Arrival guide' : dishEditor.value ? 'Dish preview' : experienceEditor.value ? 'Experience preview' : legalEditor.value ? 'Legal Services preview' : 'Listing preview')
+const previewTitle = computed(() => arrivalTab.value ? 'Arrival guide' : stayEditor.value ? 'Listing preview' : legalEditor.value ? 'Legal Services preview' : `${itemLabel.value} preview`)
 const previewLocationId = computed(() => typeof route.query.preview_location_id === 'string' ? route.query.preview_location_id : locationId.value)
 const previewPublicUrl = computed(() => dishEditor.value ? previewLocationId.value ? loaded.value?.publicUrls[previewLocationId.value] ?? null : null : loaded.value?.publicUrl ?? null)
 const previewNeedsLocation = computed(() => canPreview.value && dishEditor.value && !previewLocationId.value)
@@ -1349,7 +1353,7 @@ const activeNavigationItem = computed(() => {
  * beside this index. A row that leads into a level of its own — Bookings,
  * Pricing — would open that level too and push this index off the screen.
  */
-const LEAF_SECTIONS: readonly string[] = ['photo', 'internal-name', 'name', 'description', 'price', 'kind', 'order-url', 'property-type', 'rooms', 'guests', 'availability', 'arrival-time', 'directions', 'wifi', 'house-manual', 'house-rules', 'team']
+const LEAF_SECTIONS: readonly string[] = ['photo', 'internal-name', 'name', 'description', 'price', 'kind', 'order-url', 'options', 'shipping', 'property-type', 'rooms', 'guests', 'availability', 'arrival-time', 'directions', 'wifi', 'house-manual', 'house-rules', 'team']
 const autoOpenTarget = computed(() => draftStay.value && !arrivalTab.value ? null : navigationGroups.value[0]?.items.find(item => LEAF_SECTIONS.includes(item.id) && !(stayEditor.value && item.id === 'description') && item.to === sectionPath(item.id))?.to ?? null)
 
 const STAY_ROW_ORDER = ['publication', 'photo', 'internal-name', 'name', 'property-type', 'rooms', 'price', 'availability', 'guests', 'description', 'amenities', 'accessibility', 'location', 'house-rules', 'guest-safety', 'cancellation', 'agreement', 'team', 'questions', 'featured', 'collections']
@@ -2238,6 +2242,8 @@ useSeoMeta({ title: () => `${pageTitle.value} | Blawby Dashboard`, robots: 'noin
 provide(productEditorKey, {
   reload,
   form,
+  publicLinks: computed(() => loaded.value?.publicUrl ? [{ key: 'item', label: null, url: loaded.value.publicUrl }]
+    : Object.entries(loaded.value?.publicUrls ?? {}).map(([id, url]) => ({ key: id, label: allOrganizationLocations.value.find(place => place.id === id)?.title ?? null, url }))),
   assignmentSummary: computed(assignmentSummary),
   bookingCopy,
   managesCatalog,

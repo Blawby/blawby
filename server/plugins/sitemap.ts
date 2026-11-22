@@ -1,6 +1,6 @@
 import { RESOURCE_LOCALIZATIONS_SQL } from '~/shared/content-registries'
 import type { ProductKind } from '~/shared/product-details'
-import { catalogNavigation, locationSurfacePath, productSurfaceOf, presentationForProduct, resolveProductPresentation } from '~/utils/product-presentation'
+import { catalogNavigation, hasSiteProductPage, locationSurfacePath, productSurfaceOf, presentationForProduct, resolveProductPresentation } from '~/utils/product-presentation'
 import { locationTakesTablesSql, PUBLIC_CONTENT_SECTION_QUERIES, PUBLIC_CONTENT_SECTIONS, productCatalogRows, publicContentSectionRows, publicSections, type PublicContentSectionRow } from '~/server/utils/public-shell-query'
 import { publicLocationSql } from '~/server/utils/public-locations'
 import type { PublicSiteSection } from '~/utils/public-resource-contracts'
@@ -248,7 +248,7 @@ export default definePlugin((nitroApp) => {
         for (const product of localizedProducts) {
           const presentation = presentationForProduct(product)
           const locationSlug = product.location_path?.split('/').filter(Boolean).at(-1)
-          if (product.kind !== 'experience' && product.kind !== 'stay' && !locationSlug) continue
+          if (!hasSiteProductPage(product.kind) && !locationSlug) continue
           const images = productImagesById.get(product.id)
           entries.push({
             loc: `/${candidate.locale}${presentation.productPath(locationSlug ?? '', product.slug)}`,
@@ -337,7 +337,7 @@ export default definePlugin((nitroApp) => {
         .map(surface => ({ loc: locationSurfacePath(String(location.slug), surface), lastmod: location.updated_at as string | undefined }))),
       ...(productPresentation
         ? products
-            .filter(product => product.slug && (product.kind === 'experience' || product.kind === 'stay' || product.location_slug))
+            .filter(product => product.slug && (hasSiteProductPage(String(product.kind)) || product.location_slug))
             .map(product => {
               const images = productImagesById.get(String(product.id))
               return {

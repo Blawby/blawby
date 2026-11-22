@@ -9,7 +9,7 @@ import { readPublicBookingSessions } from '~/server/utils/public-session-booking
 import { hydrateProductMedia, listCollections, listLocationProducts, listOrganizationProducts, publicProduct } from '~/server/utils/product-management'
 import { assertProductKind } from '~/shared/product-details'
 import type { Collection, ProductBookingConfig, ProductPresentation, ProductSurface, PublicProduct, SiteProductSurface, StaffAssignment } from '~/server/types/products'
-import { productSurfaceOf, resolveProductPresentation, presentationForSurface } from '~/utils/product-presentation'
+import { hasSiteProductPage, presentationForProduct, productSurfaceOf, resolveProductPresentation, presentationForSurface } from '~/utils/product-presentation'
 import { isCurrencyCode, type CurrencyCode } from '~/shared/currencies'
 import {
   loadExactPublicLocalizations,
@@ -279,7 +279,8 @@ export async function loadPublicSiteProductDetail(
   const localizations = locale === sourceLocale ? undefined : await loadExactPublicLocalizations(env, db, organizationId, locale)
   const collection = await loadPublicProductCollection(db, organizationId, routeKind, previewAuthorized, undefined, env, localizations, { slug: productSlug })
   if (!collection) return null
-  const found = collection.products.find(product => product.slug === productSlug && productSurfaceOf(null, product) === routeKind)
+  // /products/<slug> is a physical item's own page; a practice area keeps its branch's page.
+  const found = collection.products.find(product => product.slug === productSlug && productSurfaceOf(null, product) === routeKind && (routeKind !== 'products' || product.kind === 'item'))
   if (!found) return null
   return projectPublicOffering(env, db, collection, found, '', previewAuthorized, localizations, requestedScope)
 }
@@ -322,7 +323,8 @@ async function projectPublicOffering(
   previewAuthorized: boolean,
   localizations?: readonly ExactPublicLocalization[],
   requestedScope?: string | null,
-  sourcePath = collection.presentation.productPath(locationSlug, found.slug),
+  // An item's (like an experience's or a home's) page is the site's own, whatever surface listed it.
+  sourcePath = (hasSiteProductPage(found.kind) ? presentationForProduct(found) : collection.presentation).productPath(locationSlug, found.slug),
 ): Promise<PublicProductDetail | null> {
   const organizationId = collection.organization.id
   const offeredAt = new Set(found.locations.filter(entry => previewAuthorized || (entry.published && (entry.active || Boolean(locationSlug)))).map(entry => entry.location_id))
@@ -334,7 +336,8 @@ async function projectPublicOffering(
     if (!location) return null
   } else if (requestedScope === 'online' && !online_available) return null
   else if (!requestedScope && locations.length === 1 && !online_available) location = locations[0]!
-  const scope_required = !requestedScope && locations.length + Number(online_available) > 1
+  // An item is bought from the page whichever branch sends it (checkout picks the branch), so it never asks for one first.
+  const scope_required = found.kind !== 'item' && !requestedScope && locations.length + Number(online_available) > 1
   let product = found
   let organization = collection.organization
   let products = collection.products

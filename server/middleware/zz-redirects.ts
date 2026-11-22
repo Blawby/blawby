@@ -94,10 +94,10 @@ async function resolveRetiredSiteProductPath(event: H3Event, path: string) {
   if (!db || !organizationId) return null
   // Product kind owns the route. A service can take bookings while retaining
   // its branch's product URL.
-  const product = await queryFirst<{ slug: string; kind: 'experience' | 'stay' } | null>(db, `
+  const product = await queryFirst<{ slug: string; kind: 'experience' | 'stay' | 'item' } | null>(db, `
     SELECT p.slug, p.kind FROM products p
       JOIN product_publications pp ON pp.product_id = p.id AND pp.organization_id = ? AND pp.published = 1
-     WHERE p.slug = ? AND p.active = 1 AND p.kind IN ('experience', 'stay')
+     WHERE p.slug = ? AND p.active = 1 AND p.kind IN ('experience', 'stay', 'item')
      LIMIT 1
   `, [organizationId, slug])
   if (!product) return null

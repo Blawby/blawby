@@ -107,6 +107,12 @@ const variantWrite = {
     id: { type: 'string' }, name: { type: 'string' }, sku: { type: ['string', 'null'] },
     active: { type: 'boolean' }, sort_order: { type: 'integer' },
     prices: { type: 'array', maxItems: 20, items: priceWrite },
+    option_values: { type: 'array', maxItems: 3, items: { type: 'string', minLength: 1, maxLength: 100 }, description: 'For a physical item: one value per product option, in option order, such as ["Ruby reds"] or ["Large", "Black"].' },
+    media_asset_id: { type: ['string', 'null'], description: 'The product photo this variant shows.' },
+    weight_grams: { type: ['integer', 'null'], minimum: 1 }, length_mm: { type: ['integer', 'null'], minimum: 1 }, width_mm: { type: ['integer', 'null'], minimum: 1 }, height_mm: { type: ['integer', 'null'], minimum: 1 },
+    hs_code: { type: ['string', 'null'], description: 'Harmonized System code for customs.' }, country_of_origin: { type: ['string', 'null'], description: 'ISO 3166-1 alpha-2.' },
+    inventory_tracked: { type: 'boolean', description: 'Count stock per location (set_inventory).' },
+    inventory_policy: { type: 'string', enum: ['deny', 'continue'], description: 'deny stops selling at zero; continue keeps selling and makes it to order.' },
   },
   required: ['name'],
   additionalProperties: false,
@@ -117,9 +123,16 @@ const variantObject = {
   properties: {
     id: { type: 'string' }, product_id: { type: 'string' }, name: { type: 'string' },
     sku: { type: ['string', 'null'] }, active: { type: 'boolean' }, sort_order: { type: 'integer' },
+    option_values: { type: 'array', maxItems: 3, items: { type: 'string', minLength: 1, maxLength: 100 }, description: 'For a physical item: one value per product option, in option order, such as ["Ruby reds"] or ["Large", "Black"].' },
+    media_asset_id: { type: ['string', 'null'], description: 'The product photo this variant shows.' },
+    weight_grams: { type: ['integer', 'null'], minimum: 1 }, length_mm: { type: ['integer', 'null'], minimum: 1 }, width_mm: { type: ['integer', 'null'], minimum: 1 }, height_mm: { type: ['integer', 'null'], minimum: 1 },
+    hs_code: { type: ['string', 'null'], description: 'Harmonized System code for customs.' }, country_of_origin: { type: ['string', 'null'], description: 'ISO 3166-1 alpha-2.' },
+    inventory_tracked: { type: 'boolean', description: 'Count stock per location (set_inventory).' },
+    inventory_policy: { type: 'string', enum: ['deny', 'continue'], description: 'deny stops selling at zero; continue keeps selling and makes it to order.' },
+    inventory_levels: { type: 'array', items: { type: 'object', properties: { location_id: { type: 'string' }, available: { type: 'integer' } }, required: ['location_id', 'available'], additionalProperties: false }, description: 'A tracked variant’s stock at each location; empty when untracked.' },
     prices: { type: 'array', items: priceObject },
   },
-  required: ['id', 'product_id', 'name', 'sku', 'active', 'sort_order', 'prices'],
+  required: ['id', 'product_id', 'name', 'sku', 'active', 'sort_order', 'prices', 'inventory_levels', 'option_values', 'media_asset_id', 'weight_grams', 'length_mm', 'width_mm', 'height_mm', 'hs_code', 'country_of_origin', 'inventory_tracked', 'inventory_policy'],
   additionalProperties: false,
 } as const
 
@@ -261,6 +274,9 @@ const productObject = {
     page: { type: ['object', 'null'], description: "The source page this product owns, or null. Edit its content with the site-page tools; its binding is the page's product_id.", properties: { id: { type: 'string' }, path: { type: 'string' }, title: { type: 'string' } }, required: ['id', 'path', 'title'] },
     admin_edit_url: { type: ['string', 'null'], description: 'The dashboard editor for this product, on the platform host.' },
     tax_code: { type: ['string', 'null'] },
+    options: { type: 'array', maxItems: 3, items: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 50 }, values: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string', minLength: 1, maxLength: 100 } } }, required: ['name', 'values'], additionalProperties: false }, description: 'A physical item’s options, such as Colour or Size; each variant names one value of each in option_values.' },
+    processing_days: { type: ['integer', 'null'], minimum: 0, maximum: 365, description: 'A physical item: business days to ship from stock.' },
+    made_to_order_days: { type: ['integer', 'null'], minimum: 0, maximum: 365, description: 'A physical item: business days to make and ship one sold past its stock.' },
     variants: { type: 'array', items: variantObject },
     details: detailObject,
     publications: { type: 'array', items: publicationObject },
@@ -315,7 +331,7 @@ const productListResultObject = {
 
 
 const productWrite = {
-  kind: { type: 'string', enum: [...PRODUCT_KINDS], description: 'The customer-facing kind: dish (food or drink), experience (experience or class), service (practice area or consultation), stay (place to stay), or table (a restaurant location’s tables, booked as a reservation). Determines the allowed descriptive fields; booking and stock remain separate capabilities.' },
+  kind: { type: 'string', enum: [...PRODUCT_KINDS], description: 'The customer-facing kind: dish (food or drink), experience (experience or class), service (practice area or consultation), stay (place to stay), table (a restaurant location’s tables, booked as a reservation), or item (a physical item shipped or collected, with options, stock and shipping). Determines the allowed descriptive fields; booking and stock remain separate capabilities.' },
   name: { type: 'string' },
   description: { type: 'string' },
   active: { type: 'boolean', description: 'Enable or disable this product. Increasing the number of live homes requires the dashboard.' },
@@ -324,6 +340,9 @@ const productWrite = {
   marketing_features: { type: 'array', maxItems: PRODUCT_LIMITS.marketingFeatures, items: { type: 'string' }, description: 'Generic selling bullets. Inclusions, preparation instructions and policies are separate details.' },
   metadata: { type: 'object', additionalProperties: { type: 'string' }, description: 'Opaque string annotations for integrations. No pricing, scheduling, stock or filtering behavior may read these.' },
   tax_code: { type: ['string', 'null'] },
+  options: { type: 'array', maxItems: 3, items: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 50 }, values: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string', minLength: 1, maxLength: 100 } } }, required: ['name', 'values'], additionalProperties: false }, description: 'A physical item’s options, such as Colour or Size; each variant names one value of each in option_values.' },
+  processing_days: { type: ['integer', 'null'], minimum: 0, maximum: 365, description: 'A physical item: business days to ship from stock.' },
+  made_to_order_days: { type: ['integer', 'null'], minimum: 0, maximum: 365, description: 'A physical item: business days to make and ship one sold past its stock.' },
   variants: { type: 'array', minItems: 1, maxItems: PRODUCT_LIMITS.variants, items: variantWrite, description: 'Omit to create a single default variant.' },
   details: { ...detailObject, description: 'Named customer-facing facts for the product kind. This is a complete replacement map; preserve fields to retain. pricing_note contains explicitly stated price wording and requires empty numeric prices.' },
 } as const

@@ -162,6 +162,7 @@ type ListRow = {
   record_stored_ends_at: string | null
   record_timezone: string | null
   record_title: string | null
+  order_label: string | null
   record_image_url: string | null
   latest_message_id: string | null
   unread: number
@@ -209,6 +210,8 @@ function conversationListQuery(organizationId: string | null, opts: ListGuestThr
       op.unit AS record_unit, op.starts_at AS record_starts_at, op.stored_ends_at AS record_stored_ends_at, op.timezone AS record_timezone,
       (SELECT COALESCE(sc.internal_name, p.name) FROM products p LEFT JOIN product_stay_configs sc ON sc.organization_id = p.organization_id AND sc.product_id = p.id
         WHERE p.organization_id = gt.organization_id AND p.id = op.product_id) AS record_title,
+      -- A buyer's order conversation is about its order, not the branch it ships from.
+      (SELECT 'Order #' || ord.number FROM orders ord WHERE ord.organization_id = gt.organization_id AND ord.conversation_id = gt.id) AS order_label,
       -- The listing's cover, as Airbnb's inbox shows it beside each conversation.
       (SELECT CASE ma.kind WHEN 'video' THEN ma.thumbnail_url ELSE ma.public_url END FROM media_placements mp
         JOIN media_assets ma ON ma.organization_id = mp.organization_id AND ma.id = mp.asset_id AND ma.status = 'active'
@@ -284,7 +287,7 @@ function presentConversationList(rows: ListRow[], opts: ListGuestThreadsOptions,
       avatar_initial: initial(shownName),
       image_url: support ? null : row.record_image_url,
       channel: row.reply_channel === 'airbnb' ? 'airbnb' : 'direct',
-      home: row.location_title,
+      home: row.order_label ?? row.location_title,
       when: support || traveler ? null : when ?? (inquiry ? formatCalendarRange(inquiry.check_in_date, inquiry.check_out_date, 'en-US') : null),
       preview: message ? messagePreview(message.text, message.photos) : '',
       preview_from: message ? previewFrom(message, { guestName: row.reply_channel === 'airbnb' ? guestName : firstName(guestName), viewerId: opts.userId, primaryGuestId: row.user_id, buyer: Boolean(opts.buyerAudience), business: row.organization_name }) : null,

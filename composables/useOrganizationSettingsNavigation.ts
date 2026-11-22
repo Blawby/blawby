@@ -90,6 +90,7 @@ export function useOrganizationSettingsNavigation(
     return [
       { id: 'website', icon: 'i-lucide-panels-top-left', label: 'Website', to: `${base.value}/website` },
       { id: 'locations', icon: 'i-lucide-map-pin', label: dashboard.organization.value?.vertical === 'service' ? 'Offices' : 'Locations', to: `${base.value}/locations` },
+      { id: 'shipping', icon: 'i-lucide-truck', label: 'Shipping and pickup', to: `${base.value}/shipping` },
       ...(permissions.value?.team ? [{ id: 'team', icon: 'i-lucide-users', label: 'Team', to: `${base.value}/team` }] : []),
       { id: 'integrations', icon: 'i-lucide-plug', label: 'Connections', to: `${base.value}/integrations` },
       // What the organization pays Blawby. Owners change it and admins read it; members have no row.

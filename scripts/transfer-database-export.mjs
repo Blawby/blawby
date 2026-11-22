@@ -32,7 +32,7 @@ register('../tests/unit/support/alias-hooks.mjs', import.meta.url)
 const DECLARED_ORGANIZATION_ROLES = new Set(Object.keys(organizationRoles))
 
 const MIGRATIONS_DIRECTORY = 'migrations'
-const PREVIOUS_EPOCH_DIRECTORIES = ['migrations-history/v27', 'migrations-history/v28']
+const PREVIOUS_EPOCH_DIRECTORIES = ['migrations-history/v29']
 const hash = value => createHash('sha256').update(value).digest('hex')
 const qi = value => `"${value.replaceAll('"', '""')}"`
 const assert = (condition, message) => { if (!condition) throw new Error(message) }
@@ -223,7 +223,8 @@ export async function auditTargetInvariants(target) {
     SELECT DISTINCT role FROM member WHERE role IS NOT NULL
     UNION SELECT DISTINCT role FROM invitation WHERE role IS NOT NULL AND status = 'pending'
   `).all().map(row => String(row.role))
-  const undeclared = roles.filter(role => !DECLARED_ORGANIZATION_ROLES.has(role))
+  // A member holds several roles, stored comma-separated as Better Auth stores them; each must be declared.
+  const undeclared = roles.filter(role => role.split(',').some(name => !DECLARED_ORGANIZATION_ROLES.has(name.trim())))
   results.push({ name: 'organization_roles_are_declared', violations: undeclared.length, undeclared })
   // The R2 keys are the ones this transfer rewrites, and the objects were
   // copied to organizations/<id>/ in R2, outside this file. So every active
@@ -472,11 +473,6 @@ export async function transferDatabaseExport(sourcePath, targetPath, { payloadPa
       assert(digest(rows, tableColumns) === digest(stage.prepare(`SELECT * FROM ${qi(table)}`).all(), tableColumns), `${table}: copy differs`)
     }
     const forward = migrationFiles(sourceChain).slice(ledger.length).map(name => resolve(sourceChain, name))
-    if (sourceChain === PREVIOUS_EPOCH_DIRECTORIES[0]) {
-      // v28 was a new baseline of the end of v27. Its forward migrations apply to those same rows.
-      const nextEpoch = PREVIOUS_EPOCH_DIRECTORIES[1]
-      forward.push(...migrationFiles(nextEpoch).slice(1).map(name => resolve(nextEpoch, name)))
-    }
     for (const migration of forward) stage.exec(readFileSync(migration, 'utf8'))
     const unsupported = stage.prepare('SELECT organization_id, id, kind FROM products ORDER BY organization_id, id').all().filter(row => !PRODUCT_KINDS.includes(row.kind))
     assert(unsupported.length === 0, `Unsupported offerings: ${unsupported.map(row => `${row.organization_id}/${row.id} (${row.kind})`).join(', ')}; no rows were copied`)
@@ -486,7 +482,9 @@ export async function transferDatabaseExport(sourcePath, targetPath, { payloadPa
     target.pragma('foreign_keys = OFF')
     target.transaction(() => {
       for (const table of names) {
-        const targetColumns = columns(target, table)
+        // A column new in the target takes its declared default; every column the source has is copied.
+        const stageColumns = columns(stage, table)
+        const targetColumns = columns(target, table).filter(name => stageColumns.includes(name))
         const rows = transferRows(stage, table, targetColumns.map(qi).join(','))
         const insert = target.prepare(`INSERT INTO ${qi(table)} (${targetColumns.map(qi).join(',')}) VALUES (${targetColumns.map(() => '?').join(',')})`)
         for (const row of rows) insert.run(...targetColumns.map(name => row[name]))

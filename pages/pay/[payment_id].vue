@@ -43,12 +43,22 @@
           </section>
 
           <!-- Changing a stay cancels the old checkout, then restores its dates and party on the home's page. -->
+          <!-- An order names itself and where it goes, as Shopify's review step does. -->
+          <div v-if="handoff.order" class="border-t border-default pt-5 text-sm" data-payment-order>
+            <h3 class="font-semibold text-highlighted">{{ t('order.number', { number: handoff.order.number }) }}</h3>
+            <p v-if="shipTo" class="mt-1 whitespace-pre-line text-default"><span class="text-muted">{{ t('order.ship_to') }}</span>{{ '\n' }}{{ shipTo }}</p>
+          </div>
           <div v-if="handoff.stay" class="flex items-start justify-between gap-4 border-t border-default pt-5" data-payment-stay>
             <div>
               <h3 class="text-sm font-semibold text-highlighted">{{ t('payment.dates') }}</h3>
               <p class="mt-1 text-sm text-default">{{ stayRange }}</p>
             </div>
             <UButton v-if="offeringPath && !handoff.approved_stay_path && handoff.state === 'open' && !paid && !outcome" color="neutral" variant="soft" size="sm" :label="t('payment.change')" :loading="working" :disabled="working || completing" @click="changeStay('dates')" />
+          </div>
+          <!-- An order states when it leaves, as the cart did. -->
+          <div v-else-if="handoff.order?.ship_by" class="border-t border-default pt-5" data-payment-ship-by>
+            <h3 class="text-sm font-semibold text-highlighted">{{ t(handoff.order.delivery_method === 'pickup' ? 'order.ready_by' : 'order.ships_by') }}</h3>
+            <p class="mt-1 text-sm text-default">{{ formatCalendarDate(handoff.order.ship_by, locale, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
           </div>
           <div v-else-if="handoff.starts_at && handoff.ends_at && handoff.timezone" class="flex items-start justify-between gap-4 border-t border-default pt-5" data-payment-time>
             <div>
@@ -143,8 +153,8 @@
 
             <i18n-t :keypath="laterPayments.length ? 'payment.monthly_agreement' : 'payment.agreement'" tag="p" scope="global" class="text-xs text-muted leading-relaxed">
               <template #terms>
-                <NuxtLink v-if="termsPath" :to="termsPath" class="font-semibold text-default underline">{{ t('payment.booking_terms') }}</NuxtLink>
-                <template v-else>{{ t('payment.booking_terms') }}</template>
+                <NuxtLink v-if="termsPath" :to="termsPath" class="font-semibold text-default underline">{{ termsLabel }}</NuxtLink>
+                <template v-else>{{ termsLabel }}</template>
               </template>
             </i18n-t>
             <UButton
@@ -165,9 +175,10 @@
 </template>
 
 <script setup lang="ts">
+import { shippingAddressLines } from '~/shared/goods'
 import { useMounted } from '@vueuse/core'
 import { loadStripe, type Stripe, type StripeElements, type StripePaymentElement } from '@stripe/stripe-js'
-import { presentationForProduct } from '~/utils/product-presentation'
+import { hasSiteProductPage, presentationForProduct } from '~/utils/product-presentation'
 import type { ProductKind } from '~/shared/product-details'
 import { paymentMoney } from '~/shared/payment-display'
 import { cardBrandLabel } from '~/composables/usePaymentsSettings'
@@ -201,7 +212,7 @@ const isHandoff = (value: unknown): value is Handoff => isRecord(value) && value
 const isReview = (value: unknown): value is Review => isRecord(value) && typeof value.payment_method_id === 'string' && [value.subtotal, value.tax, value.tax_included, value.surcharge].every(Number.isSafeInteger) && value.total === (value.subtotal as number) + (value.tax as number) + (value.surcharge as number) && isRecord(value.method)
 const isConfirmation = (value: unknown): value is Confirmation => isRecord(value) && typeof value.status === 'string' && typeof value.requires_action === 'boolean' && typeof value.taken === 'boolean'
 const isReturn = (value: unknown): value is PaymentReturn => isRecord(value) && (value.state === 'processing' || value.state === 'taken' || value.state === 'expired' || (value.state === 'paid' && (
-  (value.kind === 'stay' && typeof value.activity_id === 'string' && typeof value.receipt_token === 'string')
+  ((value.kind === 'stay' || value.kind === 'order') && typeof value.activity_id === 'string' && typeof value.receipt_token === 'string')
   || (value.kind === 'booking' && typeof value.conversation_id === 'string' && typeof value.cancellation_token === 'string'))))
 
 const { data: handoff, status, error, execute: loadHandoff } = await useAsyncData(`payment-handoff:${paymentId}`, () => publicApiRequest<Handoff>(`/api/public/payments/${encodeURIComponent(paymentId)}`, { query: { claim: claim.value }, validate: isHandoff }), { server: false, immediate: Boolean(claim.value) && !returned })
@@ -272,16 +283,31 @@ const offeringPath = computed(() => {
   if (!value?.product_slug || !value.kind) return ''
   if (value.kind === 'table') return localePath('/reservations')
   // Only an experience's and a stay's page is the site's; any other offering's is its location's.
-  if (value.kind !== 'experience' && value.kind !== 'stay' && !value.location_slug) return ''
+  if (!hasSiteProductPage(value.kind) && !value.location_slug) return ''
   return localePath(presentationForProduct({ kind: value.kind as ProductKind }).productPath(value.location_slug ?? '', value.product_slug))
 })
-const termsPath = computed(() => policySummary.value ? '#booking-policy' : '')
+const termsPath = computed(() => policySummary.value ? '#booking-policy' : handoff.value?.order ? localePath('/policies/terms') : '')
+// Where an order is sent, as the buyer typed it; none for pickup.
+const shipTo = computed(() => {
+  const details = handoff.value?.order?.shipping_details
+  if (!details) return ''
+  return shippingAddressLines(details).join('\n')
+})
+// An order is bought under the site's terms of service, not a booking's terms.
+const termsLabel = computed(() => handoff.value?.order ? t('site_pages.terms') : t('payment.booking_terms'))
 
 /** How the total adds up, the way Airbnb's receipt reads: "$120.00 × 2 nights", "$95.00 × 1 guest". */
 const priceLines = computed(() => {
   const value = handoff.value
   if (!value) return []
   if (value.stay) return stayNightlyGroups(value.stay.nightly).map(({ price, nights }) => ({ label: t('stay.nightly_line', { price: money(price), nights: nightsLabel(nights) }), amount: money(price * nights) }))
+  // An order lists what it buys and its shipping, as the cart did.
+  if (value.order) return [
+    ...value.order.lines.map(line => ({ label: `${line.title}${line.variant_title ? ` · ${line.variant_title}` : ''} × ${line.quantity}`, amount: money(line.amount) })),
+    ...(value.order.shipping ? [{ label: `${t('shop.shipping')} · ${value.order.shipping.name}`, amount: money(value.order.shipping.amount) }] : []),
+    // Pickup is a line of its own, free, and says where.
+    ...(value.order.delivery_method === 'pickup' ? [{ label: [value.order.pickup_location_title ? t('shop.pickup_free', { place: value.order.pickup_location_title }) : t('shop.pickup'), value.order.pickup_location_address].filter(Boolean).join(' · '), amount: t('shop.free') }] : []),
+  ]
   if (value.quantity === 1) return [{ label: value.title, amount: money(value.subtotal) }]
   return [{ label: t('payment.unit_line', { price: money(value.unit_amount), count: guests.value || value.quantity }), amount: money(value.subtotal) }]
 })
@@ -350,7 +376,9 @@ async function reviewMethod() {
     const submitted = await elements.submit()
     if (submitted.error) throw new Error(submitted.error.message ?? t('payment.unavailable'))
     // Stripe can hide contact fields for cards. Include the booking contact when creating the method so Radar receives it before authorization.
-    const billingDetails = handoff.value?.billing_details
+    // The contact only: the billing address is what the buyer gave the Payment Element, which started from the shipping country.
+    const contact = handoff.value?.billing_details
+    const billingDetails = contact ? { name: contact.name, email: contact.email, ...(contact.phone ? { phone: contact.phone } : {}) } : null
     const created = await stripe.createPaymentMethod({
       elements,
       ...(billingDetails ? { params: { billing_details: billingDetails } } : {}),
@@ -425,6 +453,7 @@ async function complete(): Promise<true | undefined> {
       return
     }
     if (done.kind === 'stay') await navigateTo({ path: localePath('/bookings/stay'), query: { id: done.activity_id }, hash: `#${done.receipt_token}` }, { replace: true })
+    else if (done.kind === 'order') await navigateTo({ path: localePath('/orders/confirmed'), query: { id: done.activity_id }, hash: `#${done.receipt_token}` }, { replace: true })
     else {
       if (done.booking && organization?.id) {
         paidReceipt.value = { organizationId: organization.id, id: done.conversation_id, token: done.cancellation_token, booking: done.booking }

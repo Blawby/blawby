@@ -228,6 +228,8 @@ export async function prepareProductBookingConfig(db: DbClient, input: {
 }): Promise<{ queries: BatchQuery[]; config: ProductBookingConfigRecord }> {
   const product = input.productInSameBatch ? null : await requireOrganizationProduct(db, input)
   const kind = product?.kind ?? input.productKind ?? ''
+  // A physical item is bought and sent, never booked: no booking settings, so it never reaches the booking lists and Calendar.
+  if (kind === 'item') throw new HTTPError({ statusCode: 409, statusMessage: 'A physical item is bought, not booked', data: { code: 'ITEM_NOT_BOOKABLE', field: 'booking' } })
   // The unit follows from what the product is: experiences and consultations sell
   // a session's seats, a home its nights. Every other kind takes no bookings here.
   const unit = Object.hasOwn(BOOKING_UNITS, kind) ? BOOKING_UNITS[kind]! : badRequest(input.productInSameBatch ? 'The bookable product kind is required before preparing booking setup' : 'Only experiences, services, tables and places to stay take bookings')

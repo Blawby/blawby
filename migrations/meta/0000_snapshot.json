@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a0edca3f-f946-4125-a6c6-648df6b123be",
+  "id": "a1cf7c43-4d50-47b6-8ac3-54d4e8042634",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "account": {
@@ -1266,6 +1266,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "deposit_minor": {
+          "name": "deposit_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "idempotency_key": {
           "name": "idempotency_key",
           "type": "text",
@@ -1853,6 +1860,14 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "pickup_enabled": {
+          "name": "pickup_enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
         },
         "created_at": {
           "name": "created_at",
@@ -4978,6 +4993,124 @@
         }
       }
     },
+    "inventory_levels": {
+      "name": "inventory_levels",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "product_variant_id": {
+          "name": "product_variant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "available": {
+          "name": "available",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "inventory_levels_location_idx": {
+          "name": "inventory_levels_location_idx",
+          "columns": [
+            "organization_id",
+            "location_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "inventory_levels_organization_id_organization_id_fk": {
+          "name": "inventory_levels_organization_id_organization_id_fk",
+          "tableFrom": "inventory_levels",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "inventory_levels_variant_scope_fk": {
+          "name": "inventory_levels_variant_scope_fk",
+          "tableFrom": "inventory_levels",
+          "tableTo": "product_variants",
+          "columnsFrom": [
+            "organization_id",
+            "product_variant_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "inventory_levels_location_scope_fk": {
+          "name": "inventory_levels_location_scope_fk",
+          "tableFrom": "inventory_levels",
+          "tableTo": "business_locations",
+          "columnsFrom": [
+            "organization_id",
+            "location_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "inventory_levels_pk": {
+          "columns": [
+            "product_variant_id",
+            "location_id"
+          ],
+          "name": "inventory_levels_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "inventory_levels_instants_check": {
+          "name": "inventory_levels_instants_check",
+          "value": "strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0 days') IS updated_at"
+        }
+      }
+    },
     "invitation": {
       "name": "invitation",
       "columns": {
@@ -7393,6 +7526,21 @@
           "notNull": false,
           "autoincrement": false
         },
+        "purpose": {
+          "name": "purpose",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'payment'"
+        },
+        "period_start": {
+          "name": "period_start",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "idempotency_key": {
           "name": "idempotency_key",
           "type": "text",
@@ -7631,6 +7779,429 @@
         "onboarding_drafts_payload_json_check": {
           "name": "onboarding_drafts_payload_json_check",
           "value": "payload_json IS NULL OR (json_valid(payload_json) AND json_type(payload_json) IS 'object')"
+        }
+      }
+    },
+    "order_lines": {
+      "name": "order_lines",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "product_variant_id": {
+          "name": "product_variant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "variant_title": {
+          "name": "variant_title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sku": {
+          "name": "sku",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "unit_amount": {
+          "name": "unit_amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "made_to_order_quantity": {
+          "name": "made_to_order_quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "order_lines_order_idx": {
+          "name": "order_lines_order_idx",
+          "columns": [
+            "order_id",
+            "sort_order"
+          ],
+          "isUnique": false
+        },
+        "order_lines_variant_idx": {
+          "name": "order_lines_variant_idx",
+          "columns": [
+            "organization_id",
+            "product_variant_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "order_lines_order_scope_fk": {
+          "name": "order_lines_order_scope_fk",
+          "tableFrom": "order_lines",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "organization_id",
+            "order_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "order_lines_quantity_check": {
+          "name": "order_lines_quantity_check",
+          "value": "quantity BETWEEN 1 AND 99 AND unit_amount >= 0 AND made_to_order_quantity BETWEEN 0 AND quantity AND sort_order >= 0"
+        }
+      }
+    },
+    "orders": {
+      "name": "orders",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "number": {
+          "name": "number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "buyer_user_id": {
+          "name": "buyer_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
+        "delivery_method": {
+          "name": "delivery_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "shipping_details": {
+          "name": "shipping_details",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "shipping_rate_name": {
+          "name": "shipping_rate_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "shipping_amount": {
+          "name": "shipping_amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "subtotal_amount": {
+          "name": "subtotal_amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ship_by": {
+          "name": "ship_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "carrier": {
+          "name": "carrier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "tracking_number": {
+          "name": "tracking_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "tracking_url": {
+          "name": "tracking_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fulfilled_at": {
+          "name": "fulfilled_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "paid_at": {
+          "name": "paid_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "cancelled_at": {
+          "name": "cancelled_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "orders_conversation_unique": {
+          "name": "orders_conversation_unique",
+          "columns": [
+            "conversation_id"
+          ],
+          "isUnique": true,
+          "where": "conversation_id IS NOT NULL"
+        },
+        "orders_org_status_idx": {
+          "name": "orders_org_status_idx",
+          "columns": [
+            "organization_id",
+            "status",
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "orders_buyer_idx": {
+          "name": "orders_buyer_idx",
+          "columns": [
+            "buyer_user_id",
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "orders_org_id_unique": {
+          "name": "orders_org_id_unique",
+          "columns": [
+            "organization_id",
+            "id"
+          ],
+          "isUnique": true
+        },
+        "orders_org_number_unique": {
+          "name": "orders_org_number_unique",
+          "columns": [
+            "organization_id",
+            "number"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "orders_organization_id_organization_id_fk": {
+          "name": "orders_organization_id_organization_id_fk",
+          "tableFrom": "orders",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "orders_buyer_user_id_user_id_fk": {
+          "name": "orders_buyer_user_id_user_id_fk",
+          "tableFrom": "orders",
+          "tableTo": "user",
+          "columnsFrom": [
+            "buyer_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "orders_location_scope_fk": {
+          "name": "orders_location_scope_fk",
+          "tableFrom": "orders",
+          "tableTo": "business_locations",
+          "columnsFrom": [
+            "organization_id",
+            "location_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "orders_conversation_scope_fk": {
+          "name": "orders_conversation_scope_fk",
+          "tableFrom": "orders",
+          "tableTo": "conversations",
+          "columnsFrom": [
+            "organization_id",
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "orders_number_check": {
+          "name": "orders_number_check",
+          "value": "number >= 1001"
+        },
+        "orders_status_check": {
+          "name": "orders_status_check",
+          "value": "status IN ('pending', 'paid', 'released', 'cancelled') AND (status IN ('paid', 'cancelled')) = (paid_at IS NOT NULL) AND (status = 'cancelled') = (cancelled_at IS NOT NULL) AND (status IN ('paid', 'cancelled')) = (conversation_id IS NOT NULL)"
+        },
+        "orders_delivery_check": {
+          "name": "orders_delivery_check",
+          "value": "delivery_method IN ('shipping', 'pickup') AND (delivery_method = 'shipping') = (shipping_details IS NOT NULL) AND (delivery_method = 'shipping') = (shipping_rate_name IS NOT NULL)\n\t\tAND (shipping_details IS NULL OR (json_valid(shipping_details) AND json_type(shipping_details, '$.name') = 'text' AND json_type(shipping_details, '$.address.country') = 'text' AND json_type(shipping_details, '$.address.line1') = 'text'))"
+        },
+        "orders_money_check": {
+          "name": "orders_money_check",
+          "value": "subtotal_amount >= 0 AND shipping_amount >= 0 AND length(currency) = 3 AND currency = upper(currency) AND (delivery_method = 'shipping' OR shipping_amount = 0)"
+        },
+        "orders_fulfillment_check": {
+          "name": "orders_fulfillment_check",
+          "value": "(fulfilled_at IS NULL OR status = 'paid' OR status = 'cancelled') AND (tracking_number IS NULL OR fulfilled_at IS NOT NULL) AND (tracking_url IS NULL OR tracking_url LIKE 'https://_%')\n\t\tAND (ship_by IS NULL OR date(ship_by, '+0 days') IS ship_by)"
+        },
+        "orders_instants_check": {
+          "name": "orders_instants_check",
+          "value": "strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+0 days') IS created_at AND strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0 days') IS updated_at\n\t\tAND (paid_at IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ', paid_at, '+0 days') IS paid_at) AND (cancelled_at IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ', cancelled_at, '+0 days') IS cancelled_at)\n\t\tAND (fulfilled_at IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ', fulfilled_at, '+0 days') IS fulfilled_at)"
         }
       }
     },
@@ -12902,6 +13473,79 @@
           "autoincrement": false,
           "default": 0
         },
+        "option_values": {
+          "name": "option_values",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[]'"
+        },
+        "media_asset_id": {
+          "name": "media_asset_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "weight_grams": {
+          "name": "weight_grams",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "length_mm": {
+          "name": "length_mm",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "width_mm": {
+          "name": "width_mm",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "height_mm": {
+          "name": "height_mm",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "hs_code": {
+          "name": "hs_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "country_of_origin": {
+          "name": "country_of_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "inventory_tracked": {
+          "name": "inventory_tracked",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "inventory_policy": {
+          "name": "inventory_policy",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'deny'"
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -12983,6 +13627,19 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
+        "product_variants_media_asset_id_media_assets_id_fk": {
+          "name": "product_variants_media_asset_id_media_assets_id_fk",
+          "tableFrom": "product_variants",
+          "tableTo": "media_assets",
+          "columnsFrom": [
+            "media_asset_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
         "product_variants_product_scope_fk": {
           "name": "product_variants_product_scope_fk",
           "tableFrom": "product_variants",
@@ -13002,6 +13659,18 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {
+        "product_variants_option_values_check": {
+          "name": "product_variants_option_values_check",
+          "value": "json_valid(option_values) AND json_type(option_values) = 'array' AND json_array_length(option_values) <= 3"
+        },
+        "product_variants_package_check": {
+          "name": "product_variants_package_check",
+          "value": "(weight_grams IS NULL OR weight_grams > 0) AND (length_mm IS NULL OR length_mm > 0) AND (width_mm IS NULL OR width_mm > 0) AND (height_mm IS NULL OR height_mm > 0)\n\t\tAND (hs_code IS NULL OR (length(hs_code) BETWEEN 6 AND 12 AND hs_code NOT GLOB '*[^0-9.]*'))\n\t\tAND (country_of_origin IS NULL OR (length(country_of_origin) = 2 AND country_of_origin = upper(country_of_origin) AND country_of_origin NOT GLOB '*[^A-Z]*'))"
+        },
+        "product_variants_inventory_check": {
+          "name": "product_variants_inventory_check",
+          "value": "inventory_tracked IN (0, 1) AND inventory_policy IN ('deny', 'continue')"
+        },
         "product_variants_instants_check": {
           "name": "product_variants_instants_check",
           "value": "(created_at IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+0 days') IS created_at) AND (updated_at IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0 days') IS updated_at)"
@@ -13119,6 +13788,28 @@
           "notNull": false,
           "autoincrement": false
         },
+        "options": {
+          "name": "options",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[]'"
+        },
+        "processing_days": {
+          "name": "processing_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "made_to_order_days": {
+          "name": "made_to_order_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "source": {
           "name": "source",
           "type": "text",
@@ -13206,10 +13897,6 @@
           "name": "products_slug_check",
           "value": "slug <> '' AND slug = lower(slug) AND slug NOT GLOB '*[^a-z0-9-]*' AND slug NOT LIKE '-%' AND slug NOT LIKE '%-' AND slug NOT LIKE '%--%'"
         },
-        "products_kind_check": {
-          "name": "products_kind_check",
-          "value": "kind IN ('dish', 'experience', 'service', 'stay', 'table')"
-        },
         "products_active_check": {
           "name": "products_active_check",
           "value": "active IN (0, 1)"
@@ -13225,6 +13912,14 @@
         "products_metadata_check": {
           "name": "products_metadata_check",
           "value": "json_valid(metadata) AND json_type(metadata) = 'object'"
+        },
+        "products_options_check": {
+          "name": "products_options_check",
+          "value": "json_valid(options) AND json_type(options) = 'array' AND json_array_length(options) <= 3"
+        },
+        "products_fulfillment_days_check": {
+          "name": "products_fulfillment_days_check",
+          "value": "(processing_days IS NULL OR processing_days BETWEEN 0 AND 365) AND (made_to_order_days IS NULL OR made_to_order_days BETWEEN 0 AND 365)"
         },
         "products_order_url_check": {
           "name": "products_order_url_check",
@@ -14495,6 +15190,292 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "shipping_rates": {
+      "name": "shipping_rates",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "shipping_zone_id": {
+          "name": "shipping_zone_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount": {
+          "name": "amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "min_weight_grams": {
+          "name": "min_weight_grams",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "max_weight_grams": {
+          "name": "max_weight_grams",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "min_subtotal": {
+          "name": "min_subtotal",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "delivery_days_min": {
+          "name": "delivery_days_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "delivery_days_max": {
+          "name": "delivery_days_max",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "shipping_rates_zone_idx": {
+          "name": "shipping_rates_zone_idx",
+          "columns": [
+            "shipping_zone_id",
+            "sort_order"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "shipping_rates_organization_id_organization_id_fk": {
+          "name": "shipping_rates_organization_id_organization_id_fk",
+          "tableFrom": "shipping_rates",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "shipping_rates_zone_scope_fk": {
+          "name": "shipping_rates_zone_scope_fk",
+          "tableFrom": "shipping_rates",
+          "tableTo": "shipping_zones",
+          "columnsFrom": [
+            "organization_id",
+            "shipping_zone_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "shipping_rates_name_check": {
+          "name": "shipping_rates_name_check",
+          "value": "length(trim(name)) BETWEEN 1 AND 100"
+        },
+        "shipping_rates_money_check": {
+          "name": "shipping_rates_money_check",
+          "value": "amount >= 0 AND length(currency) = 3 AND currency = upper(currency) AND (min_subtotal IS NULL OR min_subtotal >= 0)"
+        },
+        "shipping_rates_weight_check": {
+          "name": "shipping_rates_weight_check",
+          "value": "(min_weight_grams IS NULL OR min_weight_grams >= 0) AND (max_weight_grams IS NULL OR max_weight_grams > 0) AND (min_weight_grams IS NULL OR max_weight_grams IS NULL OR max_weight_grams > min_weight_grams)"
+        },
+        "shipping_rates_delivery_check": {
+          "name": "shipping_rates_delivery_check",
+          "value": "(delivery_days_min IS NULL OR delivery_days_min >= 0) AND (delivery_days_max IS NULL OR delivery_days_max >= 0) AND (delivery_days_min IS NULL OR delivery_days_max IS NULL OR delivery_days_max >= delivery_days_min)"
+        },
+        "shipping_rates_instants_check": {
+          "name": "shipping_rates_instants_check",
+          "value": "strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+0 days') IS created_at AND strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0 days') IS updated_at"
+        }
+      }
+    },
+    "shipping_zones": {
+      "name": "shipping_zones",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "countries": {
+          "name": "countries",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "shipping_zones_location_idx": {
+          "name": "shipping_zones_location_idx",
+          "columns": [
+            "organization_id",
+            "location_id"
+          ],
+          "isUnique": false
+        },
+        "shipping_zones_org_id_unique": {
+          "name": "shipping_zones_org_id_unique",
+          "columns": [
+            "organization_id",
+            "id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "shipping_zones_organization_id_organization_id_fk": {
+          "name": "shipping_zones_organization_id_organization_id_fk",
+          "tableFrom": "shipping_zones",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "shipping_zones_location_scope_fk": {
+          "name": "shipping_zones_location_scope_fk",
+          "tableFrom": "shipping_zones",
+          "tableTo": "business_locations",
+          "columnsFrom": [
+            "organization_id",
+            "location_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "shipping_zones_name_check": {
+          "name": "shipping_zones_name_check",
+          "value": "length(trim(name)) BETWEEN 1 AND 100"
+        },
+        "shipping_zones_countries_check": {
+          "name": "shipping_zones_countries_check",
+          "value": "json_valid(countries) AND json_type(countries) = 'array' AND json_array_length(countries) > 0"
+        },
+        "shipping_zones_instants_check": {
+          "name": "shipping_zones_instants_check",
+          "value": "strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+0 days') IS created_at AND strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0 days') IS updated_at"
+        }
+      }
+    },
     "stay_home_setup_drafts": {
       "name": "stay_home_setup_drafts",
       "columns": {
@@ -15627,7 +16608,7 @@
       "checkConstraints": {
         "tasks_kind_check": {
           "name": "tasks_kind_check",
-          "value": "kind IN ('turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up')\n    AND (subject_type IS NULL) = (subject_id IS NULL)\n    AND (subject_type IS NULL OR subject_type IN ('scheduled_guest_message', 'booking', 'product_session'))\n    AND (kind <> 'custom' OR subject_type IS NULL)"
+          "value": "kind IN ('turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance', 'order_fulfillment')\n    AND (subject_type IS NULL) = (subject_id IS NULL)\n    AND (subject_type IS NULL OR subject_type IN ('scheduled_guest_message', 'booking', 'product_session', 'message', 'order'))\n    AND (kind = 'order_fulfillment') = (subject_type IS 'order')\n    AND (kind <> 'custom' OR subject_type IS NULL)\n    AND (subject_type IS NOT 'message' OR kind = 'maintenance')\n    AND (kind <> 'maintenance' OR ((subject_type IS NULL OR subject_type = 'message') AND title IS NOT NULL AND location_id IS NOT NULL AND claim_role IS NULL))"
         },
         "tasks_text_check": {
           "name": "tasks_text_check",

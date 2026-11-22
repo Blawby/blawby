@@ -85,6 +85,8 @@ export interface ConversationHeader {
   is_group: boolean
   created_by_user_id: string | null
   booking_id: string | null
+  /** The order this buyer's conversation is about, for the business's members. */
+  order_id: string | null
   activity_path: string | null
   /** The booking's existing confirmation or creation, placed in the transcript's order. */
   reservation?: {

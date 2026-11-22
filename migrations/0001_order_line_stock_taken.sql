@@ -1,0 +1,1 @@
+ALTER TABLE `order_lines` ADD `stock_taken` integer DEFAULT 0 NOT NULL;

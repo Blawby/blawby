@@ -3,7 +3,6 @@ import type { OrganizationSettings } from '../../shared/organization-settings'
 import { INTEGRATION_PROVIDERS, NONPROFIT_STATUS_CANONICAL } from '../../shared/organization-settings'
 import type { MediaCategory } from '~/shared/media-placement-contract'
 import { relations, sql } from "drizzle-orm"
-import { PRODUCT_KINDS } from "../../shared/product-details"
 import { REVIEW_CATEGORY_KEYS, type ReviewCategory } from "../../shared/review-questions"
 import { sqliteTable, sqliteView, integer, text, real, unique, uniqueIndex, index, check, foreignKey, primaryKey } from "drizzle-orm/sqlite-core"
 import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core"
@@ -56,6 +55,8 @@ export const business_locations = sqliteTable("business_locations", {
 	email: text(),
 	google_place_id: text(),
 	google_review_url: text(),
+	// Shopify's local pickup: buyers may collect shipped-goods orders here.
+	pickup_enabled: integer({ mode: "boolean" }).default(false).notNull(),
 	created_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
 	updated_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
 	// The listing's own clock: every in-person session here is offered and
@@ -322,9 +323,9 @@ export const jwks = sqliteTable("jwks", {
 export const tasks = sqliteTable('tasks', {
   id: text().primaryKey(),
   organization_id: text().notNull().references(() => organization.id, { onDelete: 'cascade' }),
-  kind: text({ enum: ['turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance'] }).notNull(),
+  kind: text({ enum: ['turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance', 'order_fulfillment'] }).notNull(),
   // A maintenance job's subject is the guest's message that reported it, when it came from one.
-  subject_type: text({ enum: ['scheduled_guest_message', 'booking', 'product_session', 'message'] }),
+  subject_type: text({ enum: ['scheduled_guest_message', 'booking', 'product_session', 'message', 'order'] }),
   subject_id: text(),
   product_id: text(),
   location_id: text(),
@@ -349,9 +350,10 @@ export const tasks = sqliteTable('tasks', {
   index('tasks_status_due_idx').on(table.organization_id, table.status, table.due_at),
   index('tasks_member_status_due_idx').on(table.organization_id, table.assigned_member_id, table.status, table.due_at),
   index('tasks_subject_idx').on(table.subject_type, table.subject_id),
-  check('tasks_kind_check', sql`kind IN ('turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance')
+  check('tasks_kind_check', sql`kind IN ('turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance', 'order_fulfillment')
     AND (subject_type IS NULL) = (subject_id IS NULL)
-    AND (subject_type IS NULL OR subject_type IN ('scheduled_guest_message', 'booking', 'product_session', 'message'))
+    AND (subject_type IS NULL OR subject_type IN ('scheduled_guest_message', 'booking', 'product_session', 'message', 'order'))
+    AND (kind = 'order_fulfillment') = (subject_type IS 'order')
     AND (kind <> 'custom' OR subject_type IS NULL)
     AND (subject_type IS NOT 'message' OR kind = 'maintenance')
     AND (kind <> 'maintenance' OR ((subject_type IS NULL OR subject_type = 'message') AND title IS NOT NULL AND location_id IS NOT NULL AND claim_role IS NULL))`),
@@ -525,6 +527,15 @@ export const products = sqliteTable("products", {
 	// stock, permission, routing or filtering behavior may read this.
 	metadata: text().default("{}").notNull(),
 	tax_code: text(),
+	// Shopify's product options: up to three `{ name, values }` in display
+	// order. Each variant's option_values names one value per option, in the
+	// same order. '[]' is a product sold one way.
+	options: text().default("[]").notNull(),
+	// Shipped goods: business days to ship an order from stock, and to make
+	// one to order when a variant keeps selling past its stock. NULL is not
+	// stated; an order then has no ship-by date.
+	processing_days: integer(),
+	made_to_order_days: integer(),
 	// Provenance of the row, retained with an explicit owner.
 	source: text().default("manual").notNull(),
 	created_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
@@ -537,11 +548,12 @@ export const products = sqliteTable("products", {
 	unique("products_org_slug_unique").on(table.organization_id, table.slug),
 	check("products_name_not_blank_check", sql`trim(name) <> ''`),
 	check("products_slug_check", sql`slug <> '' AND slug = lower(slug) AND slug NOT GLOB '*[^a-z0-9-]*' AND slug NOT LIKE '-%' AND slug NOT LIKE '%-' AND slug NOT LIKE '%--%'`),
-	check("products_kind_check", sql`kind IN (${sql.raw(PRODUCT_KINDS.map(kind => `'${kind}'`).join(', '))})`),
 	check("products_active_check", sql`active IN (0, 1)`),
 	check("products_marketing_features_check", sql`json_valid(marketing_features) AND json_type(marketing_features) = 'array'`),
 	check("products_details_json_check", sql`json_valid(details_json) AND json_type(details_json) = 'object'`),
 	check("products_metadata_check", sql`json_valid(metadata) AND json_type(metadata) = 'object'`),
+	check("products_options_check", sql`json_valid(options) AND json_type(options) = 'array' AND json_array_length(options) <= 3`),
+	check("products_fulfillment_days_check", sql`(processing_days IS NULL OR processing_days BETWEEN 0 AND 365) AND (made_to_order_days IS NULL OR made_to_order_days BETWEEN 0 AND 365)`),
 	check("products_order_url_check", sql`order_url IS NULL OR (order_url LIKE 'https://_%' AND instr(order_url, '@') = 0 AND instr(order_url, char(10)) = 0 AND instr(order_url, char(13)) = 0)`),
 ]);
 
@@ -568,11 +580,32 @@ export const product_variants = sqliteTable("product_variants", {
 	sku: text(),
 	active: integer({ mode: "boolean" }).default(true).notNull(),
 	sort_order: integer().default(0).notNull(),
+	// One value per product option, in the product's option order.
+	option_values: text().default("[]").notNull(),
+	// The product photo this variant shows (Shopify's variant image).
+	media_asset_id: text().references((): AnySQLiteColumn => media_assets.id, { onDelete: "set null" }),
+	// The packed parcel, for shipping rates and customs. NULL is not stated.
+	weight_grams: integer(),
+	length_mm: integer(),
+	width_mm: integer(),
+	height_mm: integer(),
+	hs_code: text(),
+	// ISO 3166-1 alpha-2.
+	country_of_origin: text(),
+	// Shopify's inventory: tracked variants count stock per location
+	// (inventory_levels); `continue` keeps selling past it, made to order.
+	inventory_tracked: integer({ mode: "boolean" }).default(false).notNull(),
+	inventory_policy: text().$type<'deny' | 'continue'>().default("deny").notNull(),
 	created_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
 	updated_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
 	created_by: text().notNull(),
 	updated_by: text().notNull(),
 }, (table) => [
+	check("product_variants_option_values_check", sql`json_valid(option_values) AND json_type(option_values) = 'array' AND json_array_length(option_values) <= 3`),
+	check("product_variants_package_check", sql`(weight_grams IS NULL OR weight_grams > 0) AND (length_mm IS NULL OR length_mm > 0) AND (width_mm IS NULL OR width_mm > 0) AND (height_mm IS NULL OR height_mm > 0)
+		AND (hs_code IS NULL OR (length(hs_code) BETWEEN 6 AND 12 AND hs_code NOT GLOB '*[^0-9.]*'))
+		AND (country_of_origin IS NULL OR (length(country_of_origin) = 2 AND country_of_origin = upper(country_of_origin) AND country_of_origin NOT GLOB '*[^A-Z]*'))`),
+	check("product_variants_inventory_check", sql`inventory_tracked IN (0, 1) AND inventory_policy IN ('deny', 'continue')`),
 	check("product_variants_instants_check", sql`(created_at IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+0 days') IS created_at) AND (updated_at IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0 days') IS updated_at)`),
 	foreignKey({ columns: [table.organization_id, table.product_id], foreignColumns: [products.organization_id, products.id], name: "product_variants_product_scope_fk" }).onDelete("cascade"),
 	unique("product_variants_org_id_unique").on(table.organization_id, table.id),
@@ -713,6 +746,77 @@ export const product_locations = sqliteTable("product_locations", {
 	// Parent key for product_stay_configs: a home names its one location relationship.
 	uniqueIndex("product_locations_org_product_location_unique").on(table.organization_id, table.product_id, table.location_id),
 	check("product_locations_active_check", sql`active IN (0, 1) AND published IN (0, 1)`),
+]);
+
+// Stock of a tracked variant at a location (Shopify's inventory level).
+// Row meaning: this many units of this variant are available at this location.
+// `available` may go below zero when a variant keeps selling past its stock
+// (made to order) or two orders settle at once, as Shopify's does.
+// No row for a tracked variant means none there.
+// Read/write: server/domain/goods.ts.
+export const inventory_levels = sqliteTable("inventory_levels", {
+	organization_id: text().notNull().references(() => organization.id, { onDelete: "cascade" }),
+	product_variant_id: text().notNull(),
+	location_id: text().notNull(),
+	available: integer().notNull(),
+	updated_at: text().notNull(),
+	updated_by: text().notNull(),
+}, (table) => [
+	primaryKey({ columns: [table.product_variant_id, table.location_id], name: "inventory_levels_pk" }),
+	foreignKey({ columns: [table.organization_id, table.product_variant_id], foreignColumns: [product_variants.organization_id, product_variants.id], name: "inventory_levels_variant_scope_fk" }).onDelete("cascade"),
+	foreignKey({ columns: [table.organization_id, table.location_id], foreignColumns: [business_locations.organization_id, business_locations.id], name: "inventory_levels_location_scope_fk" }).onDelete("cascade"),
+	index("inventory_levels_location_idx").on(table.organization_id, table.location_id),
+	check("inventory_levels_instants_check", sql`strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0 days') IS updated_at`),
+]);
+
+// Where a location ships and what it charges (Shopify's shipping zones and
+// rates). A zone is a set of destination countries served from one location;
+// a buyer whose country is in no zone of the location cannot have it shipped.
+// Read/write: server/domain/goods.ts.
+export const shipping_zones = sqliteTable("shipping_zones", {
+	id: text().primaryKey(),
+	organization_id: text().notNull().references(() => organization.id, { onDelete: "cascade" }),
+	location_id: text().notNull(),
+	name: text().notNull(),
+	// ISO 3166-1 alpha-2 codes.
+	countries: text().notNull(),
+	created_at: text().notNull(),
+	updated_at: text().notNull(),
+}, (table) => [
+	unique("shipping_zones_org_id_unique").on(table.organization_id, table.id),
+	foreignKey({ columns: [table.organization_id, table.location_id], foreignColumns: [business_locations.organization_id, business_locations.id], name: "shipping_zones_location_scope_fk" }).onDelete("cascade"),
+	index("shipping_zones_location_idx").on(table.organization_id, table.location_id),
+	check("shipping_zones_name_check", sql`length(trim(name)) BETWEEN 1 AND 100`),
+	check("shipping_zones_countries_check", sql`json_valid(countries) AND json_type(countries) = 'array' AND json_array_length(countries) > 0`),
+	check("shipping_zones_instants_check", sql`strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+0 days') IS created_at AND strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0 days') IS updated_at`),
+]);
+
+// One way to ship to a zone, at one price, for parcels in a weight band or
+// orders over an amount (Shopify's rate conditions). A buyer is offered every
+// rate of their zone whose conditions the order meets.
+export const shipping_rates = sqliteTable("shipping_rates", {
+	id: text().primaryKey(),
+	organization_id: text().notNull().references(() => organization.id, { onDelete: "cascade" }),
+	shipping_zone_id: text().notNull(),
+	name: text().notNull(),
+	currency: text().notNull(),
+	amount: integer().notNull(),
+	min_weight_grams: integer(),
+	max_weight_grams: integer(),
+	min_subtotal: integer(),
+	delivery_days_min: integer(),
+	delivery_days_max: integer(),
+	sort_order: integer().default(0).notNull(),
+	created_at: text().notNull(),
+	updated_at: text().notNull(),
+}, (table) => [
+	foreignKey({ columns: [table.organization_id, table.shipping_zone_id], foreignColumns: [shipping_zones.organization_id, shipping_zones.id], name: "shipping_rates_zone_scope_fk" }).onDelete("cascade"),
+	index("shipping_rates_zone_idx").on(table.shipping_zone_id, table.sort_order),
+	check("shipping_rates_name_check", sql`length(trim(name)) BETWEEN 1 AND 100`),
+	check("shipping_rates_money_check", sql`amount >= 0 AND length(currency) = 3 AND currency = upper(currency) AND (min_subtotal IS NULL OR min_subtotal >= 0)`),
+	check("shipping_rates_weight_check", sql`(min_weight_grams IS NULL OR min_weight_grams >= 0) AND (max_weight_grams IS NULL OR max_weight_grams > 0) AND (min_weight_grams IS NULL OR max_weight_grams IS NULL OR max_weight_grams > min_weight_grams)`),
+	check("shipping_rates_delivery_check", sql`(delivery_days_min IS NULL OR delivery_days_min >= 0) AND (delivery_days_max IS NULL OR delivery_days_max >= 0) AND (delivery_days_min IS NULL OR delivery_days_max IS NULL OR delivery_days_max >= delivery_days_min)`),
+	check("shipping_rates_instants_check", sql`strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+0 days') IS created_at AND strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0 days') IS updated_at`),
 ]);
 
 // Merchant merchandising: a named, ordered grouping a site presents.
@@ -2924,7 +3028,7 @@ export const payments = sqliteTable("payments", {
  buyer_user_id: text().references(() => user.id, { onDelete: "set null" }),
  stripe_account_id: text().notNull(),
  livemode: integer({ mode: "boolean" }).notNull(),
- subject_type: text().$type<'booking'>().notNull(),
+ subject_type: text().$type<'booking' | 'order'>().notNull(),
  subject_id: text(),
  location_id: text(),
  currency: text().notNull(),
@@ -2958,6 +3062,88 @@ export const payments = sqliteTable("payments", {
  index("payments_buyer_idx").on(t.buyer_user_id, t.created_at),
  check("payments_amounts_check", sql`amount >= 0 AND captured_amount >= 0 AND refunded_amount >= 0 AND refunded_amount <= captured_amount`),
  check("payments_currency_check", sql`length(currency) = 3 AND currency = upper(currency)`),
+]);
+
+// A purchase of goods (Shopify's order): what was bought, how it reaches the
+// buyer, and whether it has been sent. Its money is its payments row
+// (subject_type 'order'), whose frozen snapshot holds the buyer's contact,
+// and its talk is a guest conversation of kind 'booking' with no booking.
+// status: 'pending' while the buyer pays; 'paid' once Stripe authorizes it,
+//   written with its conversation, stock and fulfilment task; 'released' when
+//   the payment never completed; 'cancelled' by the business after payment.
+// number: the buyer-facing order number, per organization, from 1001.
+// fulfilled_at: shipped (with carrier and tracking) or collected.
+// Deletion: cascades from the organization only.
+// Read/write: server/domain/goods.ts.
+export const orders = sqliteTable("orders", {
+	id: text().primaryKey(),
+	organization_id: text().notNull().references(() => organization.id, { onDelete: "cascade" }),
+	number: integer().notNull(),
+	buyer_user_id: text().references((): AnySQLiteColumn => user.id, { onDelete: "set null" }),
+	conversation_id: text(),
+	location_id: text().notNull(),
+	status: text().$type<'pending' | 'paid' | 'released' | 'cancelled'>().default("pending").notNull(),
+	delivery_method: text().$type<'shipping' | 'pickup'>().notNull(),
+	// Stripe's shipping details shape: { name, phone, address: { line1, line2, city, state, postal_code, country } }.
+	shipping_details: text(),
+	shipping_rate_name: text(),
+	shipping_amount: integer().default(0).notNull(),
+	currency: text().notNull(),
+	subtotal_amount: integer().notNull(),
+	ship_by: text(),
+	carrier: text(),
+	tracking_number: text(),
+	tracking_url: text(),
+	fulfilled_at: text(),
+	paid_at: text(),
+	cancelled_at: text(),
+	created_at: text().notNull(),
+	updated_at: text().notNull(),
+}, (table) => [
+	unique("orders_org_id_unique").on(table.organization_id, table.id),
+	unique("orders_org_number_unique").on(table.organization_id, table.number),
+	foreignKey({ columns: [table.organization_id, table.location_id], foreignColumns: [business_locations.organization_id, business_locations.id], name: "orders_location_scope_fk" }).onDelete("no action"),
+	foreignKey({ columns: [table.organization_id, table.conversation_id], foreignColumns: [conversations.organization_id, conversations.id], name: "orders_conversation_scope_fk" }).onDelete("no action"),
+	uniqueIndex("orders_conversation_unique").on(table.conversation_id).where(sql`conversation_id IS NOT NULL`),
+	index("orders_org_status_idx").on(table.organization_id, table.status, table.created_at),
+	index("orders_buyer_idx").on(table.buyer_user_id, table.created_at),
+	check("orders_number_check", sql`number >= 1001`),
+	check("orders_status_check", sql`status IN ('pending', 'paid', 'released', 'cancelled') AND (status IN ('paid', 'cancelled')) = (paid_at IS NOT NULL) AND (status = 'cancelled') = (cancelled_at IS NOT NULL) AND (status IN ('paid', 'cancelled')) = (conversation_id IS NOT NULL)`),
+	check("orders_delivery_check", sql`delivery_method IN ('shipping', 'pickup') AND (delivery_method = 'shipping') = (shipping_details IS NOT NULL) AND (delivery_method = 'shipping') = (shipping_rate_name IS NOT NULL)
+		AND (shipping_details IS NULL OR (json_valid(shipping_details) AND json_type(shipping_details, '$.name') = 'text' AND json_type(shipping_details, '$.address.country') = 'text' AND json_type(shipping_details, '$.address.line1') = 'text'))`),
+	check("orders_money_check", sql`subtotal_amount >= 0 AND shipping_amount >= 0 AND length(currency) = 3 AND currency = upper(currency) AND (delivery_method = 'shipping' OR shipping_amount = 0)`),
+	check("orders_fulfillment_check", sql`(fulfilled_at IS NULL OR status = 'paid' OR status = 'cancelled') AND (tracking_number IS NULL OR fulfilled_at IS NOT NULL) AND (tracking_url IS NULL OR tracking_url LIKE 'https://_%')
+		AND (ship_by IS NULL OR date(ship_by, '+0 days') IS ship_by)`),
+	check("orders_instants_check", sql`strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+0 days') IS created_at AND strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0 days') IS updated_at
+		AND (paid_at IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ', paid_at, '+0 days') IS paid_at) AND (cancelled_at IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ', cancelled_at, '+0 days') IS cancelled_at)
+		AND (fulfilled_at IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ', fulfilled_at, '+0 days') IS fulfilled_at)`),
+]);
+
+// One variant bought in an order, with the names and price it was sold at.
+// made_to_order_quantity: how many of `quantity` were sold past the stock at
+//   the order's location when it was paid, and so are made before shipping.
+// product_id / product_variant_id keep naming what was sold after the catalog
+//   changes; they are references for linking, not constraints.
+export const order_lines = sqliteTable("order_lines", {
+	id: text().primaryKey(),
+	organization_id: text().notNull(),
+	order_id: text().notNull(),
+	product_id: text().notNull(),
+	product_variant_id: text().notNull(),
+	title: text().notNull(),
+	variant_title: text(),
+	sku: text(),
+	quantity: integer().notNull(),
+	unit_amount: integer().notNull(),
+	made_to_order_quantity: integer().default(0).notNull(),
+	// Units taken from the location's stock when the order was paid: the whole quantity for a tracked variant, else 0. A cancelled order gives back exactly this.
+	stock_taken: integer().default(0).notNull(),
+	sort_order: integer().notNull(),
+}, (table) => [
+	foreignKey({ columns: [table.organization_id, table.order_id], foreignColumns: [orders.organization_id, orders.id], name: "order_lines_order_scope_fk" }).onDelete("cascade"),
+	index("order_lines_order_idx").on(table.order_id, table.sort_order),
+	index("order_lines_variant_idx").on(table.organization_id, table.product_variant_id),
+	check("order_lines_quantity_check", sql`quantity BETWEEN 1 AND 99 AND unit_amount >= 0 AND made_to_order_quantity BETWEEN 0 AND quantity AND sort_order >= 0`),
 ]);
 
 // Checkout details, conversion status and the approved stay's payment lock.

@@ -6,7 +6,7 @@
       <div v-else-if="quoteFailure" class="mt-8 space-y-3">
         <!-- The quote names the item it could not sell, so the buyer can take it out and buy the rest. -->
         <UAlert color="error" variant="soft" :description="quoteFailure.message" />
-        <button v-if="quoteFailure.product_variant_id" type="button" class="text-sm text-muted underline" @click="cart.set(quoteFailure.product_variant_id, 0)">{{ t('shop.remove') }}</button>
+        <button v-if="quoteFailure.product_variant_id" type="button" class="text-sm text-muted underline" :disabled="submitting" @click="cart.set(quoteFailure.product_variant_id, 0)">{{ t('shop.remove') }}</button>
       </div>
       <div v-else-if="quote" class="mt-8 grid gap-10 lg:grid-cols-12">
         <form class="space-y-8 lg:col-span-7" @submit.prevent="checkout">

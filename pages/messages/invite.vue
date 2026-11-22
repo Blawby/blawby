@@ -47,7 +47,8 @@ async function accept() {
       validate: (value): value is { conversation_id: string; organization_id: string } =>
         isRecord(value) && typeof value.conversation_id === 'string' && value.conversation_id !== '' && typeof value.organization_id === 'string',
     })
-    await navigateTo(`/dashboard/account/messages/${encodeURIComponent(result.conversation_id)}`, { replace: true })
+    // A full load: the account's own workspace starts from the session that just joined.
+    await navigateTo(`/dashboard/account/messages/${encodeURIComponent(result.conversation_id)}`, { replace: true, external: true })
   } catch (cause) {
     failure.value = getErrorMessage(cause, 'The invitation could not be accepted')
   } finally {

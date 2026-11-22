@@ -1,5 +1,5 @@
 <template>
-  <form method="post" class="space-y-3" @submit.prevent="submit">
+  <form method="post" class="space-y-3" data-email-sign-in @submit.prevent="submit">
     <UFormField label="Email" name="login-email" size="lg">
       <UInput v-model="email" type="email" placeholder="you@example.com" :disabled="loading" autocomplete="email" size="lg" class="w-full" />
     </UFormField>
@@ -23,8 +23,11 @@ import { requiresEmailVerification } from '~/shared/auth/email-sign-in'
 
 const props = withDefaults(defineProps<{ callbackUrl: string; initialEmail?: string; lastUsed?: boolean }>(), { initialEmail: '', lastUsed: false })
 const emit = defineEmits<{ verificationRequired: [email: string] }>()
-const email = ref(props.initialEmail)
-const password = ref('')
+// What was typed or autofilled into the server-rendered form before it became interactive is kept, not cleared by hydration.
+const typedBeforeHydration = (type: 'email' | 'password') => import.meta.client && useNuxtApp().isHydrating
+  ? document.querySelector<HTMLInputElement>(`form[data-email-sign-in] input[type="${type}"]`)?.value ?? '' : ''
+const email = ref(props.initialEmail || typedBeforeHydration('email'))
+const password = ref(typedBeforeHydration('password'))
 const { loading, error, run } = useAuthOperation()
 
 async function submit() {

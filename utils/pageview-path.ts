@@ -1,6 +1,6 @@
 export const PAGEVIEW_SKIP_PREFIXES = [
   '/api/', '/dashboard', '/auth/', '/preview/', '/booking-changes', '/bookings', '/pay', '/_nuxt/', '/assets/', '/_ipx/',
-  '/oauth/', '/accept-invitation', '/invite/', '/login', '/forgot-password', '/reset-password',
+  '/oauth/', '/accept-invitation', '/invite/', '/messages', '/login', '/forgot-password', '/reset-password',
   '/favicon', '/apple-touch-icon',
 ]
 

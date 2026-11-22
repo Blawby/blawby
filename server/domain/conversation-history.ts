@@ -1,4 +1,5 @@
 import { roleMatchesSql, workspaceOperationsRoles } from '~/utils/organization-access'
+import { agreementRequestLine } from '~/shared/agreements'
 import { HTTPError } from 'nitro'
 import { executeBatch, queryFirst, type DbClient } from '~/server/db'
 import { PLATFORM_MESSAGE_AUTHOR_KINDS_SQL, isPlatformMessageAuthor, type ConversationEntriesPage, type ConversationEntry, type ConversationHeader, type ConversationMessage, type ConversationPage, type ConversationViewerRole } from '~/shared/messages-contract'
@@ -100,12 +101,21 @@ function entryText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
-function eventText(message: Pick<MessageRow, 'event_name' | 'body' | 'id'>, actor: string, guestName: string, buyer: boolean, airbnb: boolean): string {
+function eventText(message: Pick<MessageRow, 'event_name' | 'body' | 'id' | 'payload_json'>, actor: string, guestName: string, buyer: boolean, airbnb: boolean, reader?: { userId: string; booker: boolean }): string {
   const name = message.event_name ?? ''
   const action = name.split('.').at(-1)
   const noun = name.startsWith('stay.') || airbnb ? 'reservation' : 'booking'
   if (name.startsWith('booking_change.') && (action === 'accepted' || action === 'declined' || action === 'withdrawn')) {
     return `${buyer ? 'Your' : `${guestName}’s`} change was ${action}${airbnb ? ' on Airbnb' : ''}`
+  }
+  // An agreement's record reads as its actor's own act: "Eva signed the rental agreement".
+  // It comes before the booking's own actions: agreement.cancelled withdraws a document, not the booking.
+  if (name.startsWith('agreement.')) {
+    const act = entryText(message.body)
+    if (!act) throw new HTTPError({ statusCode: 500, message: `The agreement activity ${name} has nothing to say`, data: { code: 'INVALID_CONVERSATION_EVENT', field: 'body', entry_id: message.id } })
+    // The signer reads the request as theirs: "Saltleaf asked you to sign the rental agreement".
+    const line = name === 'agreement.sent' && reader ? agreementRequestLine(act, (JSON.parse(message.payload_json) as { signers?: unknown }).signers, reader) : act
+    return `${actor} ${line.charAt(0).toLowerCase()}${line.slice(1)}`
   }
   if (action === 'guest_cancelled') return `${buyer ? 'You' : guestName} canceled the ${noun}`
   if (action === 'cancel' || action === 'cancelled') return `${actor} canceled the ${noun}`
@@ -136,10 +146,13 @@ function presentEntries(
     const name = message.author_user_id === null ? null : history.actors.get(message.author_user_id) ?? null
     const mine = message.author_user_id === userId
     if (isEventMessage(message)) {
-      const actor = authorKind === 'guest' ? guestViewer ? 'You' : guestName
+      // Every party to an agreement signs as themselves, so its record names each one.
+      const actor = message.event_name?.startsWith('agreement.') ? mine ? 'You' : name ? firstName(name) : authorKind === 'guest' ? guestName : context.organization_name
+        : authorKind === 'guest' ? guestViewer ? 'You' : guestName
         : mine ? 'You' : !guestViewer && name ? firstName(name) : context.organization_name
       items.push({ type: 'event', id: message.id, sequence: message.sequence, sent_at: message.occurred_at,
-        text: eventText(message, actor, guestName, guestViewer, Boolean(airbnb)) })
+        text: eventText(message, actor, guestName, guestViewer, Boolean(airbnb), mine ? undefined : { userId, booker: guestViewer && conversation.user_id === userId }),
+        ...(message.event_name === 'agreement.sent' ? { agreement: true as const } : {}) })
       continue
     }
     const payload = parseMessagePayload(message)

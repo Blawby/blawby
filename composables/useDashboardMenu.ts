@@ -35,7 +35,6 @@ export function useDashboardPane() {
 }
 
 export function useDashboardMenu(workspaceLinks?: ComputedRef<readonly DashboardWorkspaceLink[]>) {
-  const route = useRoute()
   const scopeHeaderModel = inject(dashboardScopeHeaderModelKey, null)
   const session = authClient.useSession()
   const organizations = workspaceLinks ?? inject(dashboardWorkspaceLinksKey, null)
@@ -63,11 +62,11 @@ export function useDashboardMenu(workspaceLinks?: ComputedRef<readonly Dashboard
   /** The Menu tab: the organization's launcher, or the account's. */
   const menuPageTo = computed(() => orgBase.value ? `${orgBase.value}/menu` : '/dashboard/account/menu')
 
-  /** Ends the session and returns here after the next sign-in. */
+  /** Ends the session. The next sign-in opens that person's own start, not the screen the last one left. */
   async function logOut() {
-    const redirect = route.fullPath
     await authClient.signOut()
-    await navigateTo({ path: '/login', query: { redirect } })
+    // A full load: nothing of the signed-out account's screens, sockets or cached session stays in the page.
+    await navigateTo('/login', { external: true })
   }
 
   /** Organization switcher. */

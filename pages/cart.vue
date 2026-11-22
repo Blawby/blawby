@@ -82,7 +82,7 @@
             <div v-if="method === 'shipping' && chosenRate" class="flex justify-between"><span>{{ t('shop.shipping') }}</span><span>{{ money(chosenRate.amount) }}</span></div>
             <div v-else-if="method === 'pickup' && deliveryQuote" class="flex justify-between"><span>{{ t('shop.pickup') }}</span><span>{{ t('shop.free') }}</span></div>
             <div class="flex justify-between pt-2 text-base font-semibold text-default"><span>{{ t('shop.total') }}</span><span>{{ money(summary.subtotal + (method === 'shipping' ? chosenRate?.amount ?? 0 : 0)) }}</span></div>
-            <p v-if="summary.ship_by" class="text-muted">{{ t('order.ships_by') }} {{ formatCalendarDate(summary.ship_by, locale, { weekday: 'short', month: 'short', day: 'numeric' }) }}</p>
+            <p v-if="summary.ship_by" class="text-muted">{{ t(method === 'pickup' ? 'order.ready_by' : 'order.ships_by') }} {{ formatCalendarDate(summary.ship_by, locale, { weekday: 'short', month: 'short', day: 'numeric' }) }}</p>
             <p class="text-muted">{{ t('shop.taxes_at_payment') }}</p>
           </div>
         </aside>

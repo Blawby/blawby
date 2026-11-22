@@ -197,7 +197,7 @@ function handoffSubject(payment: CheckoutPayment, snapshot: ReturnType<typeof sn
     // The party the booking is for: a table's deposit is one per booking, whatever the party.
     party_size: heldSlot ? payment.hold_quantity : null,
     // What an order buys and where it goes, as the buyer reviews it before paying.
-    order: snapshot.order ? { number: snapshot.order.number, lines: snapshot.order.lines, shipping: snapshot.order.shipping, shipping_details: snapshot.order.shipping_details, delivery_method: snapshot.order.delivery_method, ship_by: snapshot.order.ship_by } : null,
+    order: snapshot.order ? { number: snapshot.order.number, lines: snapshot.order.lines, shipping: snapshot.order.shipping, shipping_details: snapshot.order.shipping_details, delivery_method: snapshot.order.delivery_method, ship_by: snapshot.order.ship_by, pickup_location_title: snapshot.order.pickup_location_title ?? null } : null,
     // An order sent abroad starts the card's billing country at the shipping country, not Stripe's own guess.
     billing_details: guest ? { name: guest.name, email: guest.email, ...(guest.phone ? { phone: guest.phone } : {}),
       ...(snapshot.order?.shipping_details ? { address: { country: snapshot.order.shipping_details.address.country } } : {}) } : null,

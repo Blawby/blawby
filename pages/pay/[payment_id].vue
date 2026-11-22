@@ -52,7 +52,7 @@
           </div>
           <!-- An order states when it leaves, as the cart did. -->
           <div v-else-if="handoff.order?.ship_by" class="border-t border-default pt-5" data-payment-ship-by>
-            <h3 class="text-sm font-semibold text-highlighted">{{ t('order.ships_by') }}</h3>
+            <h3 class="text-sm font-semibold text-highlighted">{{ t(handoff.order.delivery_method === 'pickup' ? 'order.ready_by' : 'order.ships_by') }}</h3>
             <p class="mt-1 text-sm text-default">{{ formatCalendarDate(handoff.order.ship_by, locale, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
           </div>
           <div v-else-if="handoff.starts_at && handoff.ends_at && handoff.timezone" class="flex items-start justify-between gap-4 border-t border-default pt-5" data-payment-time>
@@ -293,6 +293,8 @@ const priceLines = computed(() => {
   if (value.order) return [
     ...value.order.lines.map(line => ({ label: `${line.title}${line.variant_title ? ` · ${line.variant_title}` : ''} × ${line.quantity}`, amount: money(line.amount) })),
     ...(value.order.shipping ? [{ label: `${t('shop.shipping')} · ${value.order.shipping.name}`, amount: money(value.order.shipping.amount) }] : []),
+    // Pickup is a line of its own, free, and says where.
+    ...(value.order.delivery_method === 'pickup' ? [{ label: value.order.pickup_location_title ? t('shop.pickup_free', { place: value.order.pickup_location_title }) : t('shop.pickup'), amount: t('shop.free') }] : []),
   ]
   if (value.quantity === 1) return [{ label: value.title, amount: money(value.subtotal) }]
   return [{ label: t('payment.unit_line', { price: money(value.unit_amount), count: guests.value || value.quantity }), amount: money(value.subtotal) }]

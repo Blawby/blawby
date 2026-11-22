@@ -800,5 +800,6 @@
   "shop.arrives_in": "発送後{days}営業日でお届け",
   "shop.still_needed": "未入力：{fields}",
   "shop.partly_made_to_order": "在庫{stock}点、受注制作{made}点",
-  "shop.free": "無料"
+  "shop.free": "無料",
+  "order.ready_by": "受け取り可能日"
 }

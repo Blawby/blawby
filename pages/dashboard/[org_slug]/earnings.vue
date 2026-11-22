@@ -12,7 +12,8 @@
           <h2 class="text-xl font-semibold text-highlighted">Direct payments</h2>
           <p class="mt-4 text-5xl font-semibold tracking-tight text-highlighted">{{ total }}</p>
           <p class="mt-3 text-sm text-muted">{{ monthName }} · Payments collected through Stripe, less refunds. This is not the amount transferred to your bank.</p>
-          <UButton class="mt-6" color="neutral" variant="soft" label="View payment details" :to="`${level.path.value}/performance`" />
+          <!-- Where the index is the whole screen this opens the month's performance; beside it, performance is already open. -->
+          <UButton v-if="level.child.value !== 'performance'" class="mt-6" color="neutral" variant="soft" label="View payment details" :to="`${level.path.value}/performance`" />
         </UCard>
         <ChannelReservationSummary v-if="dashboard.hasFeature('stays')" :rows="performance.channel_reservations" :month="monthName" />
       </template>

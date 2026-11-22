@@ -800,5 +800,6 @@
   "shop.arrives_in": "발송 후 {days}영업일 이내 도착",
   "shop.still_needed": "입력 필요: {fields}",
   "shop.partly_made_to_order": "재고 {stock}개, 주문 제작 {made}개",
-  "shop.free": "무료"
+  "shop.free": "무료",
+  "order.ready_by": "수령 가능일"
 }

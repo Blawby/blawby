@@ -340,6 +340,8 @@ export interface ProductEditor {
   product: ComputedRef<Product | null>
   /** Saved publication state, separate from the visibility leaf's draft. */
   published: ComputedRef<boolean>
+  /** The saved item's public page, or a dish's page at each of its locations; empty while nothing is public. */
+  publicLinks: ComputedRef<Array<{ key: string; label: string | null; url: string }>>
   bookingOffering: ComputedRef<boolean>
   itemLabel: ComputedRef<string>
   currency: string
@@ -2240,6 +2242,8 @@ useSeoMeta({ title: () => `${pageTitle.value} | Blawby Dashboard`, robots: 'noin
 provide(productEditorKey, {
   reload,
   form,
+  publicLinks: computed(() => loaded.value?.publicUrl ? [{ key: 'item', label: null, url: loaded.value.publicUrl }]
+    : Object.entries(loaded.value?.publicUrls ?? {}).map(([id, url]) => ({ key: id, label: allOrganizationLocations.value.find(place => place.id === id)?.title ?? null, url }))),
   assignmentSummary: computed(assignmentSummary),
   bookingCopy,
   managesCatalog,

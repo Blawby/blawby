@@ -17,7 +17,7 @@
       :guest-email="order.guest?.email ?? null"
     >
       <template #title>{{ order.status === 'cancelled' ? t('email.subject.order_cancelled', { number: order.number }) : t('shop.order_confirmed', { number: order.number }) }}</template>
-      <template #subtitle>{{ order.status !== 'cancelled' && order.ship_by ? `${t('order.ships_by')} ${day(order.ship_by)}` : '' }}</template>
+      <template #subtitle>{{ order.status !== 'cancelled' && order.ship_by ? `${t(order.delivery_method === 'pickup' ? 'order.ready_by' : 'order.ships_by')} ${day(order.ship_by)}` : '' }}</template>
       <template #actions>
         <TenantButton v-if="order.tracking_url" :href="order.tracking_url" variant="outline" target="_blank" rel="noopener noreferrer">{{ t('order.track') }}</TenantButton>
         <TenantButton v-if="order.receipt_url" :href="order.receipt_url" variant="outline" target="_blank" rel="noopener noreferrer">{{ t('shop.receipt') }}</TenantButton>

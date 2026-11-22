@@ -301,6 +301,10 @@
             </div>
           </div>
 
+          <!-- A purchase that is an order shows the order itself: its lines, where it goes and whether it has gone. -->
+          <div v-if="purchase && !personalScope && conversationId" :class="sectionClass">
+            <OrderPanel :conversation-id="conversationId" payment-page />
+          </div>
           <div v-if="detail || (booking?.type === 'booking' && booking.payments !== null) || booking?.payments?.length" :class="sectionClass">
             <h2 class="text-lg font-semibold text-highlighted">Payment info</h2>
             <template v-if="detail">
@@ -507,6 +511,7 @@ import { STAY_PRESENTATION } from '~/utils/product-presentation'
 import { tenantOrganizationOrigin } from '~/utils/tenant-organization-origin'
 import FormAnswersCard from '~/components/forms/FormAnswersCard.vue'
 import PaymentDetails from '~/components/dashboard/PaymentDetails.vue'
+import OrderPanel from '~/components/dashboard/OrderPanel.vue'
 import ReservationItinerary, { type ReservationItineraryDetails } from '~/components/dashboard/ReservationItinerary.vue'
 import ChannelMark from '~/lib/components/workspace/messages/ChannelMark.vue'
 import { paymentMoney } from '~/shared/payment-display'

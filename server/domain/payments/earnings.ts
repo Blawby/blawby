@@ -36,14 +36,16 @@ async function paymentPictures(db: DbClient, organizationId: string, payments: r
   if (!payments.length) return new Map()
   const subjects = await queryAll<PaymentSubject>(db, `
     SELECT p.id, b.id AS booking_id, b.product_id, pr.name, b.starts_at, b.ends_at, b.timezone,
-      ${includeBuyer ? `COALESCE(json_extract(r.payload_json, '$.guest.name'), json_extract(bc.payload_json, '$.guest.name'), CASE WHEN COALESCE(u."isAnonymous", 0) = 0 THEN u.name END)` : 'NULL'} AS buyer_name
+      ${includeBuyer ? `COALESCE(json_extract(r.payload_json, '$.guest.name'), json_extract(bc.payload_json, '$.guest.name'), json_extract(oc.payload_json, '$.guest.name'), CASE WHEN COALESCE(u."isAnonymous", 0) = 0 THEN u.name END)` : 'NULL'} AS buyer_name
       FROM payments p
       ${paymentBookingJoin}
       LEFT JOIN products pr ON pr.id = b.product_id AND pr.organization_id = b.organization_id
       ${includeBuyer ? `LEFT JOIN user u ON u.id = p.buyer_user_id
       LEFT JOIN payment_checkout_holds h ON h.payment_id = p.id
       LEFT JOIN conversations r ON r.id = h.conversation_id AND r.organization_id = p.organization_id
-      LEFT JOIN conversations bc ON bc.booking_id = b.id AND bc.organization_id = p.organization_id AND bc.kind = 'booking'` : ''}
+      LEFT JOIN conversations bc ON bc.booking_id = b.id AND bc.organization_id = p.organization_id AND bc.kind = 'booking'
+      LEFT JOIN orders o ON p.subject_type = 'order' AND o.id = p.subject_id AND o.organization_id = p.organization_id
+      LEFT JOIN conversations oc ON oc.id = o.conversation_id AND oc.organization_id = p.organization_id` : ''}
      WHERE p.organization_id = ? AND p.id IN (SELECT value FROM json_each(?))`,
   [organizationId, JSON.stringify(payments.map(payment => payment.id))])
   const byId = new Map(subjects.map(row => [row.id, row]))

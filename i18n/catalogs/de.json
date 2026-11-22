@@ -800,5 +800,6 @@
   "shop.arrives_in": "Ankunft {days} Werktage nach dem Versand",
   "shop.still_needed": "Noch erforderlich: {fields}",
   "shop.partly_made_to_order": "{stock} auf Lager, {made} auf Bestellung gefertigt",
-  "shop.free": "Kostenlos"
+  "shop.free": "Kostenlos",
+  "order.ready_by": "Abholbereit ab"
 }

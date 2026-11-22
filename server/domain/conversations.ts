@@ -32,7 +32,8 @@ export type ConversationParticipantRow = Omit<ConversationParticipant, 'can_remo
 /** Only the live roster is shown. Guests never receive internal account or member IDs. */
 export function conversationParticipantsSql(conversation: string, viewerRole: string): string {
   return `SELECT CASE WHEN ${viewerRole} = 'member' OR seat.user_id = ? THEN u.id END AS id,
-           CASE WHEN ${conversation}.kind = 'booking' AND seat.role = 'guest' AND seat.user_id = ${conversation}.user_id
+           -- A conversation's own guest (a booking's booker, an order's buyer) is named by what they typed, whichever browser account holds the seat.
+           CASE WHEN ${conversation}.kind IN ('booking', 'contact') AND seat.role = 'guest' AND seat.user_id = ${conversation}.user_id
                   THEN COALESCE(NULLIF(TRIM(json_extract(${conversation}.payload_json, '$.guest.name')), ''), u.name)
                 WHEN ${viewerRole} = 'guest' AND seat.role = 'member' AND ${PUBLISHED_PROFILE_SQL} THEN ms.public_name
                 ELSE u.name END AS name,

@@ -261,11 +261,11 @@ function bookingsQuery(context: PageContext, window: 'starts' | 'received', wher
   }
 }
 
-/** Read the report's bookings once and total each ledger before joining it. */
-async function bookingsWithIncome(context: PageContext) {
+/** Read the report's bookings once and total each ledger before joining it; a page's own further statements ride the same batch. */
+async function bookingsWithIncome(context: PageContext, also: BatchQuery[] = []) {
   const bookings = bookingsQuery(context, 'starts')
   const organizationId = context.reader.organizationId
-  const [rows] = await batch(context, [{
+  const [rows, ...alsoRows] = await batch(context, [{
     query: `WITH scoped AS (${bookings.query}),
       online AS (
         SELECT p.subject_id AS booking_id, SUM(p.captured_amount - p.refunded_amount) AS amount, SUM(p.refunded_amount) AS refunded
@@ -281,14 +281,15 @@ async function bookingsWithIncome(context: PageContext) {
              offline.amount AS offline_amount, offline.refunded AS offline_refunded
         FROM scoped b LEFT JOIN online ON online.booking_id = b.id LEFT JOIN offline ON offline.booking_id = b.id`,
     params: [...bookings.params!, organizationId, organizationId],
-  }])
-  return rows!.map(row => ({
+  }, ...also])
+  const income = rows!.map(row => ({
     ...bookingRow(row),
     online_amount: row.online_amount === null ? null : num(row.online_amount),
     online_refunded: num(row.online_refunded),
     offline_amount: row.offline_amount === null ? null : num(row.offline_amount),
     offline_refunded: num(row.offline_refunded),
   })).filter(inRange(context))
+  return { bookings: income, also: alsoRows }
 }
 
 const startDay = (row: BookingRow) => bookingDay(row.starts_at, row.timezone)
@@ -472,7 +473,7 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => Promise
   },
 
   'rates/average-value': async (context) => {
-    const bookings = await bookingsWithIncome(context)
+    const { bookings } = await bookingsWithIncome(context)
     const received = (row: typeof bookings[number]) => (row.online_amount ?? 0) + (row.offline_amount ?? 0)
     const income = (group: typeof bookings) => group.reduce((sum, row) => sum + received(row), 0)
     const value = (group: typeof bookings) => average(income(group), group.filter(row => received(row) > 0).length, 0)
@@ -489,16 +490,24 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => Promise
   },
 
   'rates/income-by-channel': async (context) => {
-    const bookings = await bookingsWithIncome(context)
-    const amounts = bookings.flatMap(row => {
-      const day = startDay(row)
-      return [
-        ...(row.online_amount === null ? [] : [{ channel: 'Direct', day, amount: row.online_amount, refunded: row.online_refunded }]),
-        ...(row.offline_amount === null ? [] : [{ channel: 'Recorded by you', day, amount: row.offline_amount, refunded: row.offline_refunded }]),
-        ...(row.owner === 'channel' && row.status === 'confirmed' && row.total_minor !== null
-          ? [{ channel: CHANNEL_LABELS[row.channel] ?? row.channel, day, amount: row.total_minor, refunded: 0 }] : []),
-      ]
-    })
+    // An order is paid through Stripe like a booking but books no kind, so it counts as Direct, on the day it was paid, only with every kind shown.
+    const orders: BatchQuery[] = context.kind === 'all' ? [{
+      query: `SELECT o.paid_at, p.captured_amount - p.refunded_amount AS amount, p.refunded_amount AS refunded
+        FROM orders o JOIN payments p ON p.organization_id = o.organization_id AND p.subject_type = 'order' AND p.subject_id = o.id
+        WHERE o.organization_id = ? AND o.paid_at >= ? AND o.paid_at < ? ${context.locationId ? 'AND o.location_id = ?' : ''}`,
+      params: [context.reader.organizationId, context.window.from, context.window.until, ...(context.locationId ? [context.locationId] : [])],
+    }] : []
+    const { bookings, also: [paidOrders] } = await bookingsWithIncome(context, orders)
+    const amounts = (paidOrders ?? []).map(row => ({ channel: 'Direct', day: localDateAt(new Date(String(row.paid_at)), context.reader.timezone), amount: num(row.amount), refunded: num(row.refunded) }))
+      .concat(bookings.flatMap(row => {
+        const day = startDay(row)
+        return [
+          ...(row.online_amount === null ? [] : [{ channel: 'Direct', day, amount: row.online_amount, refunded: row.online_refunded }]),
+          ...(row.offline_amount === null ? [] : [{ channel: 'Recorded by you', day, amount: row.offline_amount, refunded: row.offline_refunded }]),
+          ...(row.owner === 'channel' && row.status === 'confirmed' && row.total_minor !== null
+            ? [{ channel: CHANNEL_LABELS[row.channel] ?? row.channel, day, amount: row.total_minor, refunded: 0 }] : []),
+        ]
+      }))
     const day = days(context.dates)
     const total = (group: typeof amounts) => group.reduce((sum, row) => sum + row.amount, 0)
     const direct = amounts.filter(row => row.channel === 'Direct')
@@ -506,11 +515,11 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => Promise
     return {
       currency: context.reader.defaultCurrency,
       metrics: [
-        { key: 'income', label: 'Booking income', format: 'money', value: total(amounts), daily: day.sum(amounts, row => row.day, row => row.amount) },
+        { key: 'income', label: 'Income', format: 'money', value: total(amounts), daily: day.sum(amounts, row => row.day, row => row.amount) },
         { key: 'direct', label: 'Direct', format: 'money', value: total(direct), daily: day.sum(direct, row => row.day, row => row.amount) },
         { key: 'refunded', label: 'Refunded', format: 'money', value: amounts.reduce((sum, row) => sum + row.refunded, 0), daily: day.sum(amounts, row => row.day, row => row.refunded) },
       ],
-      list: { kind: 'rows', heading: 'Channel', columns: [{ label: 'Booking income', format: 'money' }],
+      list: { kind: 'rows', heading: 'Channel', columns: [{ label: 'Income', format: 'money' }],
         rows: order.filter(channel => amounts.some(row => row.channel === channel)).map(channel => ({ key: channel, label: channel, values: [total(amounts.filter(row => row.channel === channel))] })) },
     }
   },

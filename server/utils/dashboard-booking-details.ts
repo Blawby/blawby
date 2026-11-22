@@ -491,18 +491,23 @@ export function isDashboardRecordType(value: string | undefined): value is Dashb
 /**
  * A purchase on the same screen as a visit: a payment whose visit no longer
  * exists, read by the business that took it or the account that paid.
- * It has no party, time, policy or conversation, and nothing left to decide —
- * what remains is what was bought, when, from whom, and the money.
+ * It has no party, time or policy, and nothing left to decide — what remains
+ * is what was bought, when, from whom, and the money; an order also keeps the
+ * conversation the business sends and answers it in.
  */
 async function composePurchaseDetails(db: DbClient, env: CloudflareEnv, scope: BookingScope, paymentId: string): Promise<DashboardBookingDetails> {
-  const payment = await queryFirst<{ organization_id: string; location_id: string | null; created_at: string; updated_at: string; price_snapshot_json: string; organization_name: string; vertical: string; contact_phone: string | null; buyer_name: string | null; buyer_email: string | null; buyer_image: string | null; location_slug: string | null; location_title: string | null }>(db, `
+  // An order's buyer is the guest its conversation was opened for, named as they typed at checkout; the business reaches them in that conversation.
+  const payment = await queryFirst<{ organization_id: string; location_id: string | null; created_at: string; updated_at: string; price_snapshot_json: string; organization_name: string; vertical: string; contact_phone: string | null; buyer_name: string | null; buyer_email: string | null; buyer_image: string | null; location_slug: string | null; location_title: string | null; conversation_id: string | null }>(db, `
     SELECT p.organization_id, p.location_id, p.created_at, p.updated_at, p.price_snapshot_json, s.name AS organization_name, s.vertical,
            CASE WHEN p.location_id IS NULL THEN s.contact_phone WHEN l.status = 'active' THEN l.phone END AS contact_phone,
-           u.name AS buyer_name, u.email AS buyer_email, u.image AS buyer_image, l.slug AS location_slug, l.title AS location_title
+           COALESCE(json_extract(c.payload_json, '$.guest.name'), u.name) AS buyer_name, COALESCE(json_extract(c.payload_json, '$.guest.email'), u.email) AS buyer_email,
+           u.image AS buyer_image, l.slug AS location_slug, l.title AS location_title, c.id AS conversation_id
     FROM payments p
     JOIN organization s ON s.id = p.organization_id
     LEFT JOIN user u ON u.id = p.buyer_user_id
     LEFT JOIN business_locations l ON l.id = p.location_id AND l.organization_id = p.organization_id
+    LEFT JOIN orders o ON p.subject_type = 'order' AND o.id = p.subject_id AND o.organization_id = p.organization_id
+    LEFT JOIN conversations c ON c.id = o.conversation_id AND c.organization_id = p.organization_id
     WHERE p.id = ? AND ${scope.buyerUserId ? 'p.buyer_user_id = ?' : 'p.organization_id = ?'}`, [paymentId, scope.buyerUserId ?? scope.organizationId])
   if (!payment) throw new HTTPError({ statusCode: 404, message: 'Purchase not found' })
   const [receipt] = await readPaymentReceipts(db, env, payment.organization_id, { paymentId }, scope.buyerUserId)
@@ -551,7 +556,7 @@ async function composePurchaseDetails(db: DbClient, env: CloudflareEnv, scope: B
     notes: null,
     product_id: null,
     product_session_id: null,
-    conversation_id: null,
+    conversation_id: scope.buyerUserId ? null : payment.conversation_id,
     created_at: payment.created_at,
     updated_at: payment.updated_at,
     policy: null,

@@ -2275,16 +2275,24 @@ export async function notifyOrderCancelled(env: NotificationEnv, db: DbClient, o
     contactPhone: contact.contactPhone ?? null, contactEmail: contact.contactEmail ?? null,
   })
   const payload = { order_id: order.id, order_number: String(order.number), guest_name: guestContact.name, email: guestContact.email, organization_name: studio, deep_link: inboxUrl ?? '' }
+  // The cancellation is an entry in the order's conversation, and its emails are recorded on it. A retry finds it and announces nothing again.
+  const existing = await findMessageByDedupeKey(db, `order:${order.id}:cancelled`)
+  const entry = existing ?? await appendMessage(db, {
+    conversationId: order.conversation_id, authorKind: PLATFORM_MESSAGE_AUTHOR_KIND, authorUserId: null, channel: 'web', eventName: 'order.cancelled',
+    body: `${ownerMessage.title.split(' - ')[0]}. ${ownerMessage.intro ?? ''}`.trim(), payload: { order_id: order.id, reason }, dedupeKey: `order:${order.id}:cancelled`,
+  })
+  const cancelled: DeliveryAnchor = { ...threadContext, subject: { messageId: entry.id } }
+  if (!existing) await publishConversationEvent(env, db, { conversationId: order.conversation_id, type: 'MESSAGE_CREATE' })
   const results = await Promise.allSettled([
     notifyOwner(env, db, {
       organizationId, organizationName: studio, locationId: order.location_id, template: 'order_cancelled', title: ownerMessage.title, payload, message: ownerMessage,
-      source: { conversationId: order.conversation_id, messageId: anchorId(threadContext.subject) }, surfaceDeliveryFailures: true,
+      source: { conversationId: order.conversation_id, messageId: entry.id }, surfaceDeliveryFailures: true,
     }),
     sendEmailNotification(env, db, {
       organizationId, organizationName: studio, locationId: order.location_id, to: guestContact.email, replyAs: { kind: 'guest' },
       template: 'order_customer_cancelled', title: guestMessage.title, payload,
       email: { subject: guestMessage.title, ...await renderNotificationEmail(guestMessage, { platformDomain: getPlatformDomain(env) }) },
-      delivery: threadDelivery(threadContext, 'guest_acknowledgement', 'email', 'order_customer_cancelled', guestContact.email),
+      delivery: threadDelivery(cancelled, 'guest_acknowledgement', 'email', 'order_customer_cancelled', guestContact.email),
     }),
   ])
   raiseSettledFailures('notifyOrderCancelled', `orderId ${orderId}`, results)

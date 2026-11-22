@@ -2013,6 +2013,8 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
   assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'celadon'").first('available'), -1)
   await events.drain(env, 'order.cancelled')
   assert.equal(await db.prepare("SELECT count(*) n FROM guest_thread_deliveries WHERE email_json LIKE '%was cancelled%'").first('n'), 2)
+  // Each cancellation is an entry in its order's conversation, and the buyer's email is recorded on that entry.
+  assert.equal(await db.prepare("SELECT count(*) n FROM messages m JOIN guest_thread_deliveries d ON d.message_id = m.id WHERE m.dedupe_key LIKE 'order:%:cancelled' AND m.event_name = 'order.cancelled' AND d.email_json LIKE '%was cancelled%'").first('n'), 2)
 
   // Shipping it closes the task and tells the buyer in their conversation.
   const shipped = await fulfillOrder(db, env, { organizationId: ORG, orderId: paid!.id, actorId: 'host', carrier: 'Thailand Post EMS', tracking_number: 'EE123456789TH', tracking_url: null })

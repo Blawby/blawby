@@ -800,5 +800,6 @@
   "shop.arrives_in": "Llega {days} días hábiles después del envío",
   "shop.still_needed": "Falta: {fields}",
   "shop.partly_made_to_order": "{stock} en stock, {made} por encargo",
-  "shop.free": "Gratis"
+  "shop.free": "Gratis",
+  "order.ready_by": "Listo para recoger el"
 }

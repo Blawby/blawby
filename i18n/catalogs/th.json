@@ -800,5 +800,6 @@
   "shop.arrives_in": "ได้รับภายใน {days} วันทำการหลังจัดส่ง",
   "shop.still_needed": "ยังต้องกรอก: {fields}",
   "shop.partly_made_to_order": "มีในสต็อก {stock} ชิ้น ผลิตตามสั่ง {made} ชิ้น",
-  "shop.free": "ฟรี"
+  "shop.free": "ฟรี",
+  "order.ready_by": "พร้อมรับภายใน"
 }

@@ -328,7 +328,7 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
         variant_title: optionValues.length ? variantTitle(optionValues) : null, sku: variant.sku,
         quantity: line.quantity, unit_amount: price.unit_amount, amount: price.unit_amount * line.quantity,
         tax_code: variant.tax_code, tax_behavior: price.tax_behavior, made_to_order_quantity: madeToOrder, image_asset_id: variant.media_asset_id, image_url: variant.image_url,
-        available: variant.inventory_tracked === 1 ? available : null,
+        available: variant.inventory_tracked === 1 ? Math.max(available, 0) : null,
       })
     }
     return { lines: quoted, subtotal: quoted.reduce((sum, line) => sum + line.amount, 0) }
@@ -410,6 +410,8 @@ export interface OrderSnapshot {
   ship_dues: Record<string, string>
   /** A pickup order is taxed where it is collected: the location's address. */
   pickup_address?: StripeAddress | null
+  /** Where a pickup order is collected, as the buyer reads it (never the street address). */
+  pickup_location_title?: string
 }
 
 export function orderSnapshotOf(snapshot: Record<string, unknown>): OrderSnapshot | null {
@@ -492,7 +494,7 @@ export async function createOrderCheckout(db: DbClient, env: CloudflareEnv, inpu
     id: orderId, location_id: quote.location.id, delivery_method: quote.delivery_method,
     lines: quote.lines.map(({ product_id, product_variant_id, title: lineTitle, variant_title, quantity, unit_amount, amount, tax_code, tax_behavior }) => ({ product_id, product_variant_id, title: lineTitle, variant_title, quantity, unit_amount, amount, tax_code, tax_behavior })),
     shipping, shipping_details: shippingDetails, guest, note, ship_by: quote.ship_by,
-    ...(quote.delivery_method === 'pickup' ? { pickup_address: quote.location.address } : {}),
+    ...(quote.delivery_method === 'pickup' ? { pickup_address: quote.location.address, pickup_location_title: quote.location.title } : {}),
     ship_dates: quote.ship_dates,
     ship_dues: Object.fromEntries([...new Set(quote.ship_dates.flatMap(line => [line.stock, line.mixed, line.made]).filter((date): date is string => date !== null))]
       .map(date => [date, localDateTimeToInstant(date, '23:59', quote.location.timezone, 'compatible').toISOString()])),
@@ -742,7 +744,8 @@ export async function fulfillOrder(db: DbClient, env: CloudflareEnv, input: { or
   const now = new Date().toISOString()
   const body = order.delivery_method === 'pickup'
     ? `Order #${order.number} was collected.`
-    : `Order #${order.number} has shipped with ${carrier}${tracking ? `. Tracking number: ${tracking}` : ''}${url ? `. Track it: ${url}` : ''}.`
+    // The link stands alone on the last line: punctuation after a URL becomes part of it in most mail and chat clients.
+    : `Order #${order.number} has shipped with ${carrier}.${tracking ? ` Tracking number: ${tracking}.` : ''}${url ? `\nTrack it:\n${url}` : ''}`
   const message = messageQueries({ conversationId: order.conversation_id, authorKind: 'member', authorUserId: input.actorId, channel: 'web', body, dedupeKey: `order:${order.id}:fulfilled`, occurredAt: now })
   await executeBatch(db, [
     // Checked again at the write: a refund covering the capture that lands after the read above leaves the order unshipped.

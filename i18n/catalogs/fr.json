@@ -800,5 +800,6 @@
   "shop.arrives_in": "Arrive {days} jours ouvrés après l’expédition",
   "shop.still_needed": "Il manque : {fields}",
   "shop.partly_made_to_order": "{stock} en stock, {made} fabriqué(s) sur commande",
-  "shop.free": "Gratuit"
+  "shop.free": "Gratuit",
+  "order.ready_by": "Prêt à retirer le"
 }

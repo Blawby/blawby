@@ -18,7 +18,7 @@
     </template>
 
     <UAlert v-if="doneError" color="error" variant="soft" title="Done could not be saved" :description="getErrorMessage(doneError, 'The request failed')" class="mx-4 mb-2" />
-    <OrderPanel v-if="!personalScope && conversation?.order_id" :key="conversation.order_id" :conversation-id="threadId" @fulfilled="refresh()" />
+    <OrderPanel v-if="!personalScope && conversation?.order_id" :key="conversation.order_id" :conversation-id="threadId" class="mx-4 mb-3" @fulfilled="refresh()" />
     <ConversationThread :key="threadId" :thread-id="threadId" :history="history" :personal-scope="personalScope" :reservation-to="reservationTo" :closing="closing" @done="done" />
     <ConversationSheet v-if="data" v-model:open="sheetOpen" v-model:manage-guests="manageGuests" :can-manage-guests="canManageGuests" :booking-party="bookingParty" :page="data" :history="history" :on-left="left" :booking-to="reservationTo" @moved="moved" @participants-changed="refresh()" />
   </DashboardIndexPanel>

@@ -521,7 +521,8 @@ export function guestOrderConfirmedMessage(input: GuestOrderInput & { charges: G
       fact('paymentMethod', labels['order.payment_method']!, input.charges.paymentMethod),
       fact('shipTo', labels['order.ship_to']!, input.shipTo),
       fact('pickupAt', labels['order.pickup_at']!, input.pickupAt),
-      fact('shipBy', labels['order.ships_by']!, input.shipBy),
+      // A collected order is ready by its date; a sent one ships by it.
+      fact('shipBy', labels[input.pickupAt ? 'order.ready_by' : 'order.ships_by']!, input.shipBy),
     ),
     primaryAction: manageAction(input),
     sections: contactSection({ ...input, organizationLogoUrl: input.organizationLogoUrl, date: '', time: '', partySize: '' }),

@@ -998,6 +998,8 @@ export interface OpenWorkRow {
   team_conversation_id: string | null
   /** A failed message's template title. */
   message_title: string | null
+  /** An order waiting to be sent or collected: its number, conversation, how it goes and who bought it. */
+  order_number: number | null; order_conversation_id: string | null; order_delivery_method: 'shipping' | 'pickup' | null; order_guest_name: string | null
   unreachable_reason: string | null
 }
 
@@ -1032,19 +1034,22 @@ export function openWorkQuery(viewer: ViewerTerms, to: string): BatchQuery {
           (SELECT u.name FROM user u WHERE u.id = t.created_by_user_id) AS creator_name, COALESCE(t.created_by_user_id = ${viewer.user}, 0) AS created_by_viewer,
           CASE t.kind WHEN 'message_delivery' THEN g.booking_id
             WHEN 'booking_change' THEN t.subject_id ELSE ${jobBookingIdSql('t')} END AS booking_id,
-          g.template_title AS message_title, CASE WHEN g.error_code = 'GUEST_UNREACHABLE' THEN g.reason END AS unreachable_reason
+          g.template_title AS message_title, CASE WHEN g.error_code = 'GUEST_UNREACHABLE' THEN g.reason END AS unreachable_reason,
+          o.number AS order_number, o.conversation_id AS order_conversation_id, o.delivery_method AS order_delivery_method,
+          (SELECT json_extract(oc.payload_json, '$.guest.name') FROM conversations oc WHERE oc.organization_id = o.organization_id AND oc.id = o.conversation_id) AS order_guest_name
         FROM tasks t
         LEFT JOIN scheduled_guest_messages g ON t.kind = 'message_delivery' AND g.organization_id = t.organization_id AND g.id = t.subject_id
+        LEFT JOIN orders o ON t.kind = 'order_fulfillment' AND o.organization_id = t.organization_id AND o.id = t.subject_id
         WHERE t.organization_id = ${viewer.organization} AND t.status = 'open'
-          AND t.kind IN ('turnover', 'consultation_follow_up', 'consultation_prep', 'message_delivery', 'booking_change', 'custom', 'maintenance')
+          AND t.kind IN ('turnover', 'consultation_follow_up', 'consultation_prep', 'message_delivery', 'booking_change', 'custom', 'maintenance', 'order_fulfillment')
           AND ${taskScopeSql('t', () => viewer)}) x
       LEFT JOIN bookings b ON b.organization_id = x.organization_id AND b.id = x.booking_id
       LEFT JOIN products p ON p.organization_id = x.organization_id AND p.id = COALESCE(b.product_id, x.product_id)
       LEFT JOIN product_stay_configs sc ON (b.id IS NULL OR b.product_session_id IS NULL) AND sc.organization_id = x.organization_id AND sc.product_id = COALESCE(b.product_id, x.product_id)
       LEFT JOIN business_locations l ON l.organization_id = x.organization_id
-        AND l.id = COALESCE(b.location_id, CASE WHEN x.kind = 'maintenance' THEN x.location_id END, sc.location_id)
+        AND l.id = COALESCE(b.location_id, CASE WHEN x.kind IN ('maintenance', 'order_fulfillment') THEN x.location_id END, sc.location_id)
       LEFT JOIN conversations r ON r.organization_id = b.organization_id AND r.booking_id = b.id AND r.kind = 'booking'
-     WHERE x.kind IN ('message_delivery', 'booking_change') OR COALESCE(x.starts_at, x.due_at, ${UNTIMED_JOB_DAY_SQL}, '') <= ?
+     WHERE x.kind IN ('message_delivery', 'booking_change', 'order_fulfillment') OR COALESCE(x.starts_at, x.due_at, ${UNTIMED_JOB_DAY_SQL}, '') <= ?
      ORDER BY COALESCE(x.starts_at, x.due_at, ${UNTIMED_JOB_DAY_SQL}), x.id`,
     params: [wideTo],
   }

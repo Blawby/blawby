@@ -23,7 +23,7 @@
         <div class="mt-6 flex flex-wrap gap-2" data-testid="template-fields">
           <UButton v-for="field in AGREEMENT_TEMPLATE_FIELDS" :key="field" size="xs" color="neutral" variant="outline" :disabled="busy" :label="agreementTemplateFieldLabel(product.kind, field)" @click="insert(field)" />
         </div>
-        <UTextarea ref="editor" v-model="draft" class="mt-3 w-full" :disabled="busy" :rows="18" :maxlength="MAX_AGREEMENT_TEMPLATE_LENGTH" placeholder="# Engagement letter&#10;&#10;This letter confirms that {{business_name}} will represent {{client_name}}…" data-testid="template-text" />
+        <UTextarea ref="editor" v-model="draft" class="mt-3 w-full" :disabled="busy" :rows="18" :maxlength="MAX_AGREEMENT_TEMPLATE_LENGTH" placeholder="Write your wording here. Choose a field above to fill it in from each booking." data-testid="template-text" />
         <p class="mt-2 text-xs text-muted">{{ draft.length.toLocaleString() }} / {{ MAX_AGREEMENT_TEMPLATE_LENGTH.toLocaleString() }}. Start a line with # for a heading. Signature lines are added for each signer when you send it.</p>
         <UButton class="mt-5 w-full justify-center" label="Save" color="neutral" size="lg" :loading="busy" :disabled="busy || !draft.trim() || draft === saved" data-testid="template-save" @click="saveTemplate" />
       </template>

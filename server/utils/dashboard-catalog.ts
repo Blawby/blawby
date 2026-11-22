@@ -18,7 +18,7 @@ import { oncePerRequest } from '~/server/utils/request-scope'
 const kinds = [
   { value: 'menu', label: 'Menu' }, { value: 'experience', label: 'Experiences' },
   { value: 'service', label: 'Services' }, { value: 'stay', label: 'Places to stay' },
-  { value: 'table', label: 'Tables' },
+  { value: 'table', label: 'Tables' }, { value: 'item', label: 'Products' },
 ]
 
 export function readDashboardCatalogDocument(event: H3Event, slug: string, preloaded?: ReturnType<ReturnType<typeof prepareDashboardCatalog>['read']>) {

@@ -4,8 +4,9 @@
     from, each a price for a weight band or for orders over an amount.
   -->
   <DashboardLeafPanel id="shipping-zone" :title="creating ? 'Add zone' : form.name || 'Shipping zone'" lead="Buyers choose one rate at checkout. Weight is the order's packed weight."
-    :saving="saving" :disabled="saving || Boolean(invalid)" :error="error || invalid || ''" save-label="Save" @save="save" @cancel="reset">
-    <div class="space-y-6">
+    :saving="saving" :disabled="saving || Boolean(invalid)" :error="error || (touched && invalid) || ''" save-label="Save" @save="save" @cancel="reset">
+    <!-- What is missing shows once the owner starts typing, not on a form they have only opened. -->
+    <div class="space-y-6" @input="touched = true">
       <UFormField label="Zone name"><UInput v-model="form.name" placeholder="Laos" maxlength="100" class="w-full" /></UFormField>
       <UFormField label="Countries" description="Two-letter codes, separated by commas, such as LA, VN, KH.">
         <UInput v-model="form.countries" placeholder="LA" class="w-full uppercase" />
@@ -36,6 +37,7 @@
 import { majorAmountToMinor, minorAmountToMajor } from '~/shared/prices'
 import { getErrorMessage } from '~/utils/errors'
 import { isRecord } from '~/utils/api-clients'
+import type { ShippingZoneView } from '~/composables/useShippingSettings'
 
 definePageMeta({ layout: 'dashboard' })
 useSeoMeta({ title: 'Shipping zone | Blawby', robots: 'noindex, nofollow' })
@@ -62,8 +64,10 @@ function deliveryDays(min: number | null, max: number | null) {
   if (min !== null && min === max) return String(min)
   return min === null && max === null ? '' : `${min ?? ''}-${max ?? ''}`
 }
+const touched = ref(false)
 function reset() {
   error.value = ''
+  touched.value = false
   const saved = zone.value
   form.name = saved?.name ?? ''
   form.countries = saved?.countries.join(', ') ?? ''
@@ -106,18 +110,19 @@ const invalid = computed(() => { try { payload(); return null } catch (cause) { 
 
 const saving = ref(false)
 const deleting = ref(false)
-const isZone = (value: unknown): value is { zone: { id: string } } => isRecord(value) && isRecord(value.zone) && typeof value.zone.id === 'string'
+const isZone = (value: unknown): value is { zone: ShippingZoneView } => isRecord(value) && isRecord(value.zone) && typeof value.zone.id === 'string'
+  && typeof value.zone.location_id === 'string' && typeof value.zone.name === 'string' && typeof value.zone.updated_at === 'string' && Array.isArray(value.zone.countries) && Array.isArray(value.zone.rates)
 async function save() {
   saving.value = true
   error.value = ''
   try {
-    const saved = await dashboardApi(creating.value ? '/api/dashboard/shipping/zones' : `/api/dashboard/shipping/zones/${encodeURIComponent(zoneId.value)}`,
+    const { zone: saved } = await dashboardApi(creating.value ? '/api/dashboard/shipping/zones' : `/api/dashboard/shipping/zones/${encodeURIComponent(zoneId.value)}`,
       { method: creating.value ? 'POST' : 'PUT', body: payload(), validate: isZone })
-    // A new zone leaves create mode at once: a retry must edit it, not create it again.
-    if (creating.value) await navigateTo(`${shippingPath.value}/zones/${saved.zone.id}`, { replace: true })
-    await refresh()
-    // useAsyncData records a failed refresh instead of rejecting it.
-    if (settingsError.value) throw new Error(`The zone was saved, but it could not be read back: ${getErrorMessage(settingsError.value, 'reload the page')}`)
+    // The response is the zone as stored. It replaces the settings read before the new zone's own page opens, which looks it up there.
+    const settings = data.value!
+    data.value = { ...settings, zones: settings.zones.some(entry => entry.id === saved.id) ? settings.zones.map(entry => entry.id === saved.id ? saved : entry) : [...settings.zones, saved] }
+    // A new zone leaves create mode: a retry edits it rather than creating it again.
+    if (creating.value) await navigateTo(`${shippingPath.value}/zones/${encodeURIComponent(saved.id)}`, { replace: true })
   } catch (cause) {
     error.value = getErrorMessage(cause, 'The zone could not be saved')
   } finally {

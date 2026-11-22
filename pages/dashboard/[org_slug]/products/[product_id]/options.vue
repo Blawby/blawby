@@ -36,12 +36,15 @@
           <span v-else-if="tracked && locations.length" class="text-sm text-muted">Stock at {{ locations[0]!.title }}</span>
         </div>
         <ul class="divide-y divide-default">
-          <li v-for="row in rows" :key="row.key" class="flex items-center gap-3 py-3">
-            <USelect v-model="row.media_asset_id" :items="photoChoices" :aria-label="`${row.title} photo`" class="w-28" placeholder="Photo" />
-            <span class="min-w-0 flex-1 truncate text-highlighted">{{ row.title }}</span>
-            <UInput v-model="row.price" :aria-label="`${row.title} price`" :placeholder="p.currency" inputmode="decimal" class="w-28" />
-            <UInput v-model="row.sku" :aria-label="`${row.title} SKU`" placeholder="SKU" class="w-32" />
-            <UInput v-if="tracked && stockLocationId" v-model="row.available" :aria-label="`${row.title} in stock`" inputmode="numeric" class="w-20" />
+          <!-- The variant's name heads its row, so its fields never squeeze it out of a narrow column. -->
+          <li v-for="row in rows" :key="row.key" class="space-y-2 py-3">
+            <h3 class="truncate font-medium text-highlighted">{{ row.title }}</h3>
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <UFormField label="Photo"><USelect v-model="row.media_asset_id" :items="photoChoices" :aria-label="`${row.title} photo`" placeholder="None" class="w-full" /></UFormField>
+              <UFormField :label="`Price (${p.currency})`"><UInput v-model="row.price" :aria-label="`${row.title} price`" inputmode="decimal" class="w-full" /></UFormField>
+              <UFormField label="SKU"><UInput v-model="row.sku" :aria-label="`${row.title} SKU`" class="w-full" /></UFormField>
+              <UFormField v-if="tracked && stockLocationId" label="In stock"><UInput v-model="row.available" :aria-label="`${row.title} in stock`" inputmode="numeric" class="w-full" /></UFormField>
+            </div>
           </li>
         </ul>
         <p v-if="tracked && !locations.length" class="mt-2 text-sm text-muted">Offer this item at a location before counting its stock.</p>

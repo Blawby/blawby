@@ -7,9 +7,9 @@ import { defineHandler } from 'nitro'
 import { getQuery, getRouterParam } from 'nitro/h3'
 import { assertExactCanonicalLocale } from '~/server/utils/localization'
 
-/** The public API for a site-wide item page: /api/public/experiences/<slug> and /api/public/stays/<slug>. */
+/** The public API for a site-wide item page: /api/public/experiences/, /stays/ or /products/<slug>. */
 export function defineSiteProductDetailHandler(surface: SiteProductSurface) {
-  const noun = surface === 'experiences' ? 'Experience' : 'Place to stay'
+  const noun = surface === 'experiences' ? 'Experience' : surface === 'stays' ? 'Place to stay' : 'Product'
   return defineHandler(async (event) => {
     const organizationId = event.context.organizationId as string | null | undefined
     const slug = getRouterParam(event, 'slug')

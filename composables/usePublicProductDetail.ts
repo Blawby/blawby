@@ -77,7 +77,8 @@ export async function usePublicProductDetail(routeKind: ProductSurface) {
   // so one composable serves both.
   const routeSlug = String(route.params.slug ?? '')
   const productSlugParam = String(route.params.product_slug ?? '')
-  const siteWideSurface = (routeKind === 'experiences' || routeKind === 'stays') && productSlugParam === '' ? routeKind : null
+  // A physical item's page is site-wide too: /products/<slug>. A branch's product page (/locations/<slug>/products/<product_slug>) names both.
+  const siteWideSurface = (routeKind === 'experiences' || routeKind === 'stays' || routeKind === 'products') && productSlugParam === '' ? routeKind : null
   const locationSlug = siteWideSurface ? '' : routeSlug
   const productSlug = siteWideSurface ? routeSlug : productSlugParam
   const scope = computed(() => typeof route.query.location_id === 'string' ? route.query.location_id : null)

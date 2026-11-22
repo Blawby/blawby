@@ -18,14 +18,14 @@
     <div v-if="product" class="space-y-6">
       <div class="grid grid-cols-2 gap-4">
         <UFormField label="Ships from stock in" hint="Optional">
-          <UInput v-model="form.processing_days" inputmode="numeric" placeholder="3" class="w-full"><template #trailing><span class="text-sm text-muted">days</span></template></UInput>
+          <UInput v-model="form.processing_days" inputmode="numeric" class="w-full"><template #trailing><span class="text-sm text-muted">days</span></template></UInput>
         </UFormField>
         <UFormField label="Made to order in" hint="Optional">
-          <UInput v-model="form.made_to_order_days" inputmode="numeric" placeholder="20" class="w-full"><template #trailing><span class="text-sm text-muted">days</span></template></UInput>
+          <UInput v-model="form.made_to_order_days" inputmode="numeric" class="w-full"><template #trailing><span class="text-sm text-muted">days</span></template></UInput>
         </UFormField>
       </div>
       <UFormField label="Packed weight">
-        <UInput v-model="form.weight_kg" inputmode="decimal" placeholder="4.2" class="w-full"><template #trailing><span class="text-sm text-muted">kg</span></template></UInput>
+        <UInput v-model="form.weight_kg" inputmode="decimal" class="w-full"><template #trailing><span class="text-sm text-muted">kg</span></template></UInput>
       </UFormField>
       <UFormField label="Packed size" hint="Optional">
         <div class="grid grid-cols-3 gap-3">
@@ -35,11 +35,11 @@
         </div>
       </UFormField>
       <div class="grid grid-cols-2 gap-4">
-        <UFormField label="Country of origin" hint="Optional">
-          <UInput v-model="form.country_of_origin" placeholder="TH" maxlength="2" class="w-full uppercase" />
+        <UFormField label="Country of origin" hint="Optional" description="Two-letter code, such as TH.">
+          <UInput v-model="form.country_of_origin" maxlength="2" class="w-full uppercase" />
         </UFormField>
-        <UFormField label="HS code" hint="Optional">
-          <UInput v-model="form.hs_code" placeholder="6913.90" class="w-full" />
+        <UFormField label="HS code" hint="Optional" description="The customs tariff code, such as 6913.90.">
+          <UInput v-model="form.hs_code" class="w-full" />
         </UFormField>
       </div>
     </div>

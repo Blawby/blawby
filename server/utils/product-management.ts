@@ -39,7 +39,7 @@ import {
   type PriceSelection,
 } from '~/shared/prices'
 import { assertProductKind, patchProductDetails, validateProductDetails, validateStayAlarmDetails, ProductDetailError, PRICING_NOTE_HANDLE, PRODUCT_KINDS, type ProductDetailValue, type ProductKind } from '~/shared/product-details'
-import { presentationForProduct, type CatalogCounts } from '~/utils/product-presentation'
+import { hasSiteProductPage, presentationForProduct, type CatalogCounts } from '~/utils/product-presentation'
 import { preparePublicTenantOrigin } from '~/server/utils/public-base'
 import { FormQuestionDefinitionError, formQuestionsRevision, normalizeFormQuestionsInput, parseStoredFormQuestions } from '~/shared/form-questions'
 
@@ -490,7 +490,7 @@ export function prepareProductPublicPresentation(organization: string | { sql: s
     checkoutSellerQuery(typeof organization === 'string' ? { query: '?', params: [organization] } : { query: organization.sql, params: [] }), ...pagePlan.queries],
     async read([published, originRow, locations, schedules, seller, ...pageRows]: D1Result[], db: DbClient, env: CloudflareEnv, product: Product, organizationCurrency?: string | null) {
       const organizationId = product.organization_id
-      const siteProduct = product.kind === 'experience' || product.kind === 'stay'
+      const siteProduct = hasSiteProductPage(product.kind)
       const path = siteProduct ? presentationForProduct(product).productPath('', product.slug) : product.page?.path ?? null
       const scheduledScopes = scheduleScopesFromRows(schedules!.results as BookingScheduleScopeRow[]).get(productId) ?? new Set<string | null>()
       const readiness = product.kind === 'experience' || product.kind === 'stay' || product.booking

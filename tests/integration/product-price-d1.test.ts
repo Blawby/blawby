@@ -140,6 +140,17 @@ test('public experiences require a configured booking flow and retain full or te
     await assert.rejects(setProductPublication(db, { env, organizationId: ORG, productId: external.id, published: true, actor: ACTOR }),
       (error: { statusCode?: number; data?: { missing?: string[] } }) => error.statusCode === 409 && error.data?.missing?.includes('active') === true)
     assert.deepEqual(await visible(), [legacy.id], 'publishing a withheld experience still requires accepting bookings')
+
+    // A physical item has its own page, /products/<slug>, on every vertical: a lodging site has no branch pages to hang it on.
+    const item = await createProduct(db, { organizationId: ORG, actor: ACTOR, product: { kind: 'item', name: 'Chess set', active: true, variants: [{ name: 'Set', prices: [{ unit_amount: 1800000, currency: 'THB' }] }] }, publication: { published: true } })
+    await setProductLocation(db, { env, organizationId: ORG, productId: item.id, locationId: 'loc-a', active: true, published: true, actor: ACTOR })
+    for (const vertical of ['restaurant', 'experience', 'lodging', 'service']) {
+      await db.prepare('UPDATE organization SET vertical = ? WHERE id = ?').bind(vertical, ORG).run()
+      const itemDetail = await loadPublicSiteProductDetail(env, db, ORG, 'products', false, item.slug)
+      assert.equal(itemDetail?.product.id, item.id, `the item page resolves on a ${vertical} site`)
+      assert.equal(itemDetail?.scope_required, false, 'an item is bought from its page without choosing a branch first')
+    }
+    assert.equal(await loadPublicSiteProductDetail(env, db, ORG, 'products', false, external.slug), null, '/products/<slug> is an item\'s page only')
   } finally { await runtime.dispose() }
 })
 

@@ -87,7 +87,7 @@
             <!-- A section's own picture introduces it. -->
             <img v-if="mediaStillUrl(group.image)" :src="mediaStillUrl(group.image)!" :alt="group.image!.alt_text || group.category" class="mb-8 aspect-[16/9] w-full rounded-lg object-cover" loading="lazy" decoding="async">
             <p v-if="showLocations && group.location_id" class="tenant-kicker mb-2">{{ locationTitle(group.location_id) }}</p>
-            <h2 class="tenant-display tenant-italic text-5xl text-default">{{ group.category }}</h2>
+            <h2 v-if="group.category" class="tenant-display tenant-italic text-5xl text-default">{{ group.category }}</h2>
             <p v-if="group.description" class="mt-4 text-sm leading-relaxed text-muted">{{ group.description }}</p>
           </div>
 
@@ -173,7 +173,7 @@
         <div class="mb-8 border-b border-default pb-6">
           <img v-if="mediaStillUrl(group.image)" :src="mediaStillUrl(group.image)!" :alt="group.image!.alt_text || group.category" class="mb-8 aspect-[16/9] w-full rounded-lg object-cover" loading="lazy" decoding="async">
           <p v-if="showLocations && group.location_id" class="tenant-kicker mb-2">{{ locationTitle(group.location_id) }}</p>
-          <h2 class="tenant-display tenant-italic text-5xl">{{ group.category }}</h2>
+          <h2 v-if="group.category" class="tenant-display tenant-italic text-5xl">{{ group.category }}</h2>
           <p v-if="group.description" class="mt-4 text-sm leading-relaxed text-muted">{{ group.description }}</p>
         </div>
         <div class="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
@@ -245,7 +245,7 @@
                 </div>
 
                 <div v-if="productHref(product, group.location_id)" class="mt-4 flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-primary">
-                  {{ verticalCopy.viewExperienceCta }}
+                  {{ product.kind === 'item' ? t(productCtaKey(product.kind)) : verticalCopy.viewExperienceCta }}
                   <TenantIcon name="arrow-right" class="size-3.5 transition-transform group-hover:translate-x-1" />
                 </div>
               </div>
@@ -264,7 +264,7 @@ import type { CurrencyCode } from '~/shared/currencies'
 import { formatProductMoney, formatProductPriceRange, summarizeProductPrices } from '~/utils/product-money'
 import { minorAmountToMajor } from '~/shared/prices'
 import { PRICING_NOTE_HANDLE } from '~/shared/product-details'
-import { groupProductsByCollection, productLocationCollectionPath, staySpecLabels } from '~/utils/product-presentation'
+import { groupProductsByCollection, presentationForProduct, productCtaKey, productLocationCollectionPath, staySpecLabels } from '~/utils/product-presentation'
 import { addressPlaceName, type PostalAddress } from '~/utils/postal-address'
 import type { PublicLocationArea } from '~/types/public-location'
 import { mediaStillUrl } from '~/shared/media-placement-contract'
@@ -394,7 +394,8 @@ const isAvailable = (product: CollectionProduct, collectionLocationId: string | 
 const productHref = (product: CollectionProduct, collectionLocationId: string | null = null): string | null => {
   const id = productLocationId(product, collectionLocationId)
   if (product.kind === 'experience') return localePath(props.presentation.productPath('', product.slug)) + (id ? `?location_id=${encodeURIComponent(id)}` : '')
-  if (product.kind === 'stay') return localePath(props.presentation.productPath('', product.slug))
+  // A home's and an item's page is the site's own, whichever surface lists it.
+  if (product.kind === 'stay' || product.kind === 'item') return localePath(presentationForProduct(product).productPath('', product.slug))
   if (product.page?.path) return localePath(product.page.path)
   return id ? localePath(props.presentation.productPath(locationSlug(id), product.slug)) : null
 }
@@ -436,7 +437,8 @@ const groups = computed(() => {
     .map(group => ({ id: group.id, category: group.name, description: group.description, image: group.image, sort_order: group.sort_order, location_id: group.location_id, products: group.products }))
   const included = new Set(grouped.flatMap(group => group.products.map(product => product.id)))
   const ungrouped = props.products.filter(product => !included.has(product.id))
-  if (ungrouped.length) grouped.push({ id: 'catalog', category: props.presentation.collectionLabel, description: null, image: null, sort_order: grouped.length, location_id: null, products: ungrouped })
+  // With no collections the page title already names the list; the one group repeats no heading under it.
+  if (ungrouped.length) grouped.push({ id: 'catalog', category: grouped.length ? props.presentation.collectionLabel : '', description: null, image: null, sort_order: grouped.length, location_id: null, products: ungrouped })
   return grouped
 })
 const categoryTabs = computed(() => groups.value.map(group => ({

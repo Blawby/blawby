@@ -324,8 +324,8 @@ export type ReconcileProductInput = CreateProductInput & { product_id?: string }
  */
 export type ProductSurface = 'menu' | 'products' | 'experiences' | 'stays'
 
-/** The surfaces whose items have a page of the site's own, named by the item's slug alone. */
-export type SiteProductSurface = 'experiences' | 'stays'
+/** The surfaces whose items have a page of the site's own, named by the item's slug alone: experiences, homes and physical items. */
+export type SiteProductSurface = 'experiences' | 'stays' | 'products'
 
 export interface ProductPresentation {
   feature: 'products'

@@ -33,12 +33,13 @@ const groups = computed<EditorNavigationGroup[]>(() => {
       id: `zones-${location.id}`, title: settings.locations.length > 1 ? `Ships from ${location.title}` : 'Shipping zones',
       items: [
         ...settings.zones.filter(zone => zone.location_id === location.id).map(zone => ({ id: zone.id, label: zone.name, icon: 'i-lucide-globe', summary: `${zone.countries.join(', ')} · ${rateSummary(zone)}`, to: to(`zones/${zone.id}`) })),
-        { id: `new-${location.id}`, label: 'Add zone', icon: 'i-lucide-plus', to: `${to('zones/new')}?location_id=${encodeURIComponent(location.id)}` },
+        { id: `new-${location.id}`, label: `Add zone for ${location.title}`, icon: 'i-lucide-plus', to: `${to('zones/new')}?location_id=${encodeURIComponent(location.id)}` },
       ],
     })),
     { id: 'pickup', title: 'Pickup', items: [{ id: 'pickup', label: 'Local pickup', icon: 'i-lucide-store',
       summary: settings.locations.filter(location => location.pickup_enabled).map(location => location.title).join(', ') || 'Off', to: to('pickup') }] },
   ]
 })
-const firstRow = computed(() => groups.value[0]?.items[0]?.to ?? null)
+// Opens a saved zone or pickup, never a blank Add form the owner did not ask for.
+const firstRow = computed(() => groups.value.flatMap(group => group.items).find(item => !item.id.startsWith('new-'))?.to ?? null)
 </script>

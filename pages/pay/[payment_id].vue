@@ -167,7 +167,7 @@
 <script setup lang="ts">
 import { useMounted } from '@vueuse/core'
 import { loadStripe, type Stripe, type StripeElements, type StripePaymentElement } from '@stripe/stripe-js'
-import { presentationForProduct } from '~/utils/product-presentation'
+import { hasSiteProductPage, presentationForProduct } from '~/utils/product-presentation'
 import type { ProductKind } from '~/shared/product-details'
 import { paymentMoney } from '~/shared/payment-display'
 import { cardBrandLabel } from '~/composables/usePaymentsSettings'
@@ -272,7 +272,7 @@ const offeringPath = computed(() => {
   if (!value?.product_slug || !value.kind) return ''
   if (value.kind === 'table') return localePath('/reservations')
   // Only an experience's and a stay's page is the site's; any other offering's is its location's.
-  if (value.kind !== 'experience' && value.kind !== 'stay' && !value.location_slug) return ''
+  if (!hasSiteProductPage(value.kind) && !value.location_slug) return ''
   return localePath(presentationForProduct({ kind: value.kind as ProductKind }).productPath(value.location_slug ?? '', value.product_slug))
 })
 const termsPath = computed(() => policySummary.value ? '#booking-policy' : '')

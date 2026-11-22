@@ -28,8 +28,9 @@ const tenants: Tenant[] = [
     name: 'Pottery House', baseURL: potteryHouseBaseURL, headers: potteryHouseExtraHeaders,
     shell: '.tenant-layout', identity: /Pottery House/i, definingContent: /pottery|wheel|clay/i,
     primaryLabel: /product|class|book/i, listPath: '/experiences', listHeading: /Pottery House Krabi Experiences/i,
-    detailPath: '/experiences/pottery-wheel-class',
-    detailContent: /Pottery Wheel Class/i, themeVar: '--ui-bg',
+    // Staging carries the tenant's live Stripe account under a test-mode platform, which hides its paid classes there; this class renders in both environments.
+    detailPath: '/experiences/group-pottery-workshops',
+    detailContent: /Group Pottery Workshops/i, themeVar: '--ui-bg',
     forbidden: [/Come dine with us/i, /Reserve a table/i, /From the kitchen/i, /Also part of Saya/i],
   },
   {

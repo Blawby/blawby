@@ -1,4 +1,5 @@
 import { isPlatformMessageAuthor } from '~/shared/messages-contract'
+import { agreementRequestLine } from '~/shared/agreements'
 import { HTTPError } from 'nitro'
 import { jobAssigneeSql, sessionPrepTaskQueries } from '~/server/domain/tasks'
 import { BOOKING_ENDS_SQL, BOOKING_RECORDS_SQL, bookingDay, parseGuestRequest, stayRequestPayBySql, stayRequestRespondBySql } from '~/server/domain/requests'
@@ -169,6 +170,8 @@ type ListRow = {
   latest_actor_name: string | null
   latest_event_name: string | null
   latest_body: string | null
+  /** A signing request's signers, as JSON, so the person it asks reads it as theirs. */
+  latest_signers: string | null
   latest_provider_inserted_at: string | null
   latest_occurred_at: string | null
   latest_photos: number
@@ -226,6 +229,7 @@ function conversationListQuery(organizationId: string | null, opts: ListGuestThr
       COALESCE(u.name, CASE WHEN e.event_name = '${MIRRORED_EVENT}' AND json_type(e.payload_json, '$.meta.name') = 'text'
         THEN NULLIF(trim(json_extract(e.payload_json, '$.meta.name')), '') END) AS latest_actor_name,
       e.event_name AS latest_event_name, e.body AS latest_body,
+      CASE WHEN e.event_name = 'agreement.sent' THEN json_extract(e.payload_json, '$.signers') END AS latest_signers,
       json_extract(e.payload_json, '$.provider_inserted_at') AS latest_provider_inserted_at, e.occurred_at AS latest_occurred_at,
       (SELECT COUNT(*) FROM media_placements mp WHERE mp.owner_type = 'message' AND mp.owner_id = e.id AND mp.slot = 'attachments' AND mp.status = 'active') AS latest_photos,
       CASE WHEN listed.kind = 'team' THEN (SELECT json_group_array(json_object('user_id', person.user_id, 'name', person.name))
@@ -245,7 +249,9 @@ function presentConversationList(rows: ListRow[], opts: ListGuestThreadsOptions,
     if (row.latest_message_id && (row.latest_author_kind === null || row.latest_occurred_at === null)) throw new Error(`The latest message of conversation ${row.id} could not be read`)
     const message: LatestMessage | undefined = row.latest_author_kind !== null && row.latest_occurred_at !== null ? {
       authorKind: row.latest_author_kind, actorUserId: row.latest_author_user_id, actorName: row.latest_actor_name, eventName: row.latest_event_name,
-      text: row.latest_body, photos: row.latest_photos,
+      text: row.latest_body && row.latest_signers && row.latest_author_user_id !== opts.userId
+        ? agreementRequestLine(row.latest_body, JSON.parse(row.latest_signers), { userId: opts.userId, guest: Boolean(opts.buyerAudience) }) : row.latest_body,
+      photos: row.latest_photos,
       sentAt: row.latest_provider_inserted_at ? providerInstant(row.latest_provider_inserted_at) : row.latest_occurred_at,
     } : undefined
     const when = row.record_unit === 'nights' && row.record_starts_at && row.record_stored_ends_at && row.record_timezone

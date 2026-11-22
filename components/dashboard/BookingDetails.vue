@@ -660,7 +660,8 @@ const depositRead = computed(() => {
   const record = booking.value ?? detail.value
   return record && 'deposit' in record ? record.deposit ?? null : null
 })
-const showAgreementRow = computed(() => Boolean(conversationId.value && agreementRead.value && (agreementRead.value.agreement || !props.personalScope)))
+// With nothing sent yet the row opens the send checklist, so it shows only to someone who may send: the read names their signers.
+const showAgreementRow = computed(() => Boolean(conversationId.value && agreementRead.value && (agreementRead.value.agreement || (!props.personalScope && agreementRead.value.signers))))
 // A guest sees the deposit once the business asks for one; the business always sees where to set it.
 const showDepositRow = computed(() => Boolean(depositRead.value && (!props.personalScope || depositRead.value.required_minor !== null || depositRead.value.entries.length)))
 const depositSummary = computed(() => {

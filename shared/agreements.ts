@@ -70,6 +70,16 @@ export interface BookingAgreement {
   can_manage: boolean
 }
 
+/**
+ * A signing request's line as the person it asks reads it: "Asked you to sign the rental agreement".
+ * It asks the reader when they are one of its signers, or the guest reading a request with one guest signer.
+ */
+export function agreementRequestLine(body: string, signers: unknown, reader: { userId: string; guest: boolean }): string {
+  const guests = Array.isArray(signers) ? signers.filter((signer): signer is { key: string } => isRecord(signer) && signer.role === 'guest' && typeof signer.key === 'string') : []
+  const asked = guests.some(signer => signer.key === `user:${reader.userId}`) || (reader.guest && guests.length === 1)
+  return asked ? body.replace(/^Asked .* to sign /u, 'Asked you to sign ') : body
+}
+
 const FIELD_KINDS = new Set(['signature', 'date'])
 
 export function isAgreementField(value: unknown): value is AgreementField {

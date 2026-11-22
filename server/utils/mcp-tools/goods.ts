@@ -22,8 +22,8 @@ const zoneWrite = {
   countries: { type: 'array', minItems: 1, maxItems: 250, items: { ...text, pattern: '^[A-Za-z]{2}$' }, description: 'ISO 3166-1 alpha-2 destination countries. A country is in one zone per location.' },
   rates: { type: 'array', maxItems: 20, items: rateWrite, description: 'The complete list of rates; it replaces the zone’s rates.' },
 }
-const line = { type: 'object', properties: { id: text, product_id: text, product_variant_id: text, title: text, variant_title: nullableText, sku: nullableText, quantity: { type: 'integer' }, unit_amount: { type: 'integer' }, made_to_order_quantity: { type: 'integer' } },
-  required: ['id', 'product_id', 'product_variant_id', 'title', 'variant_title', 'sku', 'quantity', 'unit_amount', 'made_to_order_quantity'] }
+const line = { type: 'object', properties: { id: text, product_id: text, product_variant_id: text, title: text, variant_title: nullableText, sku: nullableText, quantity: { type: 'integer' }, unit_amount: { type: 'integer' }, made_to_order_quantity: { type: 'integer' }, stock_taken: { type: 'integer', description: 'Units taken from the location’s stock when paid; given back if the order is cancelled.' } },
+  required: ['id', 'product_id', 'product_variant_id', 'title', 'variant_title', 'sku', 'quantity', 'unit_amount', 'made_to_order_quantity', 'stock_taken'] }
 const order = { type: 'object', properties: {
   id: text, number: { type: 'integer' }, status: { type: 'string', enum: ['paid', 'cancelled'] }, conversation_id: nullableText, location_id: text, location_title: text,
   delivery_method: { type: 'string', enum: ['shipping', 'pickup'] }, shipping_details: { type: ['object', 'null'] }, shipping_rate_name: nullableText, shipping_amount: { type: 'integer' },

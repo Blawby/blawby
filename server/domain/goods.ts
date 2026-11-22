@@ -577,13 +577,8 @@ export async function saveCheckoutOrder(db: DbClient, payment: Payment, snapshot
 export function cancelUncapturedOrderQueries(payment: Pick<Payment, 'id' | 'organization_id' | 'subject_id'>, now: string): BatchQuery[] {
   const uncaptured = `EXISTS (SELECT 1 FROM orders o JOIN payments p ON p.id = ? AND p.subject_type = 'order' AND p.subject_id = o.id AND p.captured_amount = 0
     WHERE o.organization_id = ? AND o.id = ? AND o.status = 'paid')`
-  const scope = [payment.id, payment.organization_id, payment.subject_id]
   return [
-    { query: `UPDATE inventory_levels SET available = available + (SELECT SUM(l.stock_taken) FROM order_lines l WHERE l.organization_id = inventory_levels.organization_id AND l.order_id = ? AND l.product_variant_id = inventory_levels.product_variant_id),
-        updated_at = ?, updated_by = ?
-      WHERE organization_id = ? AND location_id = (SELECT location_id FROM orders WHERE organization_id = ? AND id = ?)
-        AND product_variant_id IN (SELECT product_variant_id FROM order_lines WHERE organization_id = ? AND order_id = ? AND stock_taken > 0) AND ${uncaptured}`,
-      params: [payment.subject_id, now, `order:${payment.subject_id}`, payment.organization_id, payment.organization_id, payment.subject_id, payment.organization_id, payment.subject_id, ...scope] },
+    returnOrderStockQuery(payment, now, { query: uncaptured, params: [payment.id, payment.organization_id, payment.subject_id] }),
     { query: `UPDATE orders SET status = 'cancelled', cancelled_at = ?, updated_at = ? WHERE organization_id = ? AND id = ? AND status = 'paid'
         AND EXISTS (SELECT 1 FROM payments p WHERE p.id = ? AND p.captured_amount = 0)`,
       params: [now, now, payment.organization_id, payment.subject_id, payment.id] },
@@ -591,6 +586,19 @@ export function cancelUncapturedOrderQueries(payment: Pick<Payment, 'id' | 'orga
         AND EXISTS (SELECT 1 FROM orders WHERE organization_id = ? AND id = ? AND status = 'cancelled')`,
       params: [now, now, `order_fulfillment:${payment.subject_id}`, payment.organization_id, payment.subject_id] },
   ]
+}
+
+/**
+ * Gives a cancelled order's stock back to its location: exactly what its
+ * payment took (order_lines.stock_taken), while `when` still holds — the same
+ * condition that cancels the order, written before it in the batch.
+ */
+export function returnOrderStockQuery(payment: Pick<Payment, 'organization_id' | 'subject_id'>, now: string, when: { query: string; params: unknown[] }): BatchQuery {
+  return { query: `UPDATE inventory_levels SET available = available + (SELECT SUM(l.stock_taken) FROM order_lines l WHERE l.organization_id = inventory_levels.organization_id AND l.order_id = ? AND l.product_variant_id = inventory_levels.product_variant_id),
+      updated_at = ?, updated_by = ?
+    WHERE organization_id = ? AND location_id = (SELECT location_id FROM orders WHERE organization_id = ? AND id = ?)
+      AND product_variant_id IN (SELECT product_variant_id FROM order_lines WHERE organization_id = ? AND order_id = ? AND stock_taken > 0) AND ${when.query}`,
+    params: [payment.subject_id, now, `order:${payment.subject_id}`, payment.organization_id, payment.organization_id, payment.subject_id, payment.organization_id, payment.subject_id, ...when.params] }
 }
 
 /** Releases an order whose payment never completed. */
@@ -602,7 +610,7 @@ export function releaseOrderQuery(payment: Pick<Payment, 'organization_id' | 'su
 // Reading and fulfilling
 // ---------------------------------------------------------------------------
 
-export interface OrderLineRow { id: string; product_id: string; product_variant_id: string; title: string; variant_title: string | null; sku: string | null; quantity: number; unit_amount: number; made_to_order_quantity: number }
+export interface OrderLineRow { id: string; product_id: string; product_variant_id: string; title: string; variant_title: string | null; sku: string | null; quantity: number; unit_amount: number; made_to_order_quantity: number; stock_taken: number }
 export interface OrderRecord {
   id: string; organization_id: string; organization_name: string | null; number: number; status: string; conversation_id: string | null; location_id: string; location_title: string
   delivery_method: DeliveryMethod; shipping_details: ShippingDetails | null; shipping_rate_name: string | null; shipping_amount: number
@@ -619,7 +627,7 @@ export function orderRecordQuery(organizationId: string, where: { orderId: strin
         'surcharge_amount', p.surcharge_amount, 'receipt_url', p.receipt_url) FROM payments p WHERE p.organization_id = o.organization_id AND p.subject_type = 'order' AND p.subject_id = o.id) AS payment,
       (SELECT json_extract(c.payload_json, '$.guest') FROM conversations c WHERE c.organization_id = o.organization_id AND c.id = o.conversation_id) AS guest,
       (SELECT json_group_array(json_object('id', x.id, 'product_id', x.product_id, 'product_variant_id', x.product_variant_id, 'title', x.title, 'variant_title', x.variant_title,
-        'sku', x.sku, 'quantity', x.quantity, 'unit_amount', x.unit_amount, 'made_to_order_quantity', x.made_to_order_quantity))
+        'sku', x.sku, 'quantity', x.quantity, 'unit_amount', x.unit_amount, 'made_to_order_quantity', x.made_to_order_quantity, 'stock_taken', x.stock_taken))
         FROM (SELECT * FROM order_lines WHERE organization_id = o.organization_id AND order_id = o.id ORDER BY sort_order) x) AS lines
     FROM orders o JOIN business_locations l ON l.organization_id = o.organization_id AND l.id = o.location_id
     WHERE o.organization_id = ? AND ${'open' in where

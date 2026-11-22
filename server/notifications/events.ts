@@ -828,6 +828,31 @@ export interface OrderEventInput {
   replyUrl: string
 }
 
+/** An order the business no longer has to send: its payment never completed, or it was refunded in full before it shipped. */
+export function orderCancelledMessage(input: Pick<OrderEventInput, 'organizationName' | 'orderNumber' | 'guestName' | 'guestEmail' | 'items' | 'total' | 'heroImageUrl' | 'replyUrl'> & { reason: 'unpaid' | 'refunded'; stockReturned: boolean }): MemberAlertMessage {
+  return {
+    title: `Order #${input.orderNumber} cancelled - ${input.guestName}`,
+    preheader: input.items.join(', '),
+    hero: input.heroImageUrl ? { imageUrl: input.heroImageUrl, alt: input.items[0] ?? '' } : null,
+    intro: [
+      input.reason === 'unpaid' ? 'The payment was not completed, so the order was cancelled. Nothing was charged.' : 'The order was refunded in full before it shipped, so it was cancelled.',
+      'There is nothing to ship.',
+      input.stockReturned ? 'Its items are back in stock.' : null,
+    ].filter(Boolean).join(' '),
+    facts: facts(
+      fact('items', 'Items', input.items.join('\n'), true),
+      fact('total', input.reason === 'unpaid' ? 'Order total' : 'Refunded', input.total, true),
+      fact('guestName', 'Buyer', input.guestName, true),
+      fact('guestEmail', 'Email', input.guestEmail, true),
+    ),
+    primaryAction: { url: input.replyUrl, label: 'Open order' },
+    category: 'reservations_bookings',
+    emailPurpose: 'transactional',
+    emailReason: `You received this email because you receive order notifications for ${input.organizationName}.`,
+    organizationName: input.organizationName,
+  }
+}
+
 /** A paid order, as Shopify's new-order notification: what to send, where, and by when. */
 export function orderPlacedMessage(input: OrderEventInput): MemberAlertMessage {
   return {

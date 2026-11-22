@@ -57,6 +57,7 @@ export type DomainEvent =
     }
   /** A paid order was shipped or collected: the buyer is told. */
   | { type: 'order.fulfilled'; organization_id: string; order_id: string }
+  | { type: 'order.cancelled'; organization_id: string; order_id: string }
 
 type EventDeliveryOptions = { delaySeconds: number }
 export interface EventsEnv { DB?: D1Database; EVENTS?: { send(_event: DomainEvent, _options?: EventDeliveryOptions): Promise<void> } }
@@ -194,6 +195,11 @@ export async function consumeEvent(env: CloudflareEnv, event: DomainEvent): Prom
   if (event.type === 'order.fulfilled') {
     const { notifyOrderFulfilled } = await import('~/server/utils/notifications')
     await notifyOrderFulfilled(env, env.DB, event.organization_id, event.order_id)
+    return
+  }
+  if (event.type === 'order.cancelled') {
+    const { notifyOrderCancelled } = await import('~/server/utils/notifications')
+    await notifyOrderCancelled(env, env.DB, event.organization_id, event.order_id)
     return
   }
   if (event.type === 'stay.checkout_expired') {

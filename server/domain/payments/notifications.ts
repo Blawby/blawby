@@ -24,6 +24,16 @@ export interface PaymentFinancialEvent {
   responseDueBy?: string | null
 }
 
+/** How a receipt names the charge's payment method: "Visa - 4242", or the method's type. */
+export function chargePaymentMethod(charge: Stripe.Charge): string | null {
+  const card = charge.payment_method_details?.card
+  if (card) {
+    const brand = card.brand ? card.brand.charAt(0).toUpperCase() + card.brand.slice(1) : ''
+    return card.last4 ? (brand ? `${brand} - ${card.last4}` : `- ${card.last4}`) : brand || null
+  }
+  return charge.payment_method_details?.type ?? null
+}
+
 export async function publishPaymentNotification(env: CloudflareEnv, payment: Pick<Payment, 'organization_id' | 'id'>, notice: PaymentFinancialEvent): Promise<void> {
   await publishEvent(env, { type: 'payment.financial', organization_id: payment.organization_id, payment_id: payment.id, notice })
 }
@@ -39,9 +49,8 @@ export async function notifyPaymentFinancialEvent(db: DbClient, stripe: Stripe, 
   // An order is a checkout too: its own placed notice states what was paid, and a decline before capture is the pay page's.
   const checkout = payment.subject_type === 'booking' || payment.subject_type === 'order'
   if (checkout && input.kind === 'payment_failed' && payment.subject_type === 'booking' && !payment.subject_id) return
-  // An order's failure is told only once the order existed for the buyer: paid on authorization, then cancelled when the payment failed.
-  if (input.kind === 'payment_failed' && payment.subject_type === 'order'
-    && (await queryFirst<{ status: string }>(db, 'SELECT status FROM orders WHERE organization_id=? AND id=?', [payment.organization_id, payment.subject_id]))?.status !== 'cancelled') return
+  // An order's failed payment is told as the order's cancellation (order.cancelled), which says it was not charged; a decline before then is the pay page's.
+  if (input.kind === 'payment_failed' && payment.subject_type === 'order') return
   const guestKind = (input.kind.startsWith('refund_') || input.kind === 'payment_failed' || (!checkout && input.kind.startsWith('payment_'))) ? input.kind as GuestPaymentNotificationKind : null
   const ownerAlert = !checkout || input.kind !== 'payment_captured'
   // A deleted merchant and an unclaimed contact have no application audience.
@@ -74,13 +83,7 @@ export async function notifyPaymentFinancialEvent(db: DbClient, stripe: Stripe, 
     receiptNumber = charge.receipt_number ?? null
     const rawCharge = charge as unknown as Record<string, unknown>
     if (typeof rawCharge.invoice === 'string') invoiceNumber = rawCharge.invoice
-    if (charge.payment_method_details?.card) {
-      const card = charge.payment_method_details.card
-      const brand = card.brand ? (card.brand.charAt(0).toUpperCase() + card.brand.slice(1)) : ''
-      paymentMethod = card.last4 ? (brand ? `${brand} - ${card.last4}` : `- ${card.last4}`) : brand || null
-    } else if (charge.payment_method_details?.type) {
-      paymentMethod = charge.payment_method_details.type
-    }
+    paymentMethod = chargePaymentMethod(charge)
     if (charge.created) {
       paidAt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(charge.created * 1000))
     }

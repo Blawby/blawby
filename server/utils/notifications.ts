@@ -33,10 +33,10 @@ import {
   guestStayConfirmedMessage,
   organizationInviteMessage,
   organizationInvitationAcceptedMessage,
-  reviewRequestMessage, guestOrderConfirmedMessage, guestOrderShippedMessage 
+  reviewRequestMessage, guestOrderConfirmedMessage, guestOrderShippedMessage, guestOrderCancelledMessage 
 } from '~/server/notifications/guest-events'
 import type { BookingChangeAssignment, BookingChangeEventInput, ConversationRecord } from '~/server/notifications/events'
-import { orderPlacedMessage,
+import { orderPlacedMessage, orderCancelledMessage,
   bookingCancelledMessage,
   bookingChangeMessage,
   bookingChangeWithoutMoney,
@@ -2180,7 +2180,8 @@ export async function notifyTaskStarting(env: NotificationEnv, db: DbClient, inp
 }
 
 /** A paid order: the business is told what to send and by when, and the buyer gets their receipt. */
-export async function notifyOrderPlaced(env: NotificationEnv, db: DbClient, organizationId: string, orderId: string) {
+/** `paymentMethod` is the charge's card or method as Stripe reports it ("Visa - 4242"), for the buyer's receipt. */
+export async function notifyOrderPlaced(env: NotificationEnv, db: DbClient, organizationId: string, orderId: string, paymentMethod: string | null) {
   const { readOrder } = await import('~/server/domain/goods')
   const order = await readOrder(db, organizationId, { orderId })
   if (!order || order.status !== 'paid' || !order.conversation_id || !order.payment) throw new Error('A placed order needs its paid record, payment and conversation')
@@ -2209,8 +2210,16 @@ export async function notifyOrderPlaced(env: NotificationEnv, db: DbClient, orga
     items, total: total('en-US'), shipTo, pickupAt: order.delivery_method === 'pickup' ? order.location_title : null, shippingRate: order.shipping_rate_name,
     shipBy: shipBy('en-US'), madeToOrder: order.lines.some(line => line.made_to_order_quantity > 0), notes, heroImageUrl: hero?.imageUrl ?? null, replyUrl: inboxUrl ?? '',
   })
+  const money = (amount: number) => formatMinorAmount(amount, order.currency, guest.locale)
+  const charges = {
+    subtotal: money(order.subtotal_amount),
+    shipping: order.delivery_method === 'shipping' ? [order.shipping_rate_name, money(order.shipping_amount)].filter(Boolean).join(' · ') : null,
+    tax: order.payment.tax_amount ? money(order.payment.tax_amount) : null,
+    surcharge: order.payment.surcharge_amount ? money(order.payment.surcharge_amount) : null,
+    paymentMethod,
+  }
   const guestMessage = guestOrderConfirmedMessage({
-    locale: guest.locale, guestName: guestContact.name, organizationName: guest.organizationName, organizationLogoUrl: logoUrl, orderNumber: order.number, items,
+    charges, locale: guest.locale, guestName: guestContact.name, organizationName: guest.organizationName, organizationLogoUrl: logoUrl, orderNumber: order.number, items,
     heroImageUrl: hero?.imageUrl ?? null, total: total(guest.locale), shipTo, pickupAt: order.delivery_method === 'pickup' ? order.location_title : null,
     shipBy: shipBy(guest.locale), manageUrl, contactPhone: contact.contactPhone ?? null, contactEmail: contact.contactEmail ?? null,
   })
@@ -2229,6 +2238,56 @@ export async function notifyOrderPlaced(env: NotificationEnv, db: DbClient, orga
     }),
   ])
   raiseSettledFailures('notifyOrderPlaced', `orderId ${orderId}`, results)
+}
+
+/** A cancelled order: the buyer is told it is off and whether anything was charged, and the business that there is nothing to ship. */
+export async function notifyOrderCancelled(env: NotificationEnv, db: DbClient, organizationId: string, orderId: string) {
+  const { readOrder } = await import('~/server/domain/goods')
+  const order = await readOrder(db, organizationId, { orderId })
+  if (!order || order.status !== 'cancelled' || !order.conversation_id || !order.payment) throw new Error('A cancelled order needs its cancelled record, payment and conversation')
+  const guestContact = order.guest
+  if (!guestContact?.email || !guestContact.name) throw new Error('A cancelled order needs its buyer name and email')
+  if (!isCurrencyCode(order.currency)) throw new Error('The order has an unsupported currency')
+  const studio = organizationName({ organizationId, organizationName: order.organization_name })
+  const first = order.lines[0]
+  if (!first) throw new Error('A cancelled order has no items')
+  // Cancelled before capture, nothing was charged; cancelled by a full refund, what was paid comes back.
+  const reason = order.payment.captured_amount === 0 ? 'unpaid' as const : 'refunded' as const
+  const amount = reason === 'unpaid' ? order.payment.amount : order.payment.refunded_amount
+  const threadContext = await getOpeningThreadContext(db, order.conversation_id)
+  const [inboxUrl, hero, logoUrl, guest, contact, manageUrl] = await Promise.all([
+    buildOwnerThreadInboxUrl(env, db, { organizationId, locationId: order.location_id, threadId: order.conversation_id }),
+    messageHero(db, organizationId, { type: 'product', id: first.product_id }),
+    organizationLogo(db, organizationId),
+    guestPresentation(db, { organizationId, organizationName: studio, productId: first.product_id, productTitle: first.title, locationId: order.location_id }),
+    resolveLocationContact(db, organizationId, order.location_id),
+    buildBuyerRequestActivityUrl(env, db, { organizationId, threadId: order.conversation_id }),
+  ])
+  const items = order.lines.map(line => `${line.title}${line.variant_title ? ` (${line.variant_title})` : ''} × ${line.quantity}`)
+  const ownerMessage = orderCancelledMessage({
+    organizationName: studio, orderNumber: order.number, guestName: guestContact.name, guestEmail: guestContact.email, items,
+    total: formatMinorAmount(amount, order.currency, 'en-US'), heroImageUrl: hero?.imageUrl ?? null, replyUrl: inboxUrl ?? '',
+    reason, stockReturned: order.lines.some(line => line.stock_taken > 0),
+  })
+  const guestMessage = guestOrderCancelledMessage({
+    locale: guest.locale, guestName: guestContact.name, organizationName: guest.organizationName, organizationLogoUrl: logoUrl, orderNumber: order.number, items,
+    heroImageUrl: hero?.imageUrl ?? null, total: formatMinorAmount(amount, order.currency, guest.locale), reason, manageUrl,
+    contactPhone: contact.contactPhone ?? null, contactEmail: contact.contactEmail ?? null,
+  })
+  const payload = { order_id: order.id, order_number: String(order.number), guest_name: guestContact.name, email: guestContact.email, organization_name: studio, deep_link: inboxUrl ?? '' }
+  const results = await Promise.allSettled([
+    notifyOwner(env, db, {
+      organizationId, organizationName: studio, locationId: order.location_id, template: 'order_cancelled', title: ownerMessage.title, payload, message: ownerMessage,
+      source: { conversationId: order.conversation_id, messageId: anchorId(threadContext.subject) }, surfaceDeliveryFailures: true,
+    }),
+    sendEmailNotification(env, db, {
+      organizationId, organizationName: studio, locationId: order.location_id, to: guestContact.email, replyAs: { kind: 'guest' },
+      template: 'order_customer_cancelled', title: guestMessage.title, payload,
+      email: { subject: guestMessage.title, ...await renderNotificationEmail(guestMessage, { platformDomain: getPlatformDomain(env) }) },
+      delivery: threadDelivery(threadContext, 'guest_acknowledgement', 'email', 'order_customer_cancelled', guestContact.email),
+    }),
+  ])
+  raiseSettledFailures('notifyOrderCancelled', `orderId ${orderId}`, results)
 }
 
 /** The buyer is told their order shipped, with its tracking, or that it was collected. */

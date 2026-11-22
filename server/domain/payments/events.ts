@@ -14,7 +14,7 @@ import { assertBookingBatchWrite, bookingBatchWriteRefused, CapacityUnavailableE
 import { processStripeWebhookEvent } from '~/server/utils/stripe-webhook-events'
 import { paymentsStripe, platformLivemode } from '~/server/utils/stripe-connect'
 import { approvedStayBooking, executeRefund, reconcileRefundState, requirePayment, assertMinorAmount, type Payment } from './index'
-import { notifyPaymentFinancialEvent, publishPaymentNotification, reconcilePayoutEvent } from './notifications'
+import { chargePaymentMethod, notifyPaymentFinancialEvent, publishPaymentNotification, reconcilePayoutEvent } from './notifications'
 import { checkoutWebsiteSource, recordPaymentPaid } from '~/server/domain/booking-analytics'
 import { notifyOrderPlaced, notifyStayBooked, raiseSettledFailures } from '~/server/utils/notifications'
 import { paymentsBillingBasis } from './fx'
@@ -162,8 +162,8 @@ export async function reconcilePaymentIntent(db:DbClient,stripe:Stripe,payment:P
     await execute(db, "UPDATE payment_checkout_holds SET status='released' WHERE payment_id=? AND organization_id=? AND status='active'", [payment.id, payment.organization_id])
     if (payment.subject_type === 'order' && orderStatus === 'paid' && payment.captured_amount === 0) {
       // Paid on authorization but never captured: its stock comes back, it is cancelled, and nothing is left to ship.
-      await executeBatch(db, cancelUncapturedOrderQueries(payment, new Date().toISOString()), { operation: 'Cancel uncaptured order' })
-      await publishPaymentNotification(env, payment, { kind: 'payment_failed', nativeId: intent.id, status: intent.status, amount: intent.amount })
+      const [, cancelled] = await executeBatch(db, cancelUncapturedOrderQueries(payment, new Date().toISOString()), { operation: 'Cancel uncaptured order' })
+      if (cancelled?.meta.changes === 1) await publishEvent(env, { type: 'order.cancelled', organization_id: payment.organization_id, order_id: payment.subject_id! })
     } else if (payment.subject_type === 'order') {
       const released = releaseOrderQuery(payment)
       await execute(db, released.query, released.params ?? [])
@@ -331,7 +331,9 @@ export async function notifyRecordedPayment(env: CloudflareEnv, event: Extract<D
     const { booking } = event
     if (!booking) return
     if (booking.unit === 'order') {
-      await notifyOrderPlaced(env, db, event.organization_id, booking.id)
+      // The receipt names the card charged, as Shopify's confirmation does.
+      const charge = payment.stripe_charge_id ? await stripe.charges.retrieve(payment.stripe_charge_id, {}, { stripeAccount: payment.stripe_account_id }) : null
+      await notifyOrderPlaced(env, db, event.organization_id, booking.id, charge && chargePaymentMethod(charge))
     } else if (booking.unit === 'nights') {
       await planSourceMessages(db, event.organization_id, booking.id)
       await notifyStayBooked(env, db, event.organization_id, booking.id)

@@ -789,5 +789,9 @@
   "shop.note": "販売者へのメッセージ",
   "shop.order_confirmed": "ご注文 #{number} を承りました。ありがとうございます",
   "shop.order_shipped": "発送済み",
-  "shop.receipt": "領収書"
+  "shop.receipt": "領収書",
+  "email.subject.order_cancelled": "ご注文 #{number} はキャンセルされました",
+  "order.cancelled_unpaid": "お支払いが完了しなかったため、ご注文はキャンセルされました。料金は請求されていません。",
+  "order.cancelled_refunded": "ご注文はキャンセルされ、全額返金されました。返金については別のメールでお知らせします。",
+  "order.payment_method": "お支払い方法"
 }

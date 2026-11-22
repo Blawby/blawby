@@ -1,5 +1,7 @@
 import { createWithStripeMetadata, stripeMetadataId } from './stripe-metadata'
 import type Stripe from 'stripe'
+import { publishEvent } from '~/server/events'
+import { returnOrderStockQuery } from '~/server/domain/goods'
 import { HTTPError } from 'nitro'
 import { execute, executeBatch, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import { assertRoleAllows } from '~/server/utils/member-access'
@@ -292,17 +294,21 @@ export async function reconcileRefundState(db:DbClient,stripe:Stripe,payment:Pay
  // A partial refund was approved at one amount; a full-remaining one takes whatever Stripe returned.
  if(matched&&matched.amount!==null&&matched.amount!==refund.amount)throw new Error('Native refund amount changed from authorized intent')
  const id=matched?.id??crypto.randomUUID(),now=new Date().toISOString()
- await executeBatch(db,[
+ const written=await executeBatch(db,[
   {query:`INSERT INTO payment_refunds(id,payment_id,idempotency_key,stripe_refund_id,amount,reason,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET stripe_refund_id=excluded.stripe_refund_id,amount=excluded.amount,status=excluded.status,error=NULL,updated_at=excluded.updated_at`,params:[id,payment.id,`provider:${payment.stripe_account_id}:${payment.livemode}:${refund.id}`,refund.id,refund.amount,refund.reason??'provider',refund.status,now,now]},
   {query:"UPDATE payments SET refunded_amount=(SELECT COALESCE(SUM(amount),0) FROM payment_refunds WHERE payment_id=? AND status='succeeded'),updated_at=? WHERE id=?",params:[payment.id,now,payment.id]},
   // An order refunded in full is cancelled, as Shopify's is, and nothing is left to ship.
   ...(payment.subject_type==='order'?[
+   // Its stock comes back first, under the same condition that cancels it.
+   returnOrderStockQuery(payment,now,{query:"EXISTS(SELECT 1 FROM orders o JOIN payments p ON p.id=? AND p.captured_amount>0 AND p.refunded_amount=p.captured_amount WHERE o.organization_id=? AND o.id=? AND o.status='paid' AND o.fulfilled_at IS NULL)",params:[payment.id,payment.organization_id,payment.subject_id]}),
    {query:"UPDATE orders SET status='cancelled',cancelled_at=?,updated_at=? WHERE organization_id=? AND id=? AND status='paid' AND fulfilled_at IS NULL AND EXISTS(SELECT 1 FROM payments p WHERE p.id=? AND p.captured_amount>0 AND p.refunded_amount=p.captured_amount)",params:[now,now,payment.organization_id,payment.subject_id,payment.id]},
    {query:"UPDATE tasks SET status='cancelled',closed_at=?,closed_by_user_id=NULL,version=version+1,updated_at=? WHERE dedupe_key=? AND status='open' AND EXISTS(SELECT 1 FROM orders o WHERE o.organization_id=? AND o.id=? AND o.status='cancelled')",params:[now,now,`order_fulfillment:${payment.subject_id}`,payment.organization_id,payment.subject_id]},
   ]:[]),
   {query:`UPDATE payment_authorizations SET consumed_at=COALESCE(consumed_at,?) WHERE payment_id=? AND approved_at IS NOT NULL AND action='refund' AND EXISTS(SELECT 1 FROM payment_refunds r WHERE r.id=? AND r.payment_id=payment_authorizations.payment_id AND r.idempotency_key='approved:'||payment_authorizations.id AND (payment_authorizations.amount IS NULL OR r.amount=payment_authorizations.amount) AND r.created_by=payment_authorizations.user_id)`,params:[now,payment.id,id]},
  ])
  await publishPaymentNotification(env,payment,{kind,nativeId:refund.id,status:refund.status!,amount:refund.amount})
+ // The refund that cancelled an unshipped order also tells the buyer and the business the order is off.
+ if(payment.subject_type==='order'&&written[3]?.meta.changes===1)await publishEvent(env,{type:'order.cancelled',organization_id:payment.organization_id,order_id:payment.subject_id!})
  if(refund.status==='succeeded')await recordPaymentRefunded(db,payment,refund,id)
  return {id,stripe_refund_id:refund.id,status:refund.status}
 }

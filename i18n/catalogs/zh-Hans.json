@@ -789,5 +789,9 @@
   "shop.note": "给卖家的留言",
   "shop.order_confirmed": "感谢您，订单 #{number} 已确认",
   "shop.order_shipped": "已发货",
-  "shop.receipt": "收据"
+  "shop.receipt": "收据",
+  "email.subject.order_cancelled": "订单 #{number} 已取消",
+  "order.cancelled_unpaid": "您的付款未完成，因此订单已取消。您未被扣款。",
+  "order.cancelled_refunded": "您的订单已取消并已全额退款。退款信息将另行通过邮件发送。",
+  "order.payment_method": "付款方式"
 }

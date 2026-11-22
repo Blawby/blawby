@@ -1,7 +1,7 @@
 {
   "surface": "tenant",
-  "fingerprint": "sha256:89739bd6943b5216fc643385f50522154d10ce9763532ee801193118ae0091c7",
-  "documentationFingerprint": "sha256:fe5d9f6a6f6e0c971b2c1ca9f05c8901d4715718fe77fa403c1626fe559f9488",
+  "fingerprint": "sha256:5f252c69635934c3720aed71c20f14cb576cf904db2554a959a5b2212a9f90ed",
+  "documentationFingerprint": "sha256:07b7dfe47addf6e16c0b14ab909b76debd59600a24eb1ca5538fa16036ddd50e",
   "tools": [
     {
       "name": "add_organization_language",
@@ -43359,6 +43359,10 @@
                         "null"
                       ]
                     },
+                    "stock_taken": {
+                      "description": "Units taken from the location’s stock when paid; given back if the order is cancelled.",
+                      "type": "integer"
+                    },
                     "title": {
                       "type": "string"
                     },
@@ -43381,7 +43385,8 @@
                     "sku",
                     "quantity",
                     "unit_amount",
-                    "made_to_order_quantity"
+                    "made_to_order_quantity",
+                    "stock_taken"
                   ],
                   "type": "object"
                 },
@@ -69973,6 +69978,10 @@
                           "null"
                         ]
                       },
+                      "stock_taken": {
+                        "description": "Units taken from the location’s stock when paid; given back if the order is cancelled.",
+                        "type": "integer"
+                      },
                       "title": {
                         "type": "string"
                       },
@@ -69995,7 +70004,8 @@
                       "sku",
                       "quantity",
                       "unit_amount",
-                      "made_to_order_quantity"
+                      "made_to_order_quantity",
+                      "stock_taken"
                     ],
                     "type": "object"
                   },

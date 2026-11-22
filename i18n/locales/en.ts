@@ -17,7 +17,8 @@ export default {
       "message_from": "Message from {name}",
       "order_confirmed": "Order #{number} confirmed",
       "order_shipped": "Order #{number} has shipped",
-      "order_collected": "Order #{number} was collected"
+      "order_collected": "Order #{number} was collected",
+      "order_cancelled": "Order #{number} was cancelled"
     }
   },
   "order": {
@@ -27,7 +28,10 @@ export default {
     "ships_by": "Ships by",
     "carrier": "Carrier",
     "tracking_number": "Tracking number",
-    "track": "Track your order"
+    "track": "Track your order",
+    "payment_method": "Payment method",
+    "cancelled_unpaid": "Your payment was not completed, so your order was cancelled. You were not charged.",
+    "cancelled_refunded": "Your order was cancelled and refunded in full. The refund comes in a separate email."
   },
   "shop": {
     "add_to_cart": "Add to cart",

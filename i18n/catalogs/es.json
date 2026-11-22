@@ -789,5 +789,9 @@
   "shop.note": "Nota para el vendedor",
   "shop.order_confirmed": "Gracias, tu pedido n.º {number} está confirmado",
   "shop.order_shipped": "Enviado",
-  "shop.receipt": "Recibo"
+  "shop.receipt": "Recibo",
+  "email.subject.order_cancelled": "El pedido #{number} se ha cancelado",
+  "order.cancelled_unpaid": "Tu pago no se completó, así que tu pedido se ha cancelado. No se te ha cobrado nada.",
+  "order.cancelled_refunded": "Tu pedido se ha cancelado y reembolsado en su totalidad. Recibirás el reembolso en un correo aparte.",
+  "order.payment_method": "Método de pago"
 }

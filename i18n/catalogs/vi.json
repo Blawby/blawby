@@ -789,5 +789,9 @@
   "shop.note": "Ghi chú cho người bán",
   "shop.order_confirmed": "Cảm ơn bạn, đơn hàng #{number} đã được xác nhận",
   "shop.order_shipped": "Đã gửi",
-  "shop.receipt": "Biên lai"
+  "shop.receipt": "Biên lai",
+  "email.subject.order_cancelled": "Đơn hàng #{number} đã bị hủy",
+  "order.cancelled_unpaid": "Thanh toán của bạn chưa hoàn tất nên đơn hàng đã bị hủy. Bạn không bị tính phí.",
+  "order.cancelled_refunded": "Đơn hàng của bạn đã bị hủy và được hoàn tiền toàn bộ. Thông tin hoàn tiền được gửi trong một email riêng.",
+  "order.payment_method": "Phương thức thanh toán"
 }

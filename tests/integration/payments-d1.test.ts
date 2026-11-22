@@ -38,7 +38,7 @@ import bookingReceiptRoute from '../../server/api/public/booking-requests/[conve
 import { createReplayableReservationCancelToken, hashReservationCancelToken } from '../../server/utils/reservation-cancel-token.ts'
 import { getStripe } from '../../server/utils/billing.ts'
 import { executeGuestThreadOperation } from '../../server/domain/guest-threads/operations.ts'
-import { approveRefundAuthorization, requirePayment } from '../../server/domain/payments/index.ts'
+import { approveRefundAuthorization, reconcileRefundState, requirePayment } from '../../server/domain/payments/index.ts'
 import { paymentTransactionDestination } from '../../server/domain/payments/earnings.ts'
 import { completePaymentReturn, reviewPayment, confirmPayment, paymentHandoff, preparePaymentReturn, requireClaimedPayment } from '../../server/domain/payments/intent.ts'
 import { reconcilePaymentIntent, processPaymentEvent } from '../../server/domain/payments/events.ts'
@@ -1927,6 +1927,9 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
   assert.equal(await db.prepare("SELECT kind FROM conversations WHERE id = ?").bind(paid!.conversation_id).first('kind'), 'contact')
   assert.equal(await db.prepare("SELECT count(*) n FROM tasks WHERE kind = 'order_fulfillment' AND subject_type = 'order' AND subject_id = ? AND status = 'open' AND due_at IS NOT NULL").bind(paid!.id).first('n'), 1)
   await events.drain(env, 'payment.captured')
+  // The receipt lists what was paid as Shopify's does: subtotal, the shipping rate, total.
+  const receipt = String(await db.prepare("SELECT email_json FROM guest_thread_deliveries WHERE email_json LIKE '%#1001 confirmed%'").first('email_json'))
+  assert.match(receipt, /Subtotal[\s\S]*\$90\.00[\s\S]*EMS · \$10\.00/u)
 
   // Ruby reds is sold out now: a new cart cannot take it.
   await assert.rejects(() => checkout('second-order', [{ product_variant_id: 'ruby', quantity: 1 }, { product_variant_id: 'celadon', quantity: 1 }]), error => error instanceof HTTPError && (error.data as { code: string }).code === 'OUT_OF_STOCK')
@@ -1971,6 +1974,23 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
   assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'ruby'").first('available'), 1)
   assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'celadon'").first('available'), -1)
   assert.equal(await db.prepare("SELECT status FROM tasks WHERE subject_type = 'order' AND subject_id = ?").bind(declinedOrder!.id).first('status'), 'cancelled')
+  // The buyer is told the order is off and was not charged, and the business that there is nothing to ship.
+  await events.drain(env, 'order.cancelled')
+  assert.equal(await db.prepare("SELECT count(*) n FROM guest_thread_deliveries WHERE email_json LIKE '%was cancelled%'").first('n'), 1)
+
+  // A paid order refunded in full before it ships is cancelled too, and what it took from stock comes back.
+  const refundedCheckout = await checkout('refunded-order')
+  statuses[refundedCheckout.payment_id] = 'requires_capture'
+  await processPaymentEvent(db, getStripe(env), authorized(refundedCheckout.payment_id), env)
+  await events.drain(env, 'payment.captured')
+  assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'ruby'").first('available'), 0)
+  const refundedPayment = await requirePayment(db, ORG, refundedCheckout.payment_id)
+  await reconcileRefundState(db, getStripe(env), refundedPayment, { id: `re_${refundedCheckout.payment_id}`, object: 'refund', amount: 10000, currency: 'usd', status: 'succeeded', payment_intent: `pi_${refundedCheckout.payment_id}`, reason: 'requested_by_customer', metadata: {} } as unknown as Stripe.Refund, env)
+  assert.equal(await db.prepare('SELECT status FROM orders WHERE id = ?').bind(refundedPayment.subject_id).first('status'), 'cancelled')
+  assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'ruby'").first('available'), 1)
+  assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'celadon'").first('available'), -1)
+  await events.drain(env, 'order.cancelled')
+  assert.equal(await db.prepare("SELECT count(*) n FROM guest_thread_deliveries WHERE email_json LIKE '%was cancelled%'").first('n'), 2)
 
   // Shipping it closes the task and tells the buyer in their conversation.
   const shipped = await fulfillOrder(db, env, { organizationId: ORG, orderId: paid!.id, actorId: 'host', carrier: 'Thailand Post EMS', tracking_number: 'EE123456789TH', tracking_url: null })

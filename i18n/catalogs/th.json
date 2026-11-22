@@ -789,5 +789,9 @@
   "shop.note": "ข้อความถึงผู้ขาย",
   "shop.order_confirmed": "ขอบคุณ คำสั่งซื้อ #{number} ได้รับการยืนยันแล้ว",
   "shop.order_shipped": "จัดส่งแล้ว",
-  "shop.receipt": "ใบเสร็จ"
+  "shop.receipt": "ใบเสร็จ",
+  "email.subject.order_cancelled": "คำสั่งซื้อ #{number} ถูกยกเลิกแล้ว",
+  "order.cancelled_unpaid": "การชำระเงินของคุณไม่สำเร็จ คำสั่งซื้อจึงถูกยกเลิก คุณไม่ได้ถูกเรียกเก็บเงิน",
+  "order.cancelled_refunded": "คำสั่งซื้อของคุณถูกยกเลิกและได้รับเงินคืนเต็มจำนวน รายละเอียดการคืนเงินจะส่งในอีเมลแยกต่างหาก",
+  "order.payment_method": "วิธีชำระเงิน"
 }

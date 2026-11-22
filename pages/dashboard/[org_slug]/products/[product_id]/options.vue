@@ -43,7 +43,7 @@
               <UFormField label="Photo"><USelect v-model="row.media_asset_id" :items="photoChoices" :aria-label="`${row.title} photo`" placeholder="None" class="w-full" /></UFormField>
               <UFormField :label="`Price (${p.currency})`"><UInput v-model="row.price" :aria-label="`${row.title} price`" inputmode="decimal" class="w-full" /></UFormField>
               <UFormField label="SKU"><UInput v-model="row.sku" :aria-label="`${row.title} SKU`" class="w-full" /></UFormField>
-              <UFormField v-if="tracked && stockLocationId" label="In stock"><UInput v-model="row.available" :aria-label="`${row.title} in stock`" inputmode="numeric" class="w-full" /></UFormField>
+              <UFormField v-if="tracked && stockLocationId && levelsReady" label="In stock"><UInput v-model="row.available" :aria-label="`${row.title} in stock`" inputmode="numeric" class="w-full" /></UFormField>
             </div>
           </li>
         </ul>
@@ -135,7 +135,9 @@ function reset() {
 }
 // Synchronous, so the draft flag is still set when the re-read product arrives.
 watch(product, () => { if (!keepDraft) reset() }, { immediate: true, flush: 'sync' })
-await loadLevels().catch(cause => { levelsError.value = getErrorMessage(cause, 'Stock could not be read') })
+// Read in the browser: the server's first render and the browser's must agree, and the counts change as orders arrive.
+const levelsReady = ref(false)
+onMounted(() => loadLevels().then(() => { levelsReady.value = true }, cause => { levelsError.value = getErrorMessage(cause, 'Stock could not be read') }))
 
 const photoChoices = computed(() => (p.photoAssets.value ?? []).map((asset, index) => ({ value: asset.asset_id, label: `Photo ${index + 1}` })))
 // Options whose values make more variants than allowed cannot be saved: the rows on screen would not match them.

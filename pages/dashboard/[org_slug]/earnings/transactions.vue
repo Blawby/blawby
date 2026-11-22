@@ -35,6 +35,8 @@
             </span>
             <span class="shrink-0 text-right">
               <span class="block text-base font-medium tabular-nums text-highlighted">{{ paymentMoney(row.captured_amount - row.refunded_amount, row.currency) }}</span>
+              <!-- What was kept is the line's amount; a refund says how much went back. -->
+              <span v-if="row.refunded_amount > 0" class="block text-xs tabular-nums text-muted">Refunded {{ paymentMoney(row.refunded_amount, row.currency) }}</span>
               <span class="block text-sm text-muted">{{ row.currency }}</span>
             </span>
             <UIcon name="i-lucide-chevron-right" class="size-5 shrink-0 text-muted" />

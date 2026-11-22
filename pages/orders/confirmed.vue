@@ -34,6 +34,7 @@
 </template>
 
 <script setup lang="ts">
+import { shippingAddressLines } from '~/shared/goods'
 // The buyer's own order, opened by the confirmation link that names and signs it.
 import BookingConfirmation from '~/components/booking/BookingConfirmation.vue'
 import { formatMinorAmount } from '~/shared/prices'
@@ -76,8 +77,7 @@ const money = (amount: number) => formatMinorAmount(amount, order.value!.currenc
 const receiptRows = computed(() => {
   const value = order.value
   if (!value) return []
-  const address = value.shipping_details ? [value.shipping_details.name, value.shipping_details.address.line1, value.shipping_details.address.line2,
-    [value.shipping_details.address.postal_code, value.shipping_details.address.city].filter(Boolean).join(' '), value.shipping_details.address.state, value.shipping_details.address.country].filter(Boolean).join(', ') : null
+  const address = value.shipping_details ? shippingAddressLines(value.shipping_details).join(', ') : null
   return [
     ...value.lines.map(line => ({ label: `${line.title}${line.variant_title ? ` · ${line.variant_title}` : ''} × ${line.quantity}`, value: money(line.unit_amount * line.quantity) })),
     ...(value.delivery_method === 'shipping' ? [{ label: `${t('shop.shipping')} · ${value.shipping_rate_name}`, value: money(value.shipping_amount) }] : []),

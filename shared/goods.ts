@@ -132,3 +132,10 @@ export const shippingDetailsSchema = z.object({
   }).strict(),
 }).strict()
 export type ShippingDetails = z.infer<typeof shippingDetailsSchema>
+
+/** A shipping address as people read it, one part per line; a state that only repeats the city is said once. */
+export function shippingAddressLines(details: Pick<ShippingDetails, 'name' | 'address'>): string[] {
+  const address = details.address
+  return [details.name, address.line1, address.line2, [address.postal_code, address.city].filter(Boolean).join(' '),
+    address.state && address.state !== address.city ? address.state : null, address.country].filter((line): line is string => Boolean(line))
+}

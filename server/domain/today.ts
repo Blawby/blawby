@@ -230,7 +230,8 @@ async function presentToday(
       const pickup = work.order_delivery_method === 'pickup'
       add({ id: `task:${work.id}`, noun: 'task', order: [1, work.due_at ?? ''], bookings: [], day: today(work.timezone),
         when: pickup ? 'Pickup' : shipBy, image_url: null, icon: 'i-lucide-package',
-        headline: pickup ? `Order #${work.order_number} for pickup by ${buyer}` : `Ship order #${work.order_number} to ${buyer}`, line: work.location_title,
+        // The place is said only where it matters: where a pickup is collected.
+        headline: pickup ? `Order #${work.order_number} for pickup by ${buyer}` : `Ship order #${work.order_number} to ${buyer}`, line: pickup ? work.location_title : null,
         action: { title: 'Open order', detail: pickup ? 'Mark as collected when it is picked up' : 'Mark as shipped with its tracking' },
         to: guestConversationPath(viewer.slug, work.order_conversation_id), draft: null })
       continue

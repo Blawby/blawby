@@ -74,7 +74,7 @@
                   <div
                     class="min-w-0 whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-base [overflow-wrap:anywhere]"
                     :class="[item.mine ? 'bg-inverted text-inverted' : 'bg-accented/70 text-highlighted', message.sending ? 'opacity-60' : '']"
-                  >{{ message.body }}</div>
+                  ><template v-for="(part, index) in linkParts(message.body)" :key="index"><a v-if="part.link" :href="part.text" target="_blank" rel="noopener noreferrer" class="underline">{{ part.text }}</a><template v-else>{{ part.text }}</template></template></div>
                   <!-- What can be done with one message sits behind ⋯ beside it, as on Airbnb, not under every bubble. -->
                   <UDropdownMenu v-if="messageActions(message, item.mine).length" :items="messageActions(message, item.mine)" :content="{ align: item.mine ? 'end' : 'start' }">
                     <UButton icon="i-lucide-ellipsis" color="neutral" variant="outline" square size="sm" class="shrink-0 rounded-full opacity-0 transition group-hover/message:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100" :aria-label="`Actions for ${message.author}'s message`" />
@@ -157,6 +157,11 @@
 
 <script setup lang="ts">
 import { isConversationEntriesPage, isConversationEntry, isConversationOperation } from './guest-thread-client'
+
+// A web link in a message opens: text is split around https:// addresses and rendered as text, never as HTML.
+function linkParts(text: string): Array<{ text: string; link: boolean }> {
+  return text.split(/(https:\/\/[^\s]+)/u).filter(Boolean).map(part => ({ text: part, link: part.startsWith('https://') }))
+}
 import BookingAgreement from '~/components/booking/BookingAgreement.vue'
 import DashboardListItemDialog from '~/components/dashboard/DashboardListItemDialog.vue'
 import type { ConversationEntriesPage, ConversationEntry, ConversationPage } from '~/shared/messages-contract'

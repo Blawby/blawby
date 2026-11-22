@@ -56,6 +56,7 @@ import type { MemberAlertMessage, NotificationMessage } from '~/server/notificat
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { buildOwnerThreadInboxUrl, buildBuyerRequestActivityUrl, dashboardOrigin, destinationUnavailable, getPlatformDomain, platformOrigin, resolveDashboardSlugs } from '~/server/utils/dashboard-notification-links'
 import { insightsPath, reviewEditorPath } from '~/server/utils/dashboard-links'
+import { shippingAddressLines } from '~/shared/goods'
 import { PLATFORM_MESSAGE_AUTHOR_KIND, isPlatformMessageAuthor, bookingConversationOrRecordPath } from '~/shared/messages-contract'
 import { createDeliveryReceipt, deliverReceiptEmail, getDeliveryById, isDeliverySent, recordDeliveryOutcome, type DeliverySubject } from '~/server/domain/guest-threads/deliveries'
 import { GUEST_NOTE_EVENT, appendMessage, findMessageByDedupeKey, getMessage, guestConversationMemberSql, parseMessagePayload, type MessageRow } from '~/server/domain/conversations'
@@ -2334,6 +2335,5 @@ export async function notifyOrderFulfilled(env: NotificationEnv, db: DbClient, o
 
 function orderAddressBlock(details: import('~/shared/goods').ShippingDetails | null): string | null {
   if (!details) return null
-  const address = details.address
-  return [details.name, address.line1, address.line2, [address.postal_code, address.city].filter(Boolean).join(' '), address.state, address.country].filter(Boolean).join('\n')
+  return shippingAddressLines(details).join('\n')
 }

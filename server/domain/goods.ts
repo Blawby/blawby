@@ -9,7 +9,7 @@ import { d1JsonArray, executeBatch, queryAll, queryFirst, type BatchQuery, type 
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { publishEvent } from '~/server/events'
 import { selectPrice, AmbiguousPriceError, type Price } from '~/shared/prices'
-import { addBusinessDays, countryCodeSchema, madeToOrderQuantity, rateApplies, shippingDetailsSchema, variantTitle, type DeliveryMethod, type InventoryPolicy, type ShippingDetails } from '~/shared/goods'
+import { addBusinessDays, countryCodeSchema, madeToOrderQuantity, rateApplies, shippingAddressLines, shippingDetailsSchema, variantTitle, type DeliveryMethod, type InventoryPolicy, type ShippingDetails } from '~/shared/goods'
 import { localDateAt, localDateTimeToInstant } from '~/utils/timezone'
 import { requireStripeCheckoutAcceptance, paymentsStripe, validatedSurchargeBasisPoints } from '~/server/utils/stripe-connect'
 import type { readCheckoutSeller } from '~/server/utils/billing-access'
@@ -550,7 +550,7 @@ export class OrderStockUnavailableError extends Error {
 /** The order's opening line in its conversation, as a booking's opens with what was booked. */
 export function orderOpening(order: OrderSnapshot): string {
   const items = order.lines.map(line => `${line.title}${line.variant_title ? ` (${line.variant_title})` : ''} × ${line.quantity}`).join(', ')
-  return `Order #${order.number}: ${items}. ${order.delivery_method === 'pickup' ? 'Pickup' : `Ship to ${order.shipping_details?.address.country ?? ''}`}`.trim()
+  return `Order #${order.number}: ${items}. ${order.delivery_method === 'pickup' ? 'Pickup' : `Ship to ${order.shipping_details ? shippingAddressLines(order.shipping_details).slice(1).join(', ') : ''}`}`.trim()
 }
 
 /**

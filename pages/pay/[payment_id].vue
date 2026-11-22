@@ -175,6 +175,7 @@
 </template>
 
 <script setup lang="ts">
+import { shippingAddressLines } from '~/shared/goods'
 import { useMounted } from '@vueuse/core'
 import { loadStripe, type Stripe, type StripeElements, type StripePaymentElement } from '@stripe/stripe-js'
 import { hasSiteProductPage, presentationForProduct } from '~/utils/product-presentation'
@@ -290,8 +291,7 @@ const termsPath = computed(() => policySummary.value ? '#booking-policy' : hando
 const shipTo = computed(() => {
   const details = handoff.value?.order?.shipping_details
   if (!details) return ''
-  const address = details.address
-  return [details.name, address.line1, address.line2, [address.postal_code, address.city].filter(Boolean).join(' '), address.state, address.country].filter(Boolean).join('\n')
+  return shippingAddressLines(details).join('\n')
 })
 // An order is bought under the site's terms of service, not a booking's terms.
 const termsLabel = computed(() => handoff.value?.order ? t('site_pages.terms') : t('payment.booking_terms'))

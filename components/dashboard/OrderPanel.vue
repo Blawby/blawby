@@ -42,7 +42,7 @@
               <UInput v-model="tracking" placeholder="Tracking number" aria-label="Tracking number" class="w-full" @update:model-value="fieldErrors.tracking_number = undefined" />
             </UFormField>
             <UFormField :error="fieldErrors.tracking_url">
-              <UInput v-model="trackingUrl" type="url" pattern="https://.+" title="Enter a tracking link that starts with https://" placeholder="Tracking link (optional)" aria-label="Tracking link" class="w-full" @update:model-value="fieldErrors.tracking_url = undefined" />
+              <UInput v-model="trackingUrl" inputmode="url" placeholder="Tracking link (optional)" aria-label="Tracking link" class="w-full" @update:model-value="fieldErrors.tracking_url = undefined" />
             </UFormField>
           </template>
           <UButton type="submit" size="xl" block :loading="saving" :disabled="order.delivery_method === 'shipping' && !carrier.trim()">
@@ -121,6 +121,11 @@ const saving = ref(false)
 const fieldErrors = reactive<Partial<Record<'carrier' | 'tracking_number' | 'tracking_url', string>>>({})
 async function fulfil() {
   if (!order.value) return
+  // Checked here in the page's own words; the browser's "Please enter a URL." says nothing about https.
+  if (trackingUrl.value.trim() && !/^https:\/\/[^\s/]+\.[^\s]+$/u.test(trackingUrl.value.trim())) {
+    fieldErrors.tracking_url = 'Enter a tracking link that starts with https://'
+    return
+  }
   saving.value = true
   error.value = ''
   try {

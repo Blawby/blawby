@@ -121,7 +121,8 @@ export async function notifyPaymentFinancialEvent(db: DbClient, stripe: Stripe, 
   const event: PaymentNotificationEvent = input.kind === 'dispute_needs_response' ? { ...details, kind: input.kind, responseDueBy: input.responseDueBy } : { ...details, kind: input.kind }
   const ownerMessage = deepLink ? ownerPaymentMessage({ ...event, action: { url: deepLink, label: actionLabel } }) : undefined
   let sourceEntryId: string | null = null
-  if (threadId && ownerMessage) {
+  // An order's conversation opens with the order itself; Stripe's "Congratulations" capture notice would only repeat it there.
+  if (threadId && ownerMessage && !(payment.subject_type === 'order' && input.kind === 'payment_captured')) {
     const message = await appendMessage(db, {
       conversationId: threadId, authorKind: PLATFORM_MESSAGE_AUTHOR_KIND, authorUserId: null,
       eventName: `payment.${input.kind}`,

@@ -9,7 +9,7 @@ import { d1JsonArray, executeBatch, queryAll, queryFirst, type BatchQuery, type 
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { publishEvent } from '~/server/events'
 import { selectPrice, AmbiguousPriceError, type Price } from '~/shared/prices'
-import { addBusinessDays, countryCodeSchema, madeToOrderQuantity, rateApplies, shippingAddressLines, shippingDetailsSchema, variantTitle, type DeliveryMethod, type InventoryPolicy, type ShippingDetails } from '~/shared/goods'
+import { addBusinessDays, countryCodeSchema, madeToOrderQuantity, postalAddressText, rateApplies, shippingAddressLines, shippingDetailsSchema, variantTitle, type DeliveryMethod, type InventoryPolicy, type ShippingDetails } from '~/shared/goods'
 import { localDateAt, localDateTimeToInstant } from '~/utils/timezone'
 import { requireStripeCheckoutAcceptance, paymentsStripe, validatedSurchargeBasisPoints } from '~/server/utils/stripe-connect'
 import type { readCheckoutSeller } from '~/server/utils/billing-access'
@@ -234,7 +234,7 @@ export interface OrderQuote {
   /** Null while the buyer has not chosen how it reaches them: the cart is priced at the first location offering it. */
   delivery_method: DeliveryMethod | null
   /** Where the buyer may collect these items for free. */
-  pickup_locations: Array<{ id: string; title: string }>
+  pickup_locations: Array<{ id: string; title: string; address: string | null }>
   /** The countries a location offering these items ships to. */
   ship_to_countries: string[]
   /**
@@ -389,7 +389,7 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
   return { currency, location: { id: location.id, title: location.title, timezone: location.timezone, address: stripeAddress(location.address) }, lines: quoted, subtotal, weight_grams: weight,
     delivery_method: delivery === null ? null : delivery.method as DeliveryMethod,
     ship_to_countries: [...shipToCountries].sort(),
-    pickup_locations: sellable.filter(({ candidate }) => candidate.pickup_enabled === 1).map(({ candidate }) => ({ id: candidate.id, title: candidate.title })),
+    pickup_locations: sellable.filter(({ candidate }) => candidate.pickup_enabled === 1).map(({ candidate }) => ({ id: candidate.id, title: candidate.title, address: postalAddressText(stripeAddress(candidate.address)) })),
     shipping_rates: shippingRates, ship_by: shipBy, ship_dates: shipDates }
 }
 
@@ -687,6 +687,8 @@ export function releaseOrderQuery(payment: Pick<Payment, 'organization_id' | 'su
 export interface OrderLineRow { id: string; product_id: string; product_variant_id: string; title: string; variant_title: string | null; sku: string | null; quantity: number; unit_amount: number; made_to_order_quantity: number; stock_taken: number }
 export interface OrderRecord {
   id: string; organization_id: string; organization_name: string | null; number: number; status: string; conversation_id: string | null; location_id: string; location_title: string
+  /** Where a pickup is collected, as the buyer reads it: the location's stored postal address. */
+  location_address: string | null
   delivery_method: DeliveryMethod; shipping_details: ShippingDetails | null; shipping_rate_name: string | null; shipping_amount: number
   currency: string; subtotal_amount: number; ship_by: string | null; carrier: string | null; tracking_number: string | null; tracking_url: string | null
   fulfilled_at: string | null; paid_at: string | null; cancelled_at: string | null; created_at: string
@@ -696,7 +698,7 @@ export interface OrderRecord {
 }
 
 export function orderRecordQuery(organizationId: string, where: { orderId: string } | { conversationId: string } | { open: boolean }): BatchQuery {
-  return { query: `SELECT o.*, l.title AS location_title, (SELECT name FROM organization WHERE id = o.organization_id) AS organization_name,
+  return { query: `SELECT o.*, l.title AS location_title, l.address AS location_address, (SELECT name FROM organization WHERE id = o.organization_id) AS organization_name,
       (SELECT json_object('id', p.id, 'amount', p.amount, 'captured_amount', p.captured_amount, 'refunded_amount', p.refunded_amount, 'tax_amount', p.tax_amount,
         'surcharge_amount', p.surcharge_amount, 'receipt_url', p.receipt_url) FROM payments p WHERE p.organization_id = o.organization_id AND p.subject_type = 'order' AND p.subject_id = o.id) AS payment,
       (SELECT json_extract(c.payload_json, '$.guest') FROM conversations c WHERE c.organization_id = o.organization_id AND c.id = o.conversation_id) AS guest,
@@ -713,7 +715,7 @@ export function orderRecordQuery(organizationId: string, where: { orderId: strin
 export function orderRecordFromRow(row: unknown): OrderRecord | null {
   if (!isRecord(row)) return null
   const json = (value: unknown) => typeof value === 'string' ? JSON.parse(value) as unknown : null
-  return { ...(row as unknown as OrderRecord), shipping_details: json(row.shipping_details) as ShippingDetails | null,
+  return { ...(row as unknown as OrderRecord), location_address: postalAddressText(stripeAddress(typeof row.location_address === 'string' ? row.location_address : null)), shipping_details: json(row.shipping_details) as ShippingDetails | null,
     payment: json(row.payment) as OrderRecord['payment'], guest: json(row.guest) as OrderRecord['guest'], lines: (json(row.lines) ?? []) as OrderLineRow[] }
 }
 

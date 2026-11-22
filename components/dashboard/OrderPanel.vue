@@ -29,7 +29,7 @@
           <li v-if="order.payment?.refunded_amount" class="flex justify-between gap-4 font-medium text-highlighted"><span>Refunded</span><span>{{ money(order.payment.refunded_amount) }}</span></li>
         </ul>
         <p v-if="address" class="whitespace-pre-line text-sm"><span class="font-medium text-highlighted">Ship to</span>{{ '\n' + address }}</p>
-        <p v-else class="text-sm"><span class="font-medium text-highlighted">Pickup at</span> {{ order.location_title }}</p>
+        <p v-else class="text-sm"><span class="font-medium text-highlighted">Pickup at</span> {{ order.location_title }}<template v-if="order.location_address"><br><span class="text-muted">{{ order.location_address }}</span></template></p>
         <p v-if="order.fulfilled_at && order.delivery_method === 'shipping'" class="text-sm text-muted">
           {{ order.carrier }}<template v-if="order.tracking_number"> · <a v-if="order.tracking_url" :href="order.tracking_url" target="_blank" rel="noopener noreferrer" class="font-medium text-highlighted underline">{{ order.tracking_number }}</a><template v-else>{{ order.tracking_number }}</template></template>
         </p>
@@ -69,7 +69,7 @@ import { getErrorMessage } from '~/utils/errors'
 import { ApiClientError, isRecord } from '~/utils/api-clients'
 
 interface Order {
-  id: string; number: number; status: string; location_title: string; delivery_method: 'shipping' | 'pickup'
+  id: string; number: number; status: string; location_title: string; location_address: string | null; delivery_method: 'shipping' | 'pickup'
   shipping_details: { name: string; phone: string | null; address: { line1: string; line2: string | null; city: string | null; state: string | null; postal_code: string | null; country: string } } | null
   shipping_rate_name: string | null; shipping_amount: number; currency: string; subtotal_amount: number; ship_by: string | null
   carrier: string | null; tracking_number: string | null; tracking_url: string | null; fulfilled_at: string | null

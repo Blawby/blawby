@@ -2208,7 +2208,7 @@ export async function notifyOrderPlaced(env: NotificationEnv, db: DbClient, orga
   const shipBy = (locale: string) => order.ship_by ? formatCalendarDate(order.ship_by, locale, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : null
   const ownerMessage = orderPlacedMessage({
     organizationName: studio, orderNumber: order.number, guestName: guestContact.name, guestEmail: guestContact.email, guestPhone: guestContact.phone,
-    items, total: total('en-US'), shipTo, pickupAt: order.delivery_method === 'pickup' ? order.location_title : null, shippingRate: order.shipping_rate_name,
+    items, total: total('en-US'), shipTo, pickupAt: order.delivery_method === 'pickup' ? [order.location_title, order.location_address].filter(Boolean).join('\n') : null, shippingRate: order.shipping_rate_name,
     shipBy: shipBy('en-US'), madeToOrder: order.lines.some(line => line.made_to_order_quantity > 0), notes, heroImageUrl: hero?.imageUrl ?? null, replyUrl: inboxUrl ?? '',
   })
   const money = (amount: number) => formatMinorAmount(amount, order.currency, guest.locale)
@@ -2221,7 +2221,7 @@ export async function notifyOrderPlaced(env: NotificationEnv, db: DbClient, orga
   }
   const guestMessage = guestOrderConfirmedMessage({
     charges, locale: guest.locale, guestName: guestContact.name, organizationName: guest.organizationName, organizationLogoUrl: logoUrl, orderNumber: order.number, items,
-    heroImageUrl: hero?.imageUrl ?? null, total: total(guest.locale), shipTo, pickupAt: order.delivery_method === 'pickup' ? order.location_title : null,
+    heroImageUrl: hero?.imageUrl ?? null, total: total(guest.locale), shipTo, pickupAt: order.delivery_method === 'pickup' ? [order.location_title, order.location_address].filter(Boolean).join('\n') : null,
     shipBy: shipBy(guest.locale), manageUrl, contactPhone: contact.contactPhone ?? null, contactEmail: contact.contactEmail ?? null,
   })
   const payload = { order_id: order.id, order_number: String(order.number), guest_name: guestContact.name, email: guestContact.email, organization_name: studio, deep_link: inboxUrl ?? '' }
@@ -2320,7 +2320,7 @@ export async function notifyOrderFulfilled(env: NotificationEnv, db: DbClient, o
   const message = guestOrderShippedMessage({
     locale: guest.locale, guestName: guestContact.name, organizationName: guest.organizationName, organizationLogoUrl: logoUrl, orderNumber: order.number,
     items: order.lines.map(line => `${line.title}${line.variant_title ? ` (${line.variant_title})` : ''} × ${line.quantity}`), heroImageUrl: hero?.imageUrl ?? null,
-    shipTo: order.delivery_method === 'shipping' ? orderAddressBlock(order.shipping_details) : null, pickupAt: order.delivery_method === 'pickup' ? order.location_title : null,
+    shipTo: order.delivery_method === 'shipping' ? orderAddressBlock(order.shipping_details) : null, pickupAt: order.delivery_method === 'pickup' ? [order.location_title, order.location_address].filter(Boolean).join('\n') : null,
     carrier: order.carrier, trackingNumber: order.tracking_number, trackingUrl: order.tracking_url, manageUrl,
     contactPhone: contact.contactPhone ?? null, contactEmail: contact.contactEmail ?? null,
   })

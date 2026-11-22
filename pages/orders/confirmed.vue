@@ -47,7 +47,7 @@ useResponseHeader('cache-control').value = 'private, no-store'
 
 interface BuyerOrder {
   number: number; status: string; ship_by: string | null; fulfilled_at: string | null; tracking_url: string | null; receipt_url: string | null; currency: string
-  delivery_method: 'shipping' | 'pickup'; location_title: string; shipping_rate_name: string | null; shipping_amount: number; total: number | null; carrier: string | null; tracking_number: string | null
+  delivery_method: 'shipping' | 'pickup'; location_title: string; location_address?: string | null; shipping_rate_name: string | null; shipping_amount: number; total: number | null; carrier: string | null; tracking_number: string | null
   shipping_details: { name: string; address: { line1: string; line2: string | null; city: string | null; state: string | null; postal_code: string | null; country: string } } | null
   guest: { email: string | null } | null
   lines: Array<{ title: string; variant_title: string | null; quantity: number; unit_amount: number }>
@@ -82,7 +82,7 @@ const receiptRows = computed(() => {
     ...value.lines.map(line => ({ label: `${line.title}${line.variant_title ? ` · ${line.variant_title}` : ''} × ${line.quantity}`, value: money(line.unit_amount * line.quantity) })),
     ...(value.delivery_method === 'shipping' ? [{ label: `${t('shop.shipping')} · ${value.shipping_rate_name}`, value: money(value.shipping_amount) }] : []),
     ...(value.total !== null ? [{ label: t('payment.paid'), value: money(value.total) }] : []),
-    ...(address ? [{ label: t('order.ship_to'), value: address, wide: true }] : [{ label: t('order.pickup_at'), value: value.location_title }]),
+    ...(address ? [{ label: t('order.ship_to'), value: address, wide: true }] : [{ label: t('order.pickup_at'), value: [value.location_title, value.location_address].filter(Boolean).join(', ') }]),
     ...(value.carrier ? [{ label: t('order.carrier'), value: [value.carrier, value.tracking_number].filter(Boolean).join(' · ') }] : []),
   ]
 })

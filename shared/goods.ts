@@ -133,6 +133,13 @@ export const shippingDetailsSchema = z.object({
 }).strict()
 export type ShippingDetails = z.infer<typeof shippingDetailsSchema>
 
+/** A business location's postal address on one line, as a pickup point is shown to its buyer (Shopify's local pickup prints it). */
+export function postalAddressText(address: { line1: string; line2: string | null; city: string | null; state: string | null; postal_code: string | null; country: string } | null): string | null {
+  if (!address) return null
+  return [address.line1, address.line2, [address.postal_code, address.city].filter(Boolean).join(' '), address.state && address.state !== address.city ? address.state : null, address.country]
+    .filter(Boolean).join(', ')
+}
+
 /** A shipping address as people read it, one part per line; a state that only repeats the city is said once. */
 export function shippingAddressLines(details: Pick<ShippingDetails, 'name' | 'address'>): string[] {
   const address = details.address

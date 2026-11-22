@@ -306,7 +306,7 @@ const priceLines = computed(() => {
     ...value.order.lines.map(line => ({ label: `${line.title}${line.variant_title ? ` · ${line.variant_title}` : ''} × ${line.quantity}`, amount: money(line.amount) })),
     ...(value.order.shipping ? [{ label: `${t('shop.shipping')} · ${value.order.shipping.name}`, amount: money(value.order.shipping.amount) }] : []),
     // Pickup is a line of its own, free, and says where.
-    ...(value.order.delivery_method === 'pickup' ? [{ label: value.order.pickup_location_title ? t('shop.pickup_free', { place: value.order.pickup_location_title }) : t('shop.pickup'), amount: t('shop.free') }] : []),
+    ...(value.order.delivery_method === 'pickup' ? [{ label: [value.order.pickup_location_title ? t('shop.pickup_free', { place: value.order.pickup_location_title }) : t('shop.pickup'), value.order.pickup_location_address].filter(Boolean).join(' · '), amount: t('shop.free') }] : []),
   ]
   if (value.quantity === 1) return [{ label: value.title, amount: money(value.subtotal) }]
   return [{ label: t('payment.unit_line', { price: money(value.unit_amount), count: guests.value || value.quantity }), amount: money(value.subtotal) }]

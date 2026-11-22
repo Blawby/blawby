@@ -794,5 +794,11 @@
   "order.cancelled_unpaid": "Votre paiement n’a pas abouti, votre commande a donc été annulée. Aucun montant ne vous a été débité.",
   "order.cancelled_refunded": "Votre commande a été annulée et intégralement remboursée. Le remboursement fait l’objet d’un e-mail distinct.",
   "order.payment_method": "Moyen de paiement",
-  "shop.order_collected": "Retiré"
+  "shop.order_collected": "Retiré",
+  "shop.continue_shopping": "Continuer vos achats",
+  "shop.recipient_name": "Nom du destinataire",
+  "shop.arrives_in": "Arrive {days} jours ouvrés après l’expédition",
+  "shop.still_needed": "Il manque : {fields}",
+  "shop.partly_made_to_order": "{stock} en stock, {made} fabriqué(s) sur commande",
+  "shop.free": "Gratuit"
 }

@@ -794,5 +794,11 @@
   "order.cancelled_unpaid": "การชำระเงินของคุณไม่สำเร็จ คำสั่งซื้อจึงถูกยกเลิก คุณไม่ได้ถูกเรียกเก็บเงิน",
   "order.cancelled_refunded": "คำสั่งซื้อของคุณถูกยกเลิกและได้รับเงินคืนเต็มจำนวน รายละเอียดการคืนเงินจะส่งในอีเมลแยกต่างหาก",
   "order.payment_method": "วิธีชำระเงิน",
-  "shop.order_collected": "รับสินค้าแล้ว"
+  "shop.order_collected": "รับสินค้าแล้ว",
+  "shop.continue_shopping": "เลือกซื้อสินค้าต่อ",
+  "shop.recipient_name": "ชื่อผู้รับ",
+  "shop.arrives_in": "ได้รับภายใน {days} วันทำการหลังจัดส่ง",
+  "shop.still_needed": "ยังต้องกรอก: {fields}",
+  "shop.partly_made_to_order": "มีในสต็อก {stock} ชิ้น ผลิตตามสั่ง {made} ชิ้น",
+  "shop.free": "ฟรี"
 }

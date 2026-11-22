@@ -50,6 +50,11 @@
             </div>
             <UButton v-if="offeringPath && !handoff.approved_stay_path && handoff.state === 'open' && !paid && !outcome" color="neutral" variant="soft" size="sm" :label="t('payment.change')" :loading="working" :disabled="working || completing" @click="changeStay('dates')" />
           </div>
+          <!-- An order states when it leaves, as the cart did. -->
+          <div v-else-if="handoff.order?.ship_by" class="border-t border-default pt-5" data-payment-ship-by>
+            <h3 class="text-sm font-semibold text-highlighted">{{ t('order.ships_by') }}</h3>
+            <p class="mt-1 text-sm text-default">{{ formatCalendarDate(handoff.order.ship_by, locale, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
+          </div>
           <div v-else-if="handoff.starts_at && handoff.ends_at && handoff.timezone" class="flex items-start justify-between gap-4 border-t border-default pt-5" data-payment-time>
             <div>
               <h3 class="text-sm font-semibold text-highlighted">{{ t('payment.date') }}</h3>
@@ -143,8 +148,8 @@
 
             <i18n-t :keypath="laterPayments.length ? 'payment.monthly_agreement' : 'payment.agreement'" tag="p" scope="global" class="text-xs text-muted leading-relaxed">
               <template #terms>
-                <NuxtLink v-if="termsPath" :to="termsPath" class="font-semibold text-default underline">{{ t('payment.booking_terms') }}</NuxtLink>
-                <template v-else>{{ t('payment.booking_terms') }}</template>
+                <NuxtLink v-if="termsPath" :to="termsPath" class="font-semibold text-default underline">{{ termsLabel }}</NuxtLink>
+                <template v-else>{{ termsLabel }}</template>
               </template>
             </i18n-t>
             <UButton
@@ -275,7 +280,9 @@ const offeringPath = computed(() => {
   if (!hasSiteProductPage(value.kind) && !value.location_slug) return ''
   return localePath(presentationForProduct({ kind: value.kind as ProductKind }).productPath(value.location_slug ?? '', value.product_slug))
 })
-const termsPath = computed(() => policySummary.value ? '#booking-policy' : '')
+const termsPath = computed(() => policySummary.value ? '#booking-policy' : handoff.value?.order ? localePath('/policies/terms') : '')
+// An order is bought under the site's terms of service, not a booking's terms.
+const termsLabel = computed(() => handoff.value?.order ? t('site_pages.terms') : t('payment.booking_terms'))
 
 /** How the total adds up, the way Airbnb's receipt reads: "$120.00 × 2 nights", "$95.00 × 1 guest". */
 const priceLines = computed(() => {
@@ -355,7 +362,9 @@ async function reviewMethod() {
     const submitted = await elements.submit()
     if (submitted.error) throw new Error(submitted.error.message ?? t('payment.unavailable'))
     // Stripe can hide contact fields for cards. Include the booking contact when creating the method so Radar receives it before authorization.
-    const billingDetails = handoff.value?.billing_details
+    // The contact only: the billing address is what the buyer gave the Payment Element, which started from the shipping country.
+    const contact = handoff.value?.billing_details
+    const billingDetails = contact ? { name: contact.name, email: contact.email, ...(contact.phone ? { phone: contact.phone } : {}) } : null
     const created = await stripe.createPaymentMethod({
       elements,
       ...(billingDetails ? { params: { billing_details: billingDetails } } : {}),

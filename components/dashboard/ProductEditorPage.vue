@@ -141,7 +141,7 @@
             Add your first photo
           </span>
         </template>
-        <span v-else-if="(dishEditor || experienceEditor || legalEditor) && item.icon" class="flex items-start gap-3">
+        <span v-else-if="!stayEditor && item.icon" class="flex items-start gap-3">
           <UIcon :name="item.icon" class="size-6 shrink-0" aria-hidden="true" />
           <span class="whitespace-pre-line break-words">{{ item.summary }}</span>
         </span>
@@ -156,7 +156,7 @@
           <span class="block">{{ item.summary }}{{ product?.stay?.cancellation_policy ? ' for short-term stays' : '' }}</span>
           <span v-if="product?.stay?.long_term_cancellation_policy" class="block">{{ STAY_LONG_TERM_CANCELLATION_POLICIES[product.stay.long_term_cancellation_policy].label }} for long-term stays</span>
         </span>
-        <span v-else :class="arrivalTab || dishEditor || experienceEditor || legalEditor ? 'line-clamp-4 whitespace-pre-line break-words' : item.id === 'description' ? 'line-clamp-4' : undefined">{{ item.summary }}</span>
+        <span v-else :class="arrivalTab || !stayEditor ? 'line-clamp-4 whitespace-pre-line break-words' : item.id === 'description' ? 'line-clamp-4' : undefined">{{ item.summary }}</span>
       </template>
     </EditorNavigationList>
     <UDropdownMenu v-if="additionalDetails.length && !loadError" :items="additionalDetails">
@@ -640,7 +640,7 @@ const dishEditor = computed(() => product.value?.kind === 'dish')
 const experienceEditor = computed(() => product.value?.kind === 'experience')
 const legalEditor = computed(() => product.value?.kind === 'service')
 const bookingCopy = computed(() => getVerticalCopy((product.value?.kind ?? form.kind) === 'service' ? 'service' : 'experience', 'en'))
-const summaryCards = computed(() => stayEditor.value || dishEditor.value || experienceEditor.value || legalEditor.value)
+const summaryCards = computed(() => ['stay', 'dish', 'experience', 'service', 'item'].includes(product.value?.kind ?? ''))
 const arrivalTab = computed(() => stayEditor.value && (route.query.guide === 'arrival' || (STAY_ARRIVAL_SECTIONS as readonly string[]).includes(detailKey.value ?? '')))
 async function changeStayTab(value: string | number) {
   if (saving.value || value === (arrivalTab.value ? 'arrival' : 'space')) return
@@ -722,7 +722,7 @@ async function saveArrival(fields: readonly StayArrivalField[], target?: string)
   }
 }
 const runtimeConfig = useRuntimeConfig()
-const previewTitle = computed(() => arrivalTab.value ? 'Arrival guide' : dishEditor.value ? 'Dish preview' : experienceEditor.value ? 'Experience preview' : legalEditor.value ? 'Legal Services preview' : 'Listing preview')
+const previewTitle = computed(() => arrivalTab.value ? 'Arrival guide' : stayEditor.value ? 'Listing preview' : legalEditor.value ? 'Legal Services preview' : `${itemLabel.value} preview`)
 const previewLocationId = computed(() => typeof route.query.preview_location_id === 'string' ? route.query.preview_location_id : locationId.value)
 const previewPublicUrl = computed(() => dishEditor.value ? previewLocationId.value ? loaded.value?.publicUrls[previewLocationId.value] ?? null : null : loaded.value?.publicUrl ?? null)
 const previewNeedsLocation = computed(() => canPreview.value && dishEditor.value && !previewLocationId.value)

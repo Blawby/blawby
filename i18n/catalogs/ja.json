@@ -794,5 +794,11 @@
   "order.cancelled_unpaid": "お支払いが完了しなかったため、ご注文はキャンセルされました。料金は請求されていません。",
   "order.cancelled_refunded": "ご注文はキャンセルされ、全額返金されました。返金については別のメールでお知らせします。",
   "order.payment_method": "お支払い方法",
-  "shop.order_collected": "受け取り済み"
+  "shop.order_collected": "受け取り済み",
+  "shop.continue_shopping": "買い物を続ける",
+  "shop.recipient_name": "受取人名",
+  "shop.arrives_in": "発送後{days}営業日でお届け",
+  "shop.still_needed": "未入力：{fields}",
+  "shop.partly_made_to_order": "在庫{stock}点、受注制作{made}点",
+  "shop.free": "無料"
 }

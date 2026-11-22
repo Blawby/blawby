@@ -794,5 +794,11 @@
   "order.cancelled_unpaid": "Thanh toán của bạn chưa hoàn tất nên đơn hàng đã bị hủy. Bạn không bị tính phí.",
   "order.cancelled_refunded": "Đơn hàng của bạn đã bị hủy và được hoàn tiền toàn bộ. Thông tin hoàn tiền được gửi trong một email riêng.",
   "order.payment_method": "Phương thức thanh toán",
-  "shop.order_collected": "Đã nhận hàng"
+  "shop.order_collected": "Đã nhận hàng",
+  "shop.continue_shopping": "Tiếp tục mua sắm",
+  "shop.recipient_name": "Tên người nhận",
+  "shop.arrives_in": "Nhận hàng sau {days} ngày làm việc kể từ khi gửi",
+  "shop.still_needed": "Còn thiếu: {fields}",
+  "shop.partly_made_to_order": "{stock} có sẵn, {made} làm theo đơn",
+  "shop.free": "Miễn phí"
 }

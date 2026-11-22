@@ -69,6 +69,10 @@ const stockLine = computed(() => {
   const current = variant.value
   if (!current) return ''
   const days = (value: number | null) => value === null ? null : t('shop.ships_in', { days: value })
+  // Asking for more than is on hand of a make-to-order item: the rest is made, and the order ships on the make-to-order time.
+  if (available.value !== null && available.value > 0 && current.inventory_policy === 'continue' && quantity.value > available.value) {
+    return [t('shop.partly_made_to_order', { stock: available.value, made: quantity.value - available.value }), days(props.product.made_to_order_days)].filter(Boolean).join(' · ')
+  }
   if (available.value !== null && available.value > 0) return [t('shop.in_stock', { count: available.value }), days(props.product.processing_days)].filter(Boolean).join(' · ')
   if (current.inventory_tracked && current.inventory_policy === 'continue') return [t('shop.made_to_order'), days(props.product.made_to_order_days)].filter(Boolean).join(' · ')
   if (current.inventory_tracked) return t('shop.sold_out')

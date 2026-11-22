@@ -794,5 +794,11 @@
   "order.cancelled_unpaid": "Tu pago no se completó, así que tu pedido se ha cancelado. No se te ha cobrado nada.",
   "order.cancelled_refunded": "Tu pedido se ha cancelado y reembolsado en su totalidad. Recibirás el reembolso en un correo aparte.",
   "order.payment_method": "Método de pago",
-  "shop.order_collected": "Recogido"
+  "shop.order_collected": "Recogido",
+  "shop.continue_shopping": "Seguir comprando",
+  "shop.recipient_name": "Nombre del destinatario",
+  "shop.arrives_in": "Llega {days} días hábiles después del envío",
+  "shop.still_needed": "Falta: {fields}",
+  "shop.partly_made_to_order": "{stock} en stock, {made} por encargo",
+  "shop.free": "Gratis"
 }

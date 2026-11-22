@@ -794,5 +794,11 @@
   "order.cancelled_unpaid": "Ihre Zahlung wurde nicht abgeschlossen, daher wurde Ihre Bestellung storniert. Ihnen wurde nichts berechnet.",
   "order.cancelled_refunded": "Ihre Bestellung wurde storniert und vollständig erstattet. Die Erstattung erhalten Sie in einer separaten E-Mail.",
   "order.payment_method": "Zahlungsmethode",
-  "shop.order_collected": "Abgeholt"
+  "shop.order_collected": "Abgeholt",
+  "shop.continue_shopping": "Weiter einkaufen",
+  "shop.recipient_name": "Name des Empfängers",
+  "shop.arrives_in": "Ankunft {days} Werktage nach dem Versand",
+  "shop.still_needed": "Noch erforderlich: {fields}",
+  "shop.partly_made_to_order": "{stock} auf Lager, {made} auf Bestellung gefertigt",
+  "shop.free": "Kostenlos"
 }

@@ -198,7 +198,9 @@ function handoffSubject(payment: CheckoutPayment, snapshot: ReturnType<typeof sn
     party_size: heldSlot ? payment.hold_quantity : null,
     // What an order buys and where it goes, as the buyer reviews it before paying.
     order: snapshot.order ? { number: snapshot.order.number, lines: snapshot.order.lines, shipping: snapshot.order.shipping, shipping_details: snapshot.order.shipping_details, delivery_method: snapshot.order.delivery_method, ship_by: snapshot.order.ship_by } : null,
-    billing_details: guest ? { name: guest.name, email: guest.email, ...(guest.phone ? { phone: guest.phone } : {}) } : null,
+    // An order sent abroad starts the card's billing country at the shipping country, not Stripe's own guess.
+    billing_details: guest ? { name: guest.name, email: guest.email, ...(guest.phone ? { phone: guest.phone } : {}),
+      ...(snapshot.order?.shipping_details ? { address: { country: snapshot.order.shipping_details.address.country } } : {}) } : null,
     // Where the offering's page is, so the buyer can read its full terms or change what they picked.
     product_slug: payment.product_slug, location_slug: payment.location_slug,
     free_cancellation_until: freeUntil && new Date().toISOString() <= freeUntil ? freeUntil : null,

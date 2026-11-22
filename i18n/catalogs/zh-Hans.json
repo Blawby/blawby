@@ -794,5 +794,11 @@
   "order.cancelled_unpaid": "您的付款未完成，因此订单已取消。您未被扣款。",
   "order.cancelled_refunded": "您的订单已取消并已全额退款。退款信息将另行通过邮件发送。",
   "order.payment_method": "付款方式",
-  "shop.order_collected": "已取货"
+  "shop.order_collected": "已取货",
+  "shop.continue_shopping": "继续购物",
+  "shop.recipient_name": "收件人姓名",
+  "shop.arrives_in": "发货后 {days} 个工作日送达",
+  "shop.still_needed": "还需填写：{fields}",
+  "shop.partly_made_to_order": "现货 {stock} 件，定制 {made} 件",
+  "shop.free": "免费"
 }

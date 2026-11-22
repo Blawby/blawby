@@ -794,5 +794,11 @@
   "order.cancelled_unpaid": "您的付款未完成，因此訂單已取消。您未被扣款。",
   "order.cancelled_refunded": "您的訂單已取消並已全額退款。退款資訊將另行以電子郵件寄送。",
   "order.payment_method": "付款方式",
-  "shop.order_collected": "已取貨"
+  "shop.order_collected": "已取貨",
+  "shop.continue_shopping": "繼續購物",
+  "shop.recipient_name": "收件人姓名",
+  "shop.arrives_in": "出貨後 {days} 個工作天送達",
+  "shop.still_needed": "尚需填寫：{fields}",
+  "shop.partly_made_to_order": "現貨 {stock} 件，訂製 {made} 件",
+  "shop.free": "免費"
 }

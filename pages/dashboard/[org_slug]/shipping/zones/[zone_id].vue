@@ -7,25 +7,26 @@
     :saving="saving" :disabled="saving || Boolean(invalid)" :error="error || (touched && invalid) || ''" save-label="Save" @save="save" @cancel="reset">
     <!-- What is missing shows once the owner starts typing, not on a form they have only opened. -->
     <div class="space-y-6" @input="touched = true">
-      <UFormField label="Zone name"><UInput v-model="form.name" placeholder="Laos" maxlength="100" class="w-full" /></UFormField>
+      <UFormField label="Zone name" description="Your name for these countries, such as Southeast Asia."><UInput v-model="form.name" maxlength="100" class="w-full" /></UFormField>
       <UFormField label="Countries" description="Two-letter codes, separated by commas, such as LA, VN, KH.">
-        <UInput v-model="form.countries" placeholder="LA" class="w-full uppercase" />
+        <UInput v-model="form.countries" class="w-full uppercase" />
       </UFormField>
       <section aria-label="Rates" class="space-y-3">
         <h2 class="text-sm font-semibold text-muted">Rates</h2>
-        <div v-for="(rate, index) in form.rates" :key="index" class="space-y-3 rounded-xl p-4 ring-1 ring-default">
-          <div class="flex items-center gap-3">
-            <UInput v-model="rate.name" :aria-label="`Rate ${index + 1} name`" placeholder="Thailand Post EMS" class="min-w-0 flex-1" />
-            <UInput v-model="rate.amount" :aria-label="`Rate ${index + 1} price`" :placeholder="currency" inputmode="decimal" class="w-32" />
-            <UButton color="neutral" variant="ghost" icon="i-lucide-x" :aria-label="`Remove ${rate.name || 'rate'}`" @click="form.rates.splice(index, 1)" />
+        <fieldset v-for="(rate, index) in form.rates" :key="index" class="space-y-4 rounded-xl p-4 ring-1 ring-default">
+          <legend class="sr-only">Rate {{ index + 1 }}</legend>
+          <div class="flex items-end gap-3">
+            <UFormField label="Rate name" description="What buyers choose at checkout, such as Express." class="min-w-0 flex-1"><UInput v-model="rate.name" class="w-full" /></UFormField>
+            <UButton color="neutral" variant="ghost" icon="i-lucide-x" :aria-label="`Remove ${rate.name || `rate ${index + 1}`}`" @click="form.rates.splice(index, 1)" />
           </div>
-          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <UInput v-model="rate.min_kg" :aria-label="`Rate ${index + 1} from kg`" placeholder="From kg" inputmode="decimal" />
-            <UInput v-model="rate.max_kg" :aria-label="`Rate ${index + 1} under kg`" placeholder="Under kg" inputmode="decimal" />
-            <UInput v-model="rate.min_subtotal" :aria-label="`Rate ${index + 1} orders over`" placeholder="Orders over" inputmode="decimal" />
-            <UInput v-model="rate.days" :aria-label="`Rate ${index + 1} delivery days`" placeholder="Days, e.g. 7-14" />
+          <div class="grid grid-cols-2 gap-3">
+            <UFormField label="Price"><UInput v-model="rate.amount" inputmode="decimal" class="w-full"><template #trailing><span class="text-sm text-muted">{{ currency }}</span></template></UInput></UFormField>
+            <UFormField label="Delivery days" hint="Optional" description="A number or a range, such as 7-14."><UInput v-model="rate.days" class="w-full" /></UFormField>
+            <UFormField label="From weight" hint="Optional"><UInput v-model="rate.min_kg" inputmode="decimal" class="w-full"><template #trailing><span class="text-sm text-muted">kg</span></template></UInput></UFormField>
+            <UFormField label="Under weight" hint="Optional"><UInput v-model="rate.max_kg" inputmode="decimal" class="w-full"><template #trailing><span class="text-sm text-muted">kg</span></template></UInput></UFormField>
+            <UFormField label="Orders over" hint="Optional" description="Offered only when the order total is at least this amount."><UInput v-model="rate.min_subtotal" inputmode="decimal" class="w-full"><template #trailing><span class="text-sm text-muted">{{ currency }}</span></template></UInput></UFormField>
           </div>
-        </div>
+        </fieldset>
         <UButton color="neutral" variant="link" class="px-0" @click="form.rates.push(blankRate())">Add rate</UButton>
       </section>
       <UButton v-if="!creating" color="error" variant="outline" :loading="deleting" @click="remove">Delete zone</UButton>

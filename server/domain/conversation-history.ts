@@ -117,6 +117,12 @@ function eventText(message: Pick<MessageRow, 'event_name' | 'body' | 'id' | 'pay
     const line = name === 'agreement.sent' && reader ? agreementRequestLine(act, (JSON.parse(message.payload_json) as { signers?: unknown }).signers, reader) : act
     return `${actor} ${line.charAt(0).toLowerCase()}${line.slice(1)}`
   }
+  // An order's own record says what happened to it in its first line ("Order #1005 cancelled"), not a booking's action.
+  if (name.startsWith('order.')) {
+    const line = entryText(message.body)?.split('\n')[0]?.trim()
+    if (!line) throw new HTTPError({ statusCode: 500, message: `The order activity ${name} has nothing to say`, data: { code: 'INVALID_CONVERSATION_EVENT', field: 'body', entry_id: message.id } })
+    return line
+  }
   if (action === 'guest_cancelled') return `${buyer ? 'You' : guestName} canceled the ${noun}`
   if (action === 'cancel' || action === 'cancelled') return `${actor} canceled the ${noun}`
   if (action === 'confirm' || action === 'confirmed') return `${actor} confirmed the ${noun}`

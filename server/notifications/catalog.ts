@@ -251,7 +251,7 @@ export const NOTIFICATION_CATALOG: CatalogEntry[] = [
     audience: 'owner',
     title: 'Owner — order cancelled before it shipped',
     message: ownerAlert(orderCancelledMessage({ organizationName: studio, orderNumber: 1042, guestName: 'Somchai Vong', guestEmail: 'somchai@example.com',
-      items: ['Handmade ceramic chess set (Ruby reds) × 1'], total: '฿7,050', heroImageUrl: sampleCover, replyUrl: 'https://blawby.com/dashboard/pottery-house/messages/preview', reason: 'unpaid', stockReturned: true })),
+      items: ['Handmade ceramic chess set (Ruby reds) × 1'], total: '฿7,050', heroImageUrl: sampleCover, replyUrl: 'https://blawby.com/dashboard/pottery-house/messages/preview', reason: 'unpaid', stockReturned: true, pickup: false })),
   },
   {
     id: 'stay-booked-member',

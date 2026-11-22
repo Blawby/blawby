@@ -829,14 +829,14 @@ export interface OrderEventInput {
 }
 
 /** An order the business no longer has to send: its payment never completed, or it was refunded in full before it shipped. */
-export function orderCancelledMessage(input: Pick<OrderEventInput, 'organizationName' | 'orderNumber' | 'guestName' | 'guestEmail' | 'items' | 'total' | 'heroImageUrl' | 'replyUrl'> & { reason: 'unpaid' | 'refunded'; stockReturned: boolean }): MemberAlertMessage {
+export function orderCancelledMessage(input: Pick<OrderEventInput, 'organizationName' | 'orderNumber' | 'guestName' | 'guestEmail' | 'items' | 'total' | 'heroImageUrl' | 'replyUrl'> & { reason: 'unpaid' | 'refunded'; stockReturned: boolean; pickup: boolean }): MemberAlertMessage {
   return {
     title: `Order #${input.orderNumber} cancelled - ${input.guestName}`,
     preheader: input.items.join(', '),
     hero: input.heroImageUrl ? { imageUrl: input.heroImageUrl, alt: input.items[0] ?? '' } : null,
     intro: [
-      input.reason === 'unpaid' ? 'The payment was not completed, so the order was cancelled. Nothing was charged.' : 'The order was refunded in full before it shipped, so it was cancelled.',
-      'There is nothing to ship.',
+      input.reason === 'unpaid' ? 'The payment was not completed, so the order was cancelled. Nothing was charged.' : `The order was refunded in full before it was ${input.pickup ? 'collected' : 'shipped'}, so it was cancelled.`,
+      input.pickup ? 'There is nothing to hand over.' : 'There is nothing to ship.',
       input.stockReturned ? 'Its items are back in stock.' : null,
     ].filter(Boolean).join(' '),
     facts: facts(

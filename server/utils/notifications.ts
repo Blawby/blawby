@@ -2268,7 +2268,7 @@ export async function notifyOrderCancelled(env: NotificationEnv, db: DbClient, o
   const ownerMessage = orderCancelledMessage({
     organizationName: studio, orderNumber: order.number, guestName: guestContact.name, guestEmail: guestContact.email, items,
     total: formatMinorAmount(amount, order.currency, 'en-US'), heroImageUrl: hero?.imageUrl ?? null, replyUrl: inboxUrl ?? '',
-    reason, stockReturned: order.lines.some(line => line.stock_taken > 0),
+    reason, stockReturned: order.lines.some(line => line.stock_taken > 0), pickup: order.delivery_method === 'pickup',
   })
   const guestMessage = guestOrderCancelledMessage({
     locale: guest.locale, guestName: guestContact.name, organizationName: guest.organizationName, organizationLogoUrl: logoUrl, orderNumber: order.number, items,

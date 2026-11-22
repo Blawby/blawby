@@ -8,7 +8,7 @@
       <!-- Top Navigation Header -->
       <header class="flex h-14 shrink-0 items-center justify-between border-b border-default bg-default px-4 shadow-xs">
         <div class="flex items-center gap-3 min-w-0">
-          <div class="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0">
+          <div class="hidden sm:flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0">
             <UIcon name="i-lucide-file-text" class="size-4" />
           </div>
           <div class="min-w-0">
@@ -34,7 +34,7 @@
             @click="scrollToSignature"
           >
             <UIcon name="i-lucide-arrow-down" class="size-3" />
-            <span>Next signature</span>
+            <span class="sr-only sm:not-sr-only">Next signature</span>
           </button>
 
           <UButton icon="i-lucide-x" color="neutral" variant="ghost" size="sm" aria-label="Close" @click="open = false" />
@@ -77,7 +77,7 @@
               <p
                 v-if="isAdopted && field.kind === 'signature'"
                 class="truncate text-xl sm:text-2xl text-black"
-                style="font-family: 'Snell Roundhand', 'Segoe Script', 'Brush Script MT', cursive"
+                :style="SIGNATURE_STYLE"
               >
                 {{ name.trim() }}
               </p>
@@ -94,7 +94,8 @@
             <!-- Other Signer's Field -->
             <div
               v-else
-              class="absolute select-none rounded border border-accented bg-accented/40 flex items-center justify-center p-1"
+              class="absolute select-none rounded border flex items-center justify-center p-1"
+              :class="signedAt(field.signer_key) ? 'border-success/50 bg-success/5' : 'border-accented bg-accented/40'"
               :style="{
                 left: `${field.x * 100}%`,
                 top: `${field.y * 100}%`,
@@ -102,7 +103,9 @@
                 height: `${field.height * 100}%`,
               }"
             >
-              <span class="truncate text-[10px] text-muted">{{ otherSignerName(field.signer_key) }}</span>
+              <p v-if="signedAt(field.signer_key) && field.kind === 'signature'" class="truncate text-xl sm:text-2xl text-black" :style="SIGNATURE_STYLE">{{ signedName(field.signer_key) }}</p>
+              <span v-else-if="signedAt(field.signer_key)" class="text-xs font-semibold text-black">{{ utcDay(signedAt(field.signer_key)!) }}</span>
+              <span v-else class="truncate text-[10px] text-muted">{{ otherSignerName(field.signer_key) }}</span>
             </div>
           </template>
         </div>
@@ -130,15 +133,15 @@
       </div>
 
       <!-- Sticky Bottom Action Bar -->
-      <footer class="flex h-16 shrink-0 items-center justify-between border-t border-default bg-default px-4 sm:px-6 shadow-xs">
+      <footer class="flex min-h-16 shrink-0 items-center justify-between border-t border-default bg-default px-4 py-2 sm:px-6 shadow-xs">
         <div class="min-w-0 pr-4">
-          <p class="truncate text-xs text-muted">
-            {{ isAdopted ? 'Signature placed. Click Finish signing to execute this document.' : 'Review each page and click [Sign here] to adopt your signature.' }}
+          <p class="text-xs text-muted">
+            {{ isAdopted ? 'Signature placed. Choose Finish signing to complete it.' : 'Read each page, then choose Sign here.' }}
           </p>
         </div>
 
         <div class="flex items-center gap-3 shrink-0">
-          <UButton color="neutral" variant="ghost" size="md" label="Cancel" @click="open = false" />
+          <UButton color="neutral" variant="ghost" size="md" label="Cancel" class="hidden sm:inline-flex" @click="open = false" />
           <UButton
             color="neutral"
             size="md"
@@ -207,7 +210,7 @@
               <div class="mt-1.5 flex min-h-16 items-center rounded-xl border border-dashed border-default bg-elevated/40 px-4">
                 <p
                   class="text-2xl leading-none text-highlighted"
-                  style="font-family: 'Snell Roundhand', 'Segoe Script', 'Brush Script MT', cursive"
+                  :style="SIGNATURE_STYLE"
                   aria-hidden="true"
                 >
                   {{ name.trim() || 'Your Name' }}
@@ -226,7 +229,7 @@
                 data-testid="agreement-consent"
               >
               <span class="leading-relaxed text-muted select-none">
-                I agree that typing my name above constitutes a legally binding electronic signature on this {{ agreement.label.toLowerCase() }}, with the same legal effect as a handwritten signature.
+                I agree that my name above is my legally binding electronic signature on this {{ agreement.label.toLowerCase() }}, with the same legal effect as a handwritten signature.
               </span>
             </label>
 
@@ -281,10 +284,12 @@ function keepPage<T>(pages: Record<number, T>, page: number, element: T | null) 
 }
 let pdfDoc: import('pdfjs-dist').PDFDocumentProxy | null = null
 
-// The signed PDF dates each signature in UTC; the preview shows the same day.
-const todayDate = computed(() => {
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date())
-})
+// The signed PDF draws each signature in Times italic and dates it in UTC; the sheet shows the same.
+const SIGNATURE_STYLE = { fontFamily: "'Times New Roman', Times, serif", fontStyle: 'italic' }
+const utcDay = (instant: string | Date) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(instant))
+const todayDate = computed(() => utcDay(new Date()))
+const signedAt = (key: string) => props.agreement.signers.find(s => s.key === key)?.signed_at ?? null
+const signedName = (key: string) => props.agreement.signers.find(s => s.key === key)?.signed_name ?? ''
 
 function isViewerField(field: AgreementField): boolean {
   return field.signer_key === props.agreement.viewer_signer_key

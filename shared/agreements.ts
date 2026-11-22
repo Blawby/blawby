@@ -43,6 +43,8 @@ export interface AgreementSigner {
   name: string
   role: 'guest' | 'host'
   signed_at: string | null
+  /** The name they typed as their signature, as the signed document draws it. */
+  signed_name: string | null
 }
 
 export interface BookingAgreement {
@@ -84,7 +86,8 @@ export function isBookingAgreement(value: unknown): value is BookingAgreement {
     && typeof value.file_name === 'string' && typeof value.url === 'string' && (value.signed_url === null || typeof value.signed_url === 'string')
     && (value.status === 'stored' || value.status === 'signing' || value.status === 'signed')
     && Array.isArray(value.signers) && value.signers.every(signer => isRecord(signer) && typeof signer.key === 'string' && typeof signer.name === 'string'
-      && (signer.role === 'guest' || signer.role === 'host') && (signer.signed_at === null || typeof signer.signed_at === 'string'))
+      && (signer.role === 'guest' || signer.role === 'host') && (signer.signed_at === null || typeof signer.signed_at === 'string')
+      && (signer.signed_name === null || typeof signer.signed_name === 'string'))
     && Array.isArray(value.fields) && value.fields.every(isAgreementField)
     && typeof value.can_sign === 'boolean' && typeof value.can_manage === 'boolean'
 }

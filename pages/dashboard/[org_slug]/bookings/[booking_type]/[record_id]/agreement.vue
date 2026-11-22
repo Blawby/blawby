@@ -91,7 +91,7 @@
         </li>
       </ul>
       <form class="mt-4 space-y-3 border-t border-default pt-4" @submit.prevent="addEmailSigner">
-        <p class="text-sm font-semibold text-highlighted">Someone without a Blawby account</p>
+        <p class="text-sm font-semibold text-highlighted">Someone else, by email</p>
         <UInput v-model="invite.name" placeholder="Full name" autocomplete="off" data-testid="invite-name" />
         <UInput v-model="invite.email" type="email" placeholder="Email" autocomplete="off" data-testid="invite-email" />
         <UButton type="submit" color="neutral" variant="outline" label="Add" :disabled="!invite.name.trim() || !EMAIL.test(invite.email.trim())" />

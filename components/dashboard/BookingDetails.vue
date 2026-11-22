@@ -186,8 +186,7 @@
               >
                 <UIcon name="i-lucide-file-text" class="size-4 shrink-0 text-highlighted" />
                 <span class="min-w-0 flex-1">
-                  <span class="block font-medium">{{ agreementLabelText }}</span>
-                  <span v-if="agreementRowSummary" class="block text-xs text-muted" data-testid="booking-agreement-status">{{ agreementRowSummary }}</span>
+                  <span class="block font-medium" data-testid="booking-agreement-status">{{ agreementRowSummary ?? agreementLabelText }}</span>
                 </span>
                 <UIcon name="i-lucide-chevron-right" class="size-4 text-muted" />
               </component>

@@ -67,7 +67,8 @@ export function useDashboardMenu(workspaceLinks?: ComputedRef<readonly Dashboard
   async function logOut() {
     const redirect = route.fullPath
     await authClient.signOut()
-    await navigateTo({ path: '/login', query: { redirect } })
+    // A full load: nothing of the signed-out account's screens, sockets or cached session stays in the page.
+    await navigateTo(`/login?redirect=${encodeURIComponent(redirect)}`, { external: true })
   }
 
   /** Organization switcher. */

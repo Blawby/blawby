@@ -100,7 +100,14 @@ function entryText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
-function eventText(message: Pick<MessageRow, 'event_name' | 'body' | 'id'>, actor: string, guestName: string, buyer: boolean, airbnb: boolean): string {
+/** Whether this request asks the viewer: they are one of its signers, or the guest reading a request with one guest signer. */
+function askedToSign(message: Pick<MessageRow, 'payload_json'>, userId: string, guestViewer: boolean): boolean {
+  const payload = JSON.parse(message.payload_json) as { signers?: { key: string; role: string }[] }
+  const guests = (payload.signers ?? []).filter(signer => signer.role === 'guest')
+  return guests.some(signer => signer.key === `user:${userId}`) || (guestViewer && guests.length === 1)
+}
+
+function eventText(message: Pick<MessageRow, 'event_name' | 'body' | 'id'>, actor: string, guestName: string, buyer: boolean, airbnb: boolean, asked = false): string {
   const name = message.event_name ?? ''
   const action = name.split('.').at(-1)
   const noun = name.startsWith('stay.') || airbnb ? 'reservation' : 'booking'
@@ -112,6 +119,8 @@ function eventText(message: Pick<MessageRow, 'event_name' | 'body' | 'id'>, acto
   if (name.startsWith('agreement.')) {
     const act = entryText(message.body)
     if (!act) throw new HTTPError({ statusCode: 500, message: `The agreement activity ${name} has nothing to say`, data: { code: 'INVALID_CONVERSATION_EVENT', field: 'body', entry_id: message.id } })
+    // The signer reads the request as theirs: "Saltleaf asked you to sign the rental agreement".
+    if (asked) return `${actor} ${act.replace(/^Asked .* to sign /u, 'asked you to sign ')}`
     return `${actor} ${act.charAt(0).toLowerCase()}${act.slice(1)}`
   }
   if (action === 'guest_cancelled') return `${buyer ? 'You' : guestName} canceled the ${noun}`
@@ -148,7 +157,8 @@ function presentEntries(
         : authorKind === 'guest' ? guestViewer ? 'You' : guestName
         : mine ? 'You' : !guestViewer && name ? firstName(name) : context.organization_name
       items.push({ type: 'event', id: message.id, sequence: message.sequence, sent_at: message.occurred_at,
-        text: eventText(message, actor, guestName, guestViewer, Boolean(airbnb)), ...(message.event_name === 'agreement.sent' ? { agreement: true as const } : {}) })
+        text: eventText(message, actor, guestName, guestViewer, Boolean(airbnb), message.event_name === 'agreement.sent' && !mine && askedToSign(message, userId, guestViewer)),
+        ...(message.event_name === 'agreement.sent' ? { agreement: true as const } : {}) })
       continue
     }
     const payload = parseMessagePayload(message)

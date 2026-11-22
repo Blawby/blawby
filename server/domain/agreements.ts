@@ -45,6 +45,8 @@ export interface AgreementBooking {
   /** The account that booked; it signs the listing's agreement under the booking's guest name. */
   bookingUserId: string | null
   guestName: string | null
+  /** The business the host signs for. */
+  organizationName: string
 }
 
 export interface AgreementViewer {
@@ -99,6 +101,7 @@ function listingQuery(target: AgreementTarget): BatchQuery {
 function bookingQuery(target: AgreementTarget): BatchQuery {
   return {
     query: `SELECT c.id AS conversation_id, b.id AS booking_id, b.organization_id, b.product_id, p.kind, b.status, b.ends_at, b.user_id, COALESCE(json_extract(c.payload_json, '$.guest.name'), u.name) AS guest_name,
+        (SELECT name FROM organization WHERE id = b.organization_id) AS organization_name,
         EXISTS (SELECT 1 FROM media_placements tp JOIN media_assets ta ON ta.id = tp.asset_id AND ta.organization_id = tp.organization_id AND ta.status = 'active'
                  WHERE tp.organization_id = b.organization_id AND tp.owner_type = 'product' AND tp.owner_id = b.product_id AND tp.slot = 'agreement_template' AND tp.status = 'active') AS has_template
       FROM bookings b JOIN products p ON p.id = b.product_id AND p.organization_id = b.organization_id
@@ -135,11 +138,11 @@ type SignerRow = { user_id: string; name: string | null; anonymous: number; book
 /** The batch results of `agreementQueries`, in their order. */
 export function agreementFromResults(results: { results: unknown[] }[]) {
   const [bookingRows, records, listing, deposit, signers] = results
-  const row = bookingRows?.results[0] as { conversation_id: string; booking_id: string; organization_id: string; product_id: string; kind: ProductKind; status: string; ends_at: string; user_id: string | null; guest_name: string | null; has_template: number } | undefined
+  const row = bookingRows?.results[0] as { conversation_id: string; booking_id: string; organization_id: string; product_id: string; kind: ProductKind; status: string; ends_at: string; user_id: string | null; guest_name: string | null; organization_name: string; has_template: number } | undefined
   if (!row) throw new HTTPError({ statusCode: 404, message: 'Booking not found', data: { code: 'BOOKING_NOT_FOUND', field: 'booking_id' } })
   const booking: AgreementBooking = {
     conversationId: row.conversation_id, organizationId: row.organization_id, bookingId: row.booking_id,
-    productId: row.product_id, productKind: row.kind, status: row.status, endsAt: row.ends_at, bookingUserId: row.user_id, guestName: row.guest_name?.trim() || null,
+    productId: row.product_id, productKind: row.kind, status: row.status, endsAt: row.ends_at, bookingUserId: row.user_id, guestName: row.guest_name?.trim() || null, organizationName: row.organization_name,
   }
   return {
     booking,
@@ -210,7 +213,8 @@ function agreementState(records: AgreementRecord[], listing: ListingDocument | n
 }
 
 function presentAgreement(state: AgreementState, booking: AgreementBooking, viewer: AgreementViewer | null, signersRows?: SignerRow[] | null): BookingAgreement {
-  const signers: AgreementSigner[] = state.signers.map(signer => ({ key: signer.key, name: signer.name, role: signer.role, signed_at: signer.signature?.occurred_at ?? null }))
+  const signers: AgreementSigner[] = state.signers.map(signer => ({ key: signer.key, name: signer.name, role: signer.role, signed_at: signer.signature?.occurred_at ?? null,
+    signed_name: signer.signature ? signedSchema.parse(payload(signer.signature)).typed_name : null }))
   const complete = signers.length > 0 && signers.every(signer => signer.signed_at !== null)
   const own = state.signers.find(signer => viewerSigns(signer, viewer, signersRows, booking.bookingUserId)) ?? null
   const guestsSigned = signers.every(signer => signer.role === 'host' || signer.signed_at !== null)
@@ -245,8 +249,10 @@ export function presentBookingAgreement(read: Pick<ReturnType<typeof agreementFr
 }
 
 /** The agreement as a booking read presents it, from the rows its batch read with `agreementQueries`. */
-export function bookingAgreementFromRows(rows: { results: unknown[] }[], viewer: AgreementViewer, actor: AgreementActor | null) {
+export function bookingAgreementFromRows(rows: { results: unknown[] }[], reader: AgreementViewer, actor: AgreementActor | null) {
   const read = agreementFromResults(rows)
+  // The person who booked is the guest on their own booking, whatever they are in the business: they sign it, they do not send it.
+  const viewer = { ...reader, canManage: reader.canManage && read.booking.bookingUserId !== reader.userId }
   return {
     agreement: presentBookingAgreement(read, viewer),
     deposit: read.deposit,
@@ -561,7 +567,7 @@ export async function signedAgreementDocument(env: CloudflareEnv, conversation: 
   await line(`Document fingerprint (SHA-256): ${fingerprint}`, 8)
   y -= 8
   for (const { signer, signed, at } of signatures) {
-    await line(`${signer.name} (${signer.role === 'host' ? 'business' : 'guest'})`, 11, bold)
+    await line(signer.role === 'host' ? `${signer.name}, for ${booking.organizationName}` : `${signer.name} (guest)`, 11, bold)
     await line(`Signed as “${signed.typed_name}” on ${new Date(at).toUTCString()}`)
     await line(`Agreed to sign electronically. IP address ${signed.ip ?? 'not recorded'}.`, 9)
     y -= 6

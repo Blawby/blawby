@@ -218,7 +218,7 @@ const depositLine = computed(() => {
   if (!isCurrencyCode(currency)) throw new Error(`Unsupported deposit currency ${currency}`)
   return depositStatusLine(deposit, minor => formatMinorAmount(minor, currency))
 })
-const leadLine = computed(() => context.value?.current ? 'The document for this booking and who has signed it.' : 'Send a PDF for this booking’s guests to sign. You sign last.')
+const leadLine = computed(() => context.value?.current ? 'The document for this booking and who has signed it.' : 'Send this booking’s agreement for signing. You sign last.')
 
 const error = ref('')
 const busy = ref<'store' | 'cancel' | null>(null)

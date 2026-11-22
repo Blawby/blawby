@@ -229,7 +229,7 @@ async function presentToday(
       const shipBy = dueDay === null ? null : dueDay < today(work.timezone) ? `Overdue since ${formatCalendarDate(dueDay, 'en', { weekday: 'short', month: 'short', day: 'numeric' })}` : `Ship by ${formatCalendarDate(dueDay, 'en', { weekday: 'short', month: 'short', day: 'numeric' })}`
       const pickup = work.order_delivery_method === 'pickup'
       add({ id: `task:${work.id}`, noun: 'task', order: [1, work.due_at ?? ''], bookings: [], day: today(work.timezone),
-        when: pickup ? 'Pickup' : shipBy, image_url: null, icon: 'i-lucide-package',
+        when: pickup ? 'Pickup' : shipBy, image_url: null, icon: 'i-lucide-list-checks',
         // The place is said only where it matters: where a pickup is collected.
         headline: pickup ? `Order #${work.order_number} for pickup by ${buyer}` : `Ship order #${work.order_number} to ${buyer}`, line: pickup ? work.location_title : null,
         action: { title: 'Open order', detail: pickup ? 'Mark as collected when it is picked up' : 'Mark as shipped with its tracking' },

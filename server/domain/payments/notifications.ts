@@ -88,16 +88,18 @@ export async function notifyPaymentFinancialEvent(db: DbClient, stripe: Stripe, 
   const eventKey = `payments:${payment.stripe_account_id}:${payment.livemode}:${input.nativeId}:${input.status}:${input.kind}`
   // Session and approved stay checkouts already have a guest conversation.
   const nights = Boolean(snapshot.stay)
-  const waitingInConversation = checkout && (!nights || approvedStayBooking(snapshot) !== null)
+  const waitingInConversation = payment.subject_type === 'booking' && (!nights || approvedStayBooking(snapshot) !== null)
   const hold = waitingInConversation && organization ? await queryFirst<{ conversation_id: string | null }>(db, 'SELECT conversation_id FROM payment_checkout_holds WHERE payment_id=? AND organization_id=?', [payment.id, payment.organization_id]) : null
   if (waitingInConversation && organization && !hold?.conversation_id) throw new Error('Booking payment notification has no guest conversation')
-  const booking = checkout && payment.subject_id && organization ? await queryFirst<{ conversation_id: string | null }>(db, "SELECT (SELECT c.id FROM conversations c WHERE c.booking_id = b.id AND c.kind = 'booking') AS conversation_id FROM bookings b WHERE b.organization_id=? AND b.id=?", [payment.organization_id, payment.subject_id]) : null
-  const threadId = hold?.conversation_id ?? booking?.conversation_id ?? null
+  const booking = payment.subject_type === 'booking' && payment.subject_id && organization ? await queryFirst<{ conversation_id: string | null }>(db, "SELECT (SELECT c.id FROM conversations c WHERE c.booking_id = b.id AND c.kind = 'booking') AS conversation_id FROM bookings b WHERE b.organization_id=? AND b.id=?", [payment.organization_id, payment.subject_id]) : null
+  // An order's conversation is opened when it is paid.
+  const order = payment.subject_type === 'order' && organization ? await queryFirst<{ conversation_id: string | null }>(db, 'SELECT conversation_id FROM orders WHERE organization_id=? AND id=?', [payment.organization_id, payment.subject_id]) : null
+  const threadId = hold?.conversation_id ?? booking?.conversation_id ?? order?.conversation_id ?? null
   if (booking && booking.conversation_id !== threadId) throw new Error('Booking payment notification conversation does not match its booking')
   const deepLink = organization ? `${dashboardOrigin(env, { orgSlug: organization.slug, locationSlug: null })}${booking && payment.subject_id ? `/bookings/${encodeURIComponent(payment.subject_id)}` : `/earnings/transactions/${encodeURIComponent(payment.id)}`}` : null
   // A purchase refunded because its capacity had gone is refunded without being asked, so the buyer is told why.
   const refundedForCapacity = (input.kind === 'refund_pending' || input.kind === 'refund_succeeded') && await queryFirst(db, "SELECT 1 FROM payment_refunds WHERE payment_id=? AND stripe_refund_id=? AND idempotency_key LIKE 'unfulfillable:%'", [payment.id, input.nativeId])
-  const refundReason = !refundedForCapacity ? null : `What you paid for was taken before your payment completed, so your booking could not be made and your payment ${input.kind === 'refund_pending' ? 'will be' : 'has been'} refunded in full.`
+  const refundReason = !refundedForCapacity ? null : `What you paid for was taken before your payment completed, so your ${payment.subject_type === 'order' ? 'order' : 'booking'} could not be made and your payment ${input.kind === 'refund_pending' ? 'will be' : 'has been'} refunded in full.`
   const actionLabel = input.kind === 'payment_captured' ? 'View in Dashboard' : 'View details'
   const details = {
     organizationName: organization?.name ?? null, amount: input.amount, currency: payment.currency, productTitle: snapshot.title, action: deepLink ? { url: deepLink, label: actionLabel } : null,

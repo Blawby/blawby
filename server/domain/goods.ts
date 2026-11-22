@@ -446,7 +446,8 @@ export async function saveCheckoutOrder(db: DbClient, payment: Payment, snapshot
   const order = orderSnapshotOf(snapshot)
   if (!order || payment.subject_type !== 'order' || payment.subject_id !== order.id) throw new Error('Order payment has no frozen order')
   const conversationId = crypto.randomUUID()
-  const paid = { query: 'SELECT 1 FROM orders WHERE organization_id = ? AND id = ? AND status = \'paid\' AND conversation_id = ?', params: [payment.organization_id, order.id, conversationId] }
+  // The conversation is written only while the order is still unpaid, and the order then names it.
+  const pending = { query: "SELECT 1 FROM orders WHERE organization_id = ? AND id = ? AND status = 'pending'", params: [payment.organization_id, order.id] }
   const stockQueries: BatchQuery[] = []
   for (const line of order.lines) {
     const variant = `(SELECT inventory_tracked FROM product_variants WHERE organization_id = ? AND id = ?)`
@@ -465,14 +466,15 @@ export async function saveCheckoutOrder(db: DbClient, payment: Payment, snapshot
     )
   }
   const queries: BatchQuery[] = [
-    { query: `UPDATE orders SET status = 'paid', paid_at = ?, conversation_id = ?, buyer_user_id = COALESCE(buyer_user_id, ?), updated_at = ? WHERE organization_id = ? AND id = ? AND status = 'pending'`,
-      params: [paidAt, conversationId, payment.buyer_user_id, paidAt, payment.organization_id, order.id] },
-    assertBookingBatchWrite({ query: 'changes() = 1', params: [] }),
-    ...stockQueries,
     ...requestInsertQueries({
       id: conversationId, kind: 'contact', organization_id: payment.organization_id, location_id: order.location_id, booking_id: null, user_id: payment.buyer_user_id, created_at: paidAt,
       payload: { guest: order.guest, subject: `Order #${order.number}`, consent_at: null, ip_hash: null, source: 'order', answers: [] },
-    }, paid, { opening: orderOpening(order), note: order.note }),
+    }, pending, { opening: orderOpening(order), note: order.note }),
+    { query: `UPDATE orders SET status = 'paid', paid_at = ?, conversation_id = ?, buyer_user_id = COALESCE(buyer_user_id, ?), updated_at = ?
+        WHERE organization_id = ? AND id = ? AND status = 'pending' AND EXISTS (SELECT 1 FROM conversations WHERE id = ?)`,
+      params: [paidAt, conversationId, payment.buyer_user_id, paidAt, payment.organization_id, order.id, conversationId] },
+    assertBookingBatchWrite({ query: 'changes() = 1', params: [] }),
+    ...stockQueries,
     { query: `INSERT INTO tasks (id, organization_id, kind, subject_type, subject_id, location_id, assigned_member_id, due_at, timezone, status, dedupe_key, version, created_at, updated_at)
         SELECT ?, o.organization_id, 'order_fulfillment', 'order', o.id, o.location_id, ${jobAssigneeSql('o.organization_id', 'NULL')}, ?, l.timezone, 'open', ?, 1, ?, ?
         FROM orders o JOIN business_locations l ON l.organization_id = o.organization_id AND l.id = o.location_id

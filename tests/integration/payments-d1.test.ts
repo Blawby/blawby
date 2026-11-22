@@ -42,6 +42,7 @@ import { approveRefundAuthorization, requirePayment } from '../../server/domain/
 import { paymentTransactionDestination } from '../../server/domain/payments/earnings.ts'
 import { completePaymentReturn, reviewPayment, confirmPayment, paymentHandoff, preparePaymentReturn, requireClaimedPayment } from '../../server/domain/payments/intent.ts'
 import { reconcilePaymentIntent, processPaymentEvent } from '../../server/domain/payments/events.ts'
+import { createOrderCheckout, fulfillOrder, quoteOrder, readOrder } from '../../server/domain/goods.ts'
 import { mcpFinancialApprovalErrorResult } from '../../server/utils/mcp-financial-handoff.ts'
 import { handlePaymentsTools } from '../../server/utils/mcp-tools/payments.ts'
 import { NOT_HANDLED } from '../../server/utils/mcp-tools/execution.ts'
@@ -886,7 +887,7 @@ test('a stay purchase claim cancels Stripe before releasing only its checkout re
       stay: { product_id: 'cabin', check_in_date: '2099-10-01', check_out_date: '2099-10-03', nights: 2, nightly: [10000, 10000], adults: 1, children: 0, infants: 0, cancellation_policy: 'flexible', installments: null, later_payments_add_tax: false },
       approved_stay_path: null,
       billing_details: { name: 'Guest', email: 'guest@example.com' },
-      kind: 'stay', image_url: null, starts_at: null, ends_at: null, timezone: null, party_size: null, product_slug: 'cabin', location_slug: 'cabin-site', free_cancellation_until: null,
+      kind: 'stay', image_url: null, starts_at: null, ends_at: null, timezone: null, party_size: null, order: null, product_slug: 'cabin', location_slug: 'cabin-site', free_cancellation_until: null,
       subtotal: 20000, currency: 'USD', expires_at: '2099-09-30T00:00:00.000Z', stripe_account_id: 'acct_seller', publishable_key: 'pk_test_local_boundary',
       payment_method_types: ['card'], customer_session_client_secret: null, bank_verification_url: null, surcharge_basis_points: null,
     })
@@ -1832,5 +1833,112 @@ test('Better Auth Stripe tells the business its new plan, its change of plan and
   assert.deepEqual((await db.prepare("SELECT json_extract(email_json, '$.message.subject') subject, count(*) n FROM guest_thread_deliveries WHERE channel='email' AND provider='resend' AND status='sent' GROUP BY subject ORDER BY subject").all()).results, [
    { subject: 'Your Business plan will not renew', n: 2 }, { subject: 'Your new plan: Growth', n: 2 }, { subject: 'Your plan changed to Business', n: 2 },
   ])
+ } finally { await runtime.dispose() }
+})
+
+test('a cart becomes a paid order with its conversation, stock and ship task before capture, and an item that sold out meanwhile is cancelled, never charged', { timeout: 120_000 }, async t => {
+ const { db, runtime, env: bootEnv, events } = await boot()
+ try {
+  const env = { ...stripeEnv(bootEnv), STRIPE_SECRET_KEY: 'sk_live_mock', STRIPE_TEST_SECRET_KEY: 'sk_test_local_boundary', STRIPE_TEST_PUBLISHABLE_KEY: 'pk_test_mock', STRIPE_TEST_PAYMENTS_METHOD_CONFIGURATION: 'pmc_parent' } as CloudflareEnv
+  // The configured demo business takes real checkouts.
+  await db.prepare("UPDATE organization SET subdomain='demo' WHERE id=?").bind(ORG).run()
+  await db.prepare("INSERT INTO subscription(id,plan,referenceId,status,seats) VALUES('goods-plan','business',?,'active',1)").bind(ORG).run()
+  const reserved = await reserveStripeConnectedAccount(db, { organizationId: ORG, livemode: false })
+  await projectStripeConnectedAccount(db, { reservationId: reserved.id, organizationId: ORG, stripeAccountId: 'acct_seller', country: 'TH', livemode: false, cardPaymentsStatus: 'active', cardPaymentsResolutions: [], requirements: [], stripeRefreshedAt: new Date().toISOString() })
+  // A studio that ships to Laos: one set in Ruby reds on the shelf (sold only from stock), Celadon made to order.
+  await db.batch([
+   db.prepare("INSERT INTO business_locations(id,organization_id,slug,title,status,timezone,pickup_enabled) VALUES('studio',?,'studio','Studio','active','Asia/Bangkok',1)").bind(ORG),
+   db.prepare(`INSERT INTO products(kind,id,organization_id,name,slug,options,processing_days,made_to_order_days,created_by,updated_by) VALUES('item','chess',?,'Chess set','chess-set',?,2,20,'host','host')`).bind(ORG, JSON.stringify([{ name: 'Colour', values: ['Ruby reds', 'Celadon'] }])),
+   db.prepare("INSERT INTO product_publications(organization_id,product_id,published,created_by,updated_by) VALUES(?,'chess',1,'host','host')").bind(ORG),
+   db.prepare("INSERT INTO product_locations(organization_id,product_id,location_id,active,published,created_by,updated_by) VALUES(?,'chess','studio',1,1,'host','host')").bind(ORG),
+   db.prepare(`INSERT INTO product_variants(id,organization_id,product_id,name,option_values,weight_grams,inventory_tracked,inventory_policy,created_by,updated_by) VALUES('ruby',?,'chess','Ruby reds','["Ruby reds"]',4000,1,'deny','host','host')`).bind(ORG),
+   db.prepare(`INSERT INTO product_variants(id,organization_id,product_id,name,option_values,weight_grams,inventory_tracked,inventory_policy,sort_order,created_by,updated_by) VALUES('celadon',?,'chess','Celadon','["Celadon"]',4000,1,'continue',1,'host','host')`).bind(ORG),
+   db.prepare("INSERT INTO prices(id,organization_id,product_variant_id,currency,unit_amount,tax_behavior,created_by,updated_by) VALUES('ruby-price',?,'ruby','USD',6000,'exclusive','host','host')").bind(ORG),
+   db.prepare("INSERT INTO prices(id,organization_id,product_variant_id,currency,unit_amount,tax_behavior,created_by,updated_by) VALUES('celadon-price',?,'celadon','USD',3000,'exclusive','host','host')").bind(ORG),
+   db.prepare("INSERT INTO inventory_levels(organization_id,product_variant_id,location_id,available,updated_at,updated_by) VALUES(?,'ruby','studio',1,?,'host')").bind(ORG, NOW),
+   db.prepare(`INSERT INTO shipping_zones(id,organization_id,location_id,name,countries,created_at,updated_at) VALUES('laos',?,'studio','Laos','["LA"]',?,?)`).bind(ORG, NOW, NOW),
+   db.prepare("INSERT INTO shipping_rates(id,organization_id,shipping_zone_id,name,currency,amount,max_weight_grams,created_at,updated_at) VALUES('ems',?,'laos','EMS','USD',1000,10000,?,?)").bind(ORG, NOW, NOW),
+   db.prepare("INSERT INTO shipping_rates(id,organization_id,shipping_zone_id,name,currency,amount,min_weight_grams,created_at,updated_at) VALUES('freight',?,'laos','Freight','USD',5000,10000,?,?)").bind(ORG, NOW, NOW),
+  ])
+  const statuses: Record<string, string> = {}
+  const calls: string[] = []
+  const realFetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', async (request: RequestInfo | URL, init?: RequestInit) => {
+   const url = new URL(request instanceof Request ? request.url : String(request))
+   if (url.origin !== 'https://api.stripe.com') return realFetch(request, init)
+   if (url.pathname === '/v2/core/accounts/acct_seller') return Response.json({ id: 'acct_seller', livemode: false, dashboard: 'express', identity: { country: 'TH' }, defaults: { responsibilities: { fees_collector: 'application', losses_collector: 'stripe' } }, configuration: { merchant: { capabilities: { card_payments: { status: 'active', status_details: [] } } } }, requirements: { entries: [] } })
+   if (url.pathname === '/v1/payment_method_configurations') return Response.json({ data: [{ id: 'pmc_child', parent: 'pmc_parent', active: true }], has_more: false })
+   if (url.pathname === '/v1/billing/meter_events') return Response.json({ object: 'billing.meter_event' })
+   const body = new URLSearchParams(String(init?.body ?? ''))
+   if (url.pathname === '/v1/payment_intents' && init?.method === 'POST') {
+    const id = body.get('metadata[blawby_payment_id]')!
+    statuses[id] = 'requires_payment_method'
+    calls.push(`create:${body.get('amount')}`)
+    return Response.json({ id: `pi_${id}`, object: 'payment_intent', client_secret: `pi_${id}_secret`, livemode: false, amount: Number(body.get('amount')), currency: 'usd', status: 'requires_payment_method', metadata: { blawby_payment_id: id } })
+   }
+   const [, , resource, id, action] = url.pathname.split('/')
+   const paymentId = id!.replace(/^(pi|ch)_/u, '')
+   const charge = { id: `ch_${paymentId}`, object: 'charge', livemode: false, amount: 10000, currency: 'usd', created: 1_790_000_000, payment_intent: `pi_${paymentId}`, receipt_url: 'https://pay.stripe.com/receipts/order', billing_details: { email: 'buyer@example.com' } }
+   const intent = () => ({ id: `pi_${paymentId}`, object: 'payment_intent', livemode: false, currency: 'usd', amount: 10000, amount_received: statuses[paymentId] === 'succeeded' ? 10000 : 0, status: statuses[paymentId],
+    payment_method: 'pm_proof', latest_charge: ['succeeded', 'requires_capture'].includes(statuses[paymentId]!) ? charge : null, cancellation_reason: statuses[paymentId] === 'canceled' ? 'abandoned' : null, last_payment_error: null, metadata: { blawby_payment_id: paymentId } })
+   if (resource === 'payment_intents' && action === 'capture') { calls.push(`capture:${paymentId}`); statuses[paymentId] = 'succeeded'; return Response.json(intent()) }
+   if (resource === 'payment_intents' && action === 'cancel') { calls.push(`cancel:${paymentId}`); statuses[paymentId] = 'canceled'; return Response.json(intent()) }
+   if (resource === 'payment_intents') return Response.json(intent())
+   if (resource === 'charges') return Response.json(charge)
+   throw new Error(`Unexpected Stripe request ${init?.method} ${url.pathname}`)
+  })
+  const lines = [{ product_variant_id: 'ruby', quantity: 1 }, { product_variant_id: 'celadon', quantity: 1 }]
+
+  // The cart is priced at the studio: the set on the shelf from stock, Celadon made to order, and the rate its 8 kg parcel takes.
+  const quote = await quoteOrder(db, ORG, { lines, delivery: { method: 'shipping', country: 'LA' } })
+  assert.deepEqual(quote.lines.map(line => [line.product_variant_id, line.amount, line.available, line.made_to_order_quantity]), [['ruby', 6000, 1, 0], ['celadon', 3000, 0, 1]])
+  assert.deepEqual([quote.weight_grams, quote.shipping_rates.map(rate => rate.id), quote.pickup_locations.map(location => location.id), quote.ship_to_countries], [8000, ['ems'], ['studio'], ['LA']])
+  await assert.rejects(() => quoteOrder(db, ORG, { lines, delivery: { method: 'shipping', country: 'VN' } }), error => error instanceof HTTPError && (error.data as { code: string }).code === 'SHIPPING_UNAVAILABLE')
+
+  const checkout = (key: string, cart = lines) => createOrderCheckout(db, env, {
+   organizationId: ORG, buyerUserId: 'guest', lines: cart, delivery: { method: 'shipping', country: 'LA', shipping_rate_id: 'ems' },
+   shipping_details: { name: 'Somchai', phone: null, address: { line1: 'Sisavangvong Road', city: 'Luang Prabang', country: 'LA' } },
+   guest: { name: 'Somchai', email: 'somchai@example.com', phone: null }, note: 'Photo before it ships, please', idempotencyKey: key, origin: null,
+  })
+  const handoff = await checkout('first-order')
+  assert.deepEqual(await checkout('first-order'), handoff, 'the same key reopens the same checkout')
+  assert.deepEqual(calls, ['create:10000'])
+  const order = await db.prepare("SELECT o.id, o.number, o.status, o.ship_by IS NOT NULL AS dated, p.subject_type, p.amount FROM orders o JOIN payments p ON p.subject_id = o.id WHERE p.id = ?").bind(handoff.payment_id).first()
+  assert.deepEqual({ ...order, id: undefined }, { id: undefined, number: 1001, status: 'pending', dated: 1, subject_type: 'order', amount: 10000 })
+
+  // Authorization pays the order, opens its conversation, takes stock and opens its task, then Stripe captures.
+  const authorized = (paymentId: string) => ({ id: `evt_${paymentId}`, type: 'payment_intent.amount_capturable_updated', account: 'acct_seller', livemode: false, data: { object: { id: `pi_${paymentId}`, metadata: { blawby_payment_id: paymentId } } } } as unknown as Stripe.Event)
+  statuses[handoff.payment_id] = 'requires_capture'
+  await processPaymentEvent(db, getStripe(env), authorized(handoff.payment_id), env)
+  assert.deepEqual(calls, ['create:10000', `capture:${handoff.payment_id}`])
+  const paid = await readOrder(db, ORG, { orderId: String(order!.id) })
+  assert.equal(paid?.status, 'paid')
+  assert.deepEqual(paid?.lines.map(line => [line.product_variant_id, line.made_to_order_quantity]), [['ruby', 0], ['celadon', 1]])
+  assert.equal(paid?.guest?.email, 'somchai@example.com')
+  assert.equal((await requirePayment(db, ORG, handoff.payment_id)).captured_amount, 10000)
+  assert.deepEqual((await db.prepare('SELECT product_variant_id, available FROM inventory_levels ORDER BY product_variant_id').all()).results, [{ product_variant_id: 'celadon', available: -1 }, { product_variant_id: 'ruby', available: 0 }])
+  assert.equal(await db.prepare("SELECT kind FROM conversations WHERE id = ?").bind(paid!.conversation_id).first('kind'), 'contact')
+  assert.equal(await db.prepare("SELECT count(*) n FROM tasks WHERE kind = 'order_fulfillment' AND subject_type = 'order' AND subject_id = ? AND status = 'open' AND due_at IS NOT NULL").bind(paid!.id).first('n'), 1)
+  await events.drain(env, 'payment.captured')
+
+  // Ruby reds is sold out now: a new cart cannot take it.
+  await assert.rejects(() => checkout('second-order', [{ product_variant_id: 'ruby', quantity: 1 }, { product_variant_id: 'celadon', quantity: 1 }]), error => error instanceof HTTPError && (error.data as { code: string }).code === 'OUT_OF_STOCK')
+
+  // A checkout opened while one was left loses it to a sale in the shop: authorization cancels it, nothing is captured or taken.
+  await db.prepare("UPDATE inventory_levels SET available = 1 WHERE product_variant_id = 'ruby'").run()
+  const raced = await checkout('raced-order')
+  await db.prepare("UPDATE inventory_levels SET available = 0 WHERE product_variant_id = 'ruby'").run()
+  statuses[raced.payment_id] = 'requires_capture'
+  await processPaymentEvent(db, getStripe(env), authorized(raced.payment_id), env)
+  assert.deepEqual(calls.slice(-1), [`cancel:${raced.payment_id}`])
+  assert.equal(await db.prepare('SELECT o.status FROM orders o JOIN payments p ON p.subject_id = o.id WHERE p.id = ?').bind(raced.payment_id).first('status'), 'released')
+  assert.equal((await requirePayment(db, ORG, raced.payment_id)).captured_amount, 0)
+  assert.deepEqual((await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'celadon'").first('available')), -1)
+
+  // Shipping it closes the task and tells the buyer in their conversation.
+  const shipped = await fulfillOrder(db, env, { organizationId: ORG, orderId: paid!.id, actorId: 'host', carrier: 'Thailand Post EMS', tracking_number: 'EE123456789TH', tracking_url: null })
+  assert.equal(shipped.carrier, 'Thailand Post EMS')
+  assert.equal(await db.prepare("SELECT status FROM tasks WHERE subject_id = ?").bind(paid!.id).first('status'), 'done')
+  assert.match(String(await db.prepare("SELECT body FROM messages WHERE conversation_id = ? AND dedupe_key = ?").bind(paid!.conversation_id, `order:${paid!.id}:fulfilled`).first('body')), /EE123456789TH/)
  } finally { await runtime.dispose() }
 })

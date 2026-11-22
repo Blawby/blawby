@@ -19,6 +19,7 @@ import { STAYS_TOOLS, handleStaysTools } from './stays'
 import { GUEST_MESSAGING_TOOLS, handleGuestMessagingTools } from './guest-messaging'
 import { CONVERSATION_TOOLS, handleConversationTools } from './conversations'
 import { TASK_TOOLS, handleTaskTools } from './tasks'
+import { GOODS_TOOLS, handleGoodsTools } from './goods'
 import { SUBMISSIONS_TOOLS, handleSubmissionsTools } from './submissions'
 import { GOOGLE_ADS_TOOLS, handleGoogleAdsTools } from './google-ads'
 import { META_ADS_TOOLS, handleMetaAdsTools } from './meta-ads'
@@ -70,6 +71,7 @@ export const MCP_PUBLIC_TOOLS: McpToolDefinition[] = [
   ...GUEST_MESSAGING_TOOLS,
   ...CONVERSATION_TOOLS,
   ...TASK_TOOLS,
+  ...GOODS_TOOLS,
   ...GOOGLE_ADS_TOOLS,
   ...META_ADS_TOOLS,
 ].sort((a, b) => a.name.localeCompare(b.name))
@@ -139,6 +141,7 @@ const DOMAIN_HANDLERS: Record<string, (_ctx: McpExecutorContext) => Promise<unkn
   guest_messaging: handleGuestMessagingTools,
   conversations: handleConversationTools,
   tasks: handleTaskTools,
+  goods: handleGoodsTools,
   google_ads: handleGoogleAdsTools,
   meta_ads: handleMetaAdsTools,
 }

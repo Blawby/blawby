@@ -9,12 +9,65 @@ export default {
       "contact": "You received this email because you sent a message to {organization}.",
       "reply": "You received this email because {organization} replied to your conversation.",
       "booking_update": "You received this email because there is an update to your request with {organization}.",
-      "booking_change": "You received this email because {organization} proposed changes to your request."
+      "booking_change": "You received this email because {organization} proposed changes to your request.",
+      "order": "You received this email because you placed an order with {organization}."
     },
     "subject": {
       "reservation_confirmed": "Reservation confirmed for {place}",
-      "message_from": "Message from {name}"
+      "message_from": "Message from {name}",
+      "order_confirmed": "Order #{number} confirmed",
+      "order_shipped": "Order #{number} has shipped",
+      "order_collected": "Order #{number} was collected",
+      "order_cancelled": "Order #{number} was cancelled"
     }
+  },
+  "order": {
+    "items": "Items",
+    "ship_to": "Ship to",
+    "pickup_at": "Pickup at",
+    "ships_by": "Ships by",
+    "carrier": "Carrier",
+    "tracking_number": "Tracking number",
+    "track": "Track your order",
+    "payment_method": "Payment method",
+    "cancelled_unpaid": "Your payment was not completed, so your order was cancelled. You were not charged.",
+    "cancelled_refunded": "Your order was cancelled and refunded in full. The refund comes in a separate email."
+  },
+  "shop": {
+    "add_to_cart": "Add to cart",
+    "cart": "Cart",
+    "cart_empty": "Your cart is empty",
+    "checkout": "Checkout",
+    "remove": "Remove",
+    "quantity": "Quantity",
+    "in_stock": "{count} in stock",
+    "sold_out": "Sold out",
+    "made_to_order": "Made to order",
+    "ships_in": "Ships in {days} business days",
+    "delivery": "Delivery",
+    "ship": "Ship",
+    "pickup": "Pick up",
+    "pickup_free": "Free pickup at {place}",
+    "shipping_address": "Shipping address",
+    "address_line1": "Address",
+    "address_line2": "Apartment, suite, etc.",
+    "city": "City",
+    "state": "State or province",
+    "postal_code": "Postal code",
+    "country": "Country",
+    "shipping_method": "Shipping method",
+    "no_shipping": "We don't ship these items to that country",
+    "subtotal": "Subtotal",
+    "shipping": "Shipping",
+    "total": "Total",
+    "taxes_at_payment": "Any tax is added on the payment step.",
+    "continue_to_payment": "Continue to payment",
+    "your_details": "Your details",
+    "note": "Note for the seller",
+    "order_confirmed": "Thank you, your order #{number} is confirmed",
+    "order_shipped": "Shipped",
+    "order_collected": "Collected",
+    "receipt": "Receipt"
   },
   "reservations": {
     "confirmed": "Reservation confirmed"

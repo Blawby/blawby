@@ -28,14 +28,14 @@ import { guestGroup } from '~/shared/dashboard-today'
   complete, skip and reopen them here, from the dashboard, MCP and the app alike.
 */
 
-export const TASK_KINDS = ['turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'consultation_prep', 'consultation_follow_up', 'maintenance'] as const
+export const TASK_KINDS = ['turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'consultation_prep', 'consultation_follow_up', 'maintenance', 'order_fulfillment'] as const
 export const SUPPORTED_TASK_KINDS = d1JsonStringSet(TASK_KINDS)
 export type TaskKind = typeof TASK_KINDS[number]
 export type TaskStatus = 'open' | 'done' | 'skipped' | 'cancelled'
 
 export interface TaskRow {
   id: string; organization_id: string; kind: TaskKind
-  subject_type: 'scheduled_guest_message' | 'booking' | 'product_session' | 'message' | null; subject_id: string | null
+  subject_type: 'scheduled_guest_message' | 'booking' | 'product_session' | 'message' | 'order' | null; subject_id: string | null
   product_id: string | null; location_id: string | null
   title: string | null; notes: string | null
   assigned_member_id: string | null
@@ -494,6 +494,8 @@ interface Context {
   outcomes: Map<string, { note: string | null; photos: TaskPhoto[] }>
   /** The guest message a maintenance job was reported in, by message id. */
   reports: Map<string, { conversation_id: string; guest_name: string | null; participant: string | null; body: string | null }>
+  /** An order to send, by order id: its number, buyer, items and conversation. */
+  orders: Map<string, { number: number; conversation_id: string | null; guest_name: string | null; delivery_method: string; items: string; first_product_id: string | null; country: string | null }>
 }
 
 /**
@@ -516,7 +518,8 @@ function taskContextQueries(organizationId: string, listed: { sql: string; param
       JOIN bookings incoming ON incoming.organization_id = outgoing.organization_id AND incoming.product_id = outgoing.product_id
         AND incoming.product_session_id IS NULL AND incoming.status = 'confirmed' AND incoming.starts_at >= date(outgoing.ends_at, '-1 day')
       WHERE task.kind = 'turnover')`
-  const productIds = `SELECT product_id FROM listed WHERE product_id IS NOT NULL UNION SELECT product_id FROM bookings WHERE organization_id = ${org} AND product_session_id IS NULL AND id IN ${stayIds}`
+  const productIds = `SELECT product_id FROM listed WHERE product_id IS NOT NULL UNION SELECT product_id FROM bookings WHERE organization_id = ${org} AND product_session_id IS NULL AND id IN ${stayIds}
+    UNION SELECT product_id FROM order_lines WHERE organization_id = ${org} AND sort_order = 0 AND order_id IN ${subjects('order')}`
   const stays = "bookings s JOIN conversations r ON r.organization_id = s.organization_id AND r.booking_id = s.id AND r.kind = 'booking'"
   const pictures = mediaPlacementsQuery({ organizationId, ownerType: 'product', owners: { sql: productIds } })
   const closure = `SELECT t.id AS task_id, m.id AS message_id, m.body FROM listed t
@@ -550,11 +553,17 @@ function taskContextQueries(organizationId: string, listed: { sql: string; param
     query(`SELECT m.id, m.body, m.conversation_id, json_extract(c.payload_json, '$.guest.name') AS guest_name, json_extract(c.payload_json, '$.participant.title') AS participant
       FROM messages m JOIN conversations c ON c.organization_id = m.organization_id AND c.id = m.conversation_id
       WHERE m.organization_id = ${org} AND m.id IN ${subjects('message')}`),
+    query(`SELECT o.id, o.number, o.conversation_id, o.delivery_method, json_extract(o.shipping_details, '$.address.country') AS country,
+        json_extract(c.payload_json, '$.guest.name') AS guest_name,
+        (SELECT group_concat(l.title || CASE WHEN l.variant_title IS NULL THEN '' ELSE ' (' || l.variant_title || ')' END || ' × ' || l.quantity, ', ') FROM order_lines l WHERE l.organization_id = o.organization_id AND l.order_id = o.id) AS items,
+        (SELECT l.product_id FROM order_lines l WHERE l.organization_id = o.organization_id AND l.order_id = o.id AND l.sort_order = 0) AS first_product_id
+      FROM orders o LEFT JOIN conversations c ON c.organization_id = o.organization_id AND c.id = o.conversation_id
+      WHERE o.organization_id = ${org} AND o.id IN ${subjects('order')}`),
   ]
 }
 
 function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ results: unknown[] }>): Context {
-  const [organizations, members, locations, messages, privateConsultations, booked, stayRows, requests, products, pictures, closureRows, reportRows]
+  const [organizations, members, locations, messages, privateConsultations, booked, stayRows, requests, products, pictures, closureRows, reportRows, orderRows]
     = results.map(result => result.results) as [
       Array<{ slug: string; vertical: string }>, Array<{ id: string; userId: string; name: string }>, Array<{ id: string; title: string }>,
       DeliveryTaskMessage[],
@@ -562,6 +571,7 @@ function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ r
       Array<{ id: string; name: string | null; kind: ProductKind }>, unknown[],
       Array<{ task_id: string; message_id: string; body: string | null } & (MessagePhotoRow | { owner_id: null })>,
       Array<{ id: string; conversation_id: string; guest_name: string | null; participant: string | null; body: string | null }>,
+      Array<{ id: string; number: number; conversation_id: string | null; guest_name: string | null; delivery_method: string; items: string; first_product_id: string | null; country: string | null }>,
     ]
   const organization = organizations[0]
   if (!organization) throw new Error(`Organization ${organizationId} is missing`)
@@ -603,6 +613,7 @@ function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ r
     outcomes: new Map(closureRows.map(row => [row.task_id, { note: row.body, photos: (photos.get(row.message_id) ?? [])
       .map(photo => ({ id: photo.id, url: photo.url, thumbnail_url: photo.thumbnailUrl })) }])),
     reports: new Map(reportRows.map(({ id, ...report }) => [id, report])),
+    orders: new Map(orderRows.map(({ id, ...order }) => [id, order])),
   }
 }
 
@@ -641,6 +652,7 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
   let sheet: Omit<TaskView['sheet'], 'checkout' | 'checkin'> = { heading: 'Task', title: '', date: null }
   let checkoutSide: TaskSheetSide | null = null, checkinSide: TaskSheetSide | null = null
   let face: TaskView['face'] = product ? 'photo' : 'compact'
+  let image: string | null = product?.imageUrl ?? null
   let avatar: TaskView['avatar'] = null
   switch (row.kind) {
     case 'turnover': {
@@ -805,6 +817,24 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
       sheet = { heading: 'Maintenance', title, date: row.due_at ? day(row.due_at) : null }
       break
     }
+    case 'order_fulfillment': {
+      // Shopify's unfulfilled order: what to send, to whom, by when, and the buyer's conversation.
+      const order = context.orders.get(row.subject_id!)
+      if (!order) throw new Error(`Order task ${row.id} has no order`)
+      const shipping = order.delivery_method === 'shipping'
+      title = shipping ? `Ship order #${order.number} to ${who(order.guest_name)}` : `Order #${order.number} for pickup by ${who(order.guest_name)}`
+      status_line = [shipping ? `Ship to ${order.country ?? ''}`.trim() : 'Pickup', place].filter(Boolean).join(' · ')
+      detail = order.items
+      when = row.due_at ? `Ship by ${day(row.due_at)}` : null
+      conversation_id = order.conversation_id
+      path = conversation(conversation_id)
+      action = path ? { type: 'open', label: shipping ? 'Ship' : 'Collected', path } : null
+      sheet = { heading: 'Order', title, date: row.due_at ? day(row.due_at) : null }
+      const picture = order.first_product_id ? context.product(order.first_product_id) : null
+      face = picture ? 'photo' : 'compact'
+      image = picture?.imageUrl ?? null
+      break
+    }
     case 'custom':
       status_line = ['Task', place].filter(Boolean).join(' · ')
       title = row.title!
@@ -848,8 +878,8 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
   const outcome = row.closed_at === null ? null : { note: authored?.note ?? null, photos: authored?.photos ?? [], closed_at: row.closed_at, closed_by: closerName }
   return {
     id: row.id, kind: row.kind, status: row.status, version: row.version,
-    face, tag: row.status !== 'open' ? null : row.kind === 'turnover' ? 'Turnover' : row.kind === 'maintenance' ? 'Maintenance' : null, avatar,
-    image_url: product?.imageUrl ?? null, status_line, title, place, when, detail, error, note: outcome?.note ? `“${outcome.note}”` : null,
+    face, tag: row.status !== 'open' ? null : row.kind === 'turnover' ? 'Turnover' : row.kind === 'maintenance' ? 'Maintenance' : row.kind === 'order_fulfillment' ? 'Order' : null, avatar,
+    image_url: image, status_line, title, place, when, detail, error, note: outcome?.note ? `“${outcome.note}”` : null,
     person: row.status === 'open' ? assignee : closer, assignee, action, sheet: { ...sheet, checkout: checkoutSide, checkin: checkinSide },
     ...(available ? { claim: { label: 'Claim', path: taskUpdatePath(row.organization_id, row.id), version: row.version } } : {}),
     starts_at: row.starts_at, due_at: row.due_at, timezone: zone, notes: available ? null : row.notes,
@@ -881,7 +911,7 @@ export function parseTaskListQuery(query: Record<string, unknown>, defaults: Par
 /** Today's open work in the owner's order: failed deliveries, turnovers, then everything else. */
 /** Work a person does and closes themselves: they Skip it, and say what they found when they finish. Everything else is Dismissed. */
 const PERSON_WORK: ReadonlySet<TaskKind> = new Set(['turnover', 'custom', 'consultation_prep', 'consultation_follow_up', 'maintenance'])
-const TODAY_ORDER: Record<TaskKind, number> = { message_delivery: 0, turnover: 1, maintenance: 1, booking_review: 2, booking_change: 2, consultation_prep: 2, custom: 3, consultation_follow_up: 3 }
+const TODAY_ORDER: Record<TaskKind, number> = { message_delivery: 0, turnover: 1, maintenance: 1, booking_review: 2, booking_change: 2, consultation_prep: 2, custom: 3, consultation_follow_up: 3, order_fulfillment: 2 }
 
 /** Today: open work due or starting today or earlier, or with no date; then what was closed today. Upcoming: open work later than today, by day. */
 export async function listTasks(db: DbClient, viewer: TaskViewer, query: TaskListQuery, now = new Date()): Promise<{ sections: TaskSection[]; resolved_at: string }> {

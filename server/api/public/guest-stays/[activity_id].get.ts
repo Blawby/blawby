@@ -18,7 +18,7 @@ export default defineHandler(async (event) => {
   const token = readBearerToken(event.req.headers.get('authorization'))
   if (!token) throw new HTTPError({ statusCode: 401, statusMessage: 'Open your stay from the link in your confirmation email' })
   const env = cloudflareEnv(event)
-  const expected = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET ?? '', activityId)
+  const expected = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, activityId)
   if (await hashReservationCancelToken(token) !== await hashReservationCancelToken(expected.token)) throw new HTTPError({ statusCode: 404, statusMessage: 'Stay not found' })
   const owner = await queryFirst<{ user_id: string | null; created_at: string }>(env.DB, "SELECT b.user_id, b.created_at FROM conversations c JOIN bookings b ON b.id = c.booking_id AND b.organization_id = c.organization_id WHERE c.organization_id = ? AND c.id = ? AND c.kind = 'booking' AND b.owner = 'app' AND b.product_session_id IS NULL", [organizationId, activityId])
   if (!owner?.user_id) throw new HTTPError({ statusCode: 404, statusMessage: 'Stay not found' })

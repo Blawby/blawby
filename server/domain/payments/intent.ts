@@ -11,6 +11,7 @@ import { paymentsStripe, paymentsStripeKeys, validatedSurchargeBasisPoints } fro
 import { claimCheckoutReturn, originalCheckoutClaim, tokenHash } from './buyer'
 import { approvedStayBooking, type Payment } from './index'
 import { isStayPurchase, type PaymentReview } from './checkout'
+import { orderSnapshotOf } from '~/server/domain/goods'
 import { PRICE_TAX_BEHAVIORS, type Price } from '~/shared/prices'
 import { checkoutHoldSql, reconcilePaymentIntent, confirmationHoldUntil, releaseApprovedStayConfirmation, type CheckoutHold } from './events'
 import { assertBookingBatchWrite, bookingBatchWriteRefused } from '~/server/utils/availability'
@@ -159,6 +160,7 @@ function snapshotOf(payment: Payment) {
       later_payments_add_tax: snapshot.automatic_tax === true && snapshot.price!.tax_behavior === 'exclusive' } : null,
     stayGuest: stay?.guest ?? null, approval: approvedStayBooking(snapshot),
     automatic_tax: snapshot.automatic_tax, tax_code: snapshot.tax_code as string | null, tax_behavior: snapshot.price!.tax_behavior as Price['tax_behavior'],
+    order: orderSnapshotOf(snapshot),
   }
 }
 
@@ -171,7 +173,7 @@ function handoffSubject(payment: CheckoutPayment, snapshot: ReturnType<typeof sn
   const slot = payment.subject_type === 'booking' && snapshot.stay === null
   const heldSlot = slot || snapshot.approval
   if (heldSlot && !payment.hold_conversation_id) throw new Error('Payment has no checkout conversation')
-  let guest: GuestThreadPayload['guest'] | null = state === 'open' ? snapshot.stayGuest : null
+  let guest: GuestThreadPayload['guest'] | null = state === 'open' ? snapshot.stayGuest ?? snapshot.order?.guest ?? null : null
   if (state === 'open' && slot && payment.hold_conversation_id) {
     const { guest_name: name, guest_email: email, guest_phone: phone } = payment
     if (typeof name !== 'string' || !name || typeof email !== 'string' || !email || (phone !== null && typeof phone !== 'string')) {
@@ -194,6 +196,8 @@ function handoffSubject(payment: CheckoutPayment, snapshot: ReturnType<typeof sn
     starts_at: heldSlot ? payment.hold_starts_at : null, ends_at: heldSlot ? payment.hold_ends_at : null, timezone: heldSlot ? payment.hold_timezone : null,
     // The party the booking is for: a table's deposit is one per booking, whatever the party.
     party_size: heldSlot ? payment.hold_quantity : null,
+    // What an order buys and where it goes, as the buyer reviews it before paying.
+    order: snapshot.order ? { number: snapshot.order.number, lines: snapshot.order.lines, shipping: snapshot.order.shipping, shipping_details: snapshot.order.shipping_details, delivery_method: snapshot.order.delivery_method, ship_by: snapshot.order.ship_by } : null,
     billing_details: guest ? { name: guest.name, email: guest.email, ...(guest.phone ? { phone: guest.phone } : {}) } : null,
     // Where the offering's page is, so the buyer can read its full terms or change what they picked.
     product_slug: payment.product_slug, location_slug: payment.location_slug,
@@ -309,7 +313,13 @@ export async function reviewPayment(db: DbClient, env: CloudflareEnv, organizati
 /** Stripe Tax's calculation for the purchase, located where Stripe says it can locate the buyer. */
 async function calculateTax(stripe: Stripe, payment: Payment, snapshot: ReturnType<typeof snapshotOf>, method: Stripe.PaymentMethod, buyerIp: string | null) {
   const address = method.billing_details.address
-  const located = address?.country
+  const order = snapshot.order
+  // Goods are taxed where they are delivered: the shipping address, or the location where they are collected.
+  if (order?.delivery_method === 'pickup' && !order.pickup_address) throw new HTTPError({ statusCode: 409, statusMessage: 'The pickup location has no address to calculate tax for', data: { code: 'pickup_address_missing' } })
+  const shipped = order?.shipping_details?.address ?? order?.pickup_address
+  const located = shipped
+    ? { address: { country: shipped.country, line1: shipped.line1, line2: shipped.line2, city: shipped.city, state: shipped.state, postal_code: shipped.postal_code }, address_source: 'shipping' as const }
+    : address?.country
     ? { address: { country: address.country, line1: address.line1, line2: address.line2, city: address.city, state: address.state, postal_code: address.postal_code }, address_source: 'billing' as const }
     : buyerIp ? { ip_address: buyerIp } : null
   if (!located) throw new HTTPError({ statusCode: 409, statusMessage: 'Enter your billing address so tax can be calculated', data: { code: 'customer_tax_location_invalid' } })
@@ -317,7 +327,10 @@ async function calculateTax(stripe: Stripe, payment: Payment, snapshot: ReturnTy
     return await stripe.tax.calculations.create({
       currency: payment.currency.toLowerCase(),
       // An unspecified price takes the account's default tax behavior in Stripe Tax settings.
-      line_items: [{ amount: payment.amount, reference: payment.id, ...(snapshot.tax_behavior !== 'unspecified' ? { tax_behavior: snapshot.tax_behavior } : {}), ...(snapshot.tax_code ? { tax_code: snapshot.tax_code } : {}) }],
+      line_items: order
+        ? order.lines.map((line, index) => ({ amount: line.amount, quantity: line.quantity, reference: `${payment.id}:${index}`, ...(line.tax_behavior !== 'unspecified' ? { tax_behavior: line.tax_behavior } : {}), ...(line.tax_code ? { tax_code: line.tax_code } : {}) }))
+        : [{ amount: payment.amount, reference: payment.id, ...(snapshot.tax_behavior !== 'unspecified' ? { tax_behavior: snapshot.tax_behavior } : {}), ...(snapshot.tax_code ? { tax_code: snapshot.tax_code } : {}) }],
+      ...(order?.shipping ? { shipping_cost: { amount: order.shipping.amount } } : {}),
       customer_details: located,
     }, { stripeAccount: payment.stripe_account_id })
   } catch (error) {
@@ -410,20 +423,27 @@ export async function confirmPayment(db: DbClient, env: CloudflareEnv, organizat
 export type PaymentReturn =
   | { state: 'paid'; kind: 'booking'; conversation_id: string; cancellation_token: string; booking?: GuestBookingReceipt }
   | { state: 'paid'; kind: 'stay'; activity_id: string; receipt_token: string }
+  | { state: 'paid'; kind: 'order'; order_number: number; activity_id: string; receipt_token: string }
   | { state: 'processing' }
   | { state: 'taken' }
   | { state: 'expired' }
 
-async function paymentReceipt(env: CloudflareEnv, payment: Payment, receipt: CheckoutHold | null): Promise<PaymentReturn> {
+async function paymentReceipt(db: DbClient, env: CloudflareEnv, payment: Payment, receipt: CheckoutHold | null): Promise<PaymentReturn> {
+  if (payment.subject_type === 'order') {
+    // The order is read by its conversation, as the buyer's account reads it.
+    const order = await queryFirst<{ number: number; conversation_id: string | null; status: string }>(db, 'SELECT number, conversation_id, status FROM orders WHERE organization_id = ? AND id = ?', [payment.organization_id, payment.subject_id])
+    if (order?.status !== 'paid' || !order.conversation_id) throw new HTTPError({ statusCode: 409, statusMessage: 'Payment was received, but the order could not be confirmed', data: { code: 'payment_order_unconfirmed' } })
+    return { state: 'paid', kind: 'order', order_number: order.number, activity_id: order.conversation_id, receipt_token: (await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, order.conversation_id)).token }
+  }
   if (receipt?.status !== 'converted') throw new Error('Captured payment has no saved booking')
   if (payment.subject_type !== 'booking') throw new Error(`Payment subject ${payment.subject_type} has no guest confirmation`)
   const conversationId = receipt.receipt_conversation_id
   if (!conversationId) throw new Error('Converted hold has no booking conversation')
   if (receipt.session_id === null) {
     // A stay is read by its conversation, as the guest's account reads it.
-    return { state: 'paid', kind: 'stay', activity_id: conversationId, receipt_token: (await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET ?? '', conversationId)).token }
+    return { state: 'paid', kind: 'stay', activity_id: conversationId, receipt_token: (await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, conversationId)).token }
   }
-  const cancellation = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET ?? '', conversationId)
+  const cancellation = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, conversationId)
   if (await hashReservationCancelToken(cancellation.token) !== receipt.receipt_cancellation_hash) throw new Error('Paid booking is missing its receipt capability')
   return { state: 'paid', kind: 'booking', conversation_id: conversationId, cancellation_token: cancellation.token }
 }
@@ -473,7 +493,7 @@ export async function completePaymentReturn(db: DbClient, env: CloudflareEnv, or
     if (!userId && visitId && receiptLanguage && sessionBuyer) userId = await sessionBuyer()
     const originalBuyer = visitId && userId && userId === payment.buyer_user_id
       ? originalCheckoutClaim(payment.id, userId, await tokenHash(claim), new Date().toISOString()) : null
-    const cancellation = visitId && originalBuyer ? await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET ?? '', visitId) : null
+    const cancellation = visitId && originalBuyer ? await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, visitId) : null
     const visit = visitId && cancellation ? await visitReceipt(visitId, cancellation.token) : null
     // A visit with a receipt plan checks for the webhook's capture in the same
     // batch that can claim the booking itself.
@@ -503,7 +523,7 @@ export async function completePaymentReturn(db: DbClient, env: CloudflareEnv, or
   }
   // The approval checkout began in the buyer's account; the business's site may have a different browser session.
   const snapshot = snapshotOf(payment)
-  const receipt = await paymentReceipt(env, payment, hold)
+  const receipt = await paymentReceipt(db, env, payment, hold)
   if (snapshot.approval) return receipt
   if (receipt.state === 'paid' && receipt.kind === 'booking' && receiptLanguage) {
     if (committedReceipt?.id === receipt.conversation_id && committedReceipt.token === receipt.cancellation_token) {

@@ -930,6 +930,17 @@ export const EXPECTED_TOOL_ANNOTATIONS = {
   complete_task: { ...D, openWorldHint: true },
   skip_task: D,
   list_opportunities: R,
+  get_inventory: R,
+  // Each replaces what is there: a stock count, a zone's rate list, a location's pickup.
+  set_inventory: D,
+  list_shipping_zones: R,
+  save_shipping_zone: D,
+  delete_shipping_zone: D,
+  set_pickup: D,
+  list_orders: R,
+  // Emails the buyer.
+  // Closes the order's ship task and takes it off the open list, and tells the buyer.
+  fulfill_order: { ...D, openWorldHint: true },
 } as const satisfies Record<string, McpToolAnnotations>
 
 export function buildToolAnnotationsByName() {

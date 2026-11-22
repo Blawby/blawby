@@ -1,5 +1,7 @@
 import { createWithStripeMetadata, stripeMetadataId } from './stripe-metadata'
 import type Stripe from 'stripe'
+import { publishEvent } from '~/server/events'
+import { cancelRefundedOrderQueries } from '~/server/domain/goods'
 import { HTTPError } from 'nitro'
 import { execute, executeBatch, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import { assertRoleAllows } from '~/server/utils/member-access'
@@ -52,7 +54,7 @@ export interface Payment {
   buyer_user_id: string | null
   stripe_account_id: string
   livemode: number
-  subject_type: 'booking'
+  subject_type: 'booking' | 'order'
   subject_id: string | null
   location_id: string | null
   currency: string
@@ -177,9 +179,9 @@ export async function readPaymentDetails(db:DbClient,env:CloudflareEnv,organizat
   {query:'SELECT * FROM payments WHERE organization_id=? AND id=?',params:scope},
   {query:'SELECT r.* FROM payments p JOIN payment_refunds r ON r.payment_id=p.id WHERE p.organization_id=? AND p.id=?',params:scope},
   {query:'SELECT d.* FROM payments p JOIN payment_disputes d ON d.payment_id=p.id WHERE p.organization_id=? AND p.id=?',params:scope},
-  {query:`SELECT (SELECT c.id FROM conversations c WHERE c.booking_id=b.id AND c.kind='booking') AS conversation_id
-      FROM payments p JOIN bookings b ON p.subject_type='booking' AND b.id=p.subject_id AND b.organization_id=p.organization_id
-      WHERE p.organization_id=? AND p.id=?`,params:scope},
+  {query:`SELECT CASE p.subject_type WHEN 'order' THEN (SELECT o.conversation_id FROM orders o WHERE o.organization_id=p.organization_id AND o.id=p.subject_id)
+      ELSE (SELECT c.id FROM conversations c WHERE c.booking_id=p.subject_id AND c.organization_id=p.organization_id AND c.kind='booking') END AS conversation_id
+      FROM payments p WHERE p.organization_id=? AND p.id=? AND p.subject_id IS NOT NULL`,params:scope},
  ],{operation:'Read merchant payment detail'})
  const recorded=recordedResult!.results[0] as Payment|undefined
  if(!recorded)throw new HTTPError({statusCode:404,statusMessage:'Payment not found'})
@@ -292,12 +294,18 @@ export async function reconcileRefundState(db:DbClient,stripe:Stripe,payment:Pay
  // A partial refund was approved at one amount; a full-remaining one takes whatever Stripe returned.
  if(matched&&matched.amount!==null&&matched.amount!==refund.amount)throw new Error('Native refund amount changed from authorized intent')
  const id=matched?.id??crypto.randomUUID(),now=new Date().toISOString()
- await executeBatch(db,[
+ const written=await executeBatch(db,[
   {query:`INSERT INTO payment_refunds(id,payment_id,idempotency_key,stripe_refund_id,amount,reason,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET stripe_refund_id=excluded.stripe_refund_id,amount=excluded.amount,status=excluded.status,error=NULL,updated_at=excluded.updated_at`,params:[id,payment.id,`provider:${payment.stripe_account_id}:${payment.livemode}:${refund.id}`,refund.id,refund.amount,refund.reason??'provider',refund.status,now,now]},
   {query:"UPDATE payments SET refunded_amount=(SELECT COALESCE(SUM(amount),0) FROM payment_refunds WHERE payment_id=? AND status='succeeded'),updated_at=? WHERE id=?",params:[payment.id,now,payment.id]},
+  // An order refunded in full is cancelled, as Shopify's is, and nothing is left to ship.
+  // An order refunded in full before it ships is cancelled, as Shopify's is: its stock back, its task closed.
+  ...(payment.subject_type==='order'?cancelRefundedOrderQueries(payment,now):[]),
   {query:`UPDATE payment_authorizations SET consumed_at=COALESCE(consumed_at,?) WHERE payment_id=? AND approved_at IS NOT NULL AND action='refund' AND EXISTS(SELECT 1 FROM payment_refunds r WHERE r.id=? AND r.payment_id=payment_authorizations.payment_id AND r.idempotency_key='approved:'||payment_authorizations.id AND (payment_authorizations.amount IS NULL OR r.amount=payment_authorizations.amount) AND r.created_by=payment_authorizations.user_id)`,params:[now,payment.id,id]},
  ])
  await publishPaymentNotification(env,payment,{kind,nativeId:refund.id,status:refund.status!,amount:refund.amount})
+ // The refund that cancelled an unshipped order also tells the buyer and the business the order is off.
+ // Its notices are keyed by order and recipient, so publishing again on a retry sends nothing twice.
+ if(payment.subject_type==='order'&&written[5]?.results.length)await publishEvent(env,{type:'order.cancelled',organization_id:payment.organization_id,order_id:payment.subject_id!})
  if(refund.status==='succeeded')await recordPaymentRefunded(db,payment,refund,id)
  return {id,stripe_refund_id:refund.id,status:refund.status}
 }

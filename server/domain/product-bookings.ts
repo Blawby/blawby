@@ -66,7 +66,7 @@ interface BookingContact {
   idempotencyKey: string
 }
 
-async function bookingRateLimit(db: DbClient, env: CloudflareEnv, ipHash: string): Promise<string | null> {
+export async function bookingRateLimit(db: DbClient, env: CloudflareEnv, ipHash: string): Promise<string | null> {
   if (import.meta.dev || env.E2E_ALLOW_DEV_ROUTES === 'true') return null
   const hourWindow = Math.floor(Date.now() / 3_600_000)
   if (!await incrementHourlyRateLimit(db, `rate:book:ip:${ipHash}:${hourWindow}`, IP_HOURLY_LIMIT, 3_600_000)) {
@@ -257,7 +257,7 @@ export async function notifyProductBookingCreated(env: CloudflareEnv, db: DbClie
   const locale = request.payload.guest.locale ?? sourceLocale
   // The guest's note is their message in the conversation.
   const note = await queryFirst<{ body: string | null }>(db, 'SELECT body FROM messages WHERE conversation_id = ? AND event_name = ?', [requestId, GUEST_NOTE_EVENT])
-  const { token } = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET ?? '', requestId)
+  const { token } = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, requestId)
   const tokenMatches = await hashReservationCancelToken(token) === request.payload.cancellation.token_hash
   const receiptUrl = tokenMatches && organization.public_url
     ? `${organization.public_url.replace(/\/$/, '')}${formatTenantLocalePath('/bookings/confirmed', locale, sourceLocale)}?id=${requestId}#${token}`
@@ -464,7 +464,7 @@ async function createBookingFrom(event: H3Event, env: CloudflareEnv, context: Bo
     if (!record || record.organization_id !== organizationId || record.id !== existing.id) throw new Error('Committed booking is missing its operational receipt')
     if (!operator) {
       if (record.status !== 'pending' && record.status !== 'confirmed') return creationResult({ error: 'This booking has already been cancelled', code: 'booking_cancelled', booking_id: record.id, conversation_id: threadId }, { status: 409 })
-      const cancellation = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET ?? '', threadId)
+      const cancellation = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, threadId)
       const request = await getGuestRequest(db, threadId, organizationId, 'booking')
       if (!request || request.kind !== 'booking' || await hashReservationCancelToken(cancellation.token) !== request.payload.cancellation.token_hash) throw new Error('Booking receipt is missing its cancellation capability')
       return creationResult({ success: true, conversation_id: threadId, booking_id: record.id, status: record.status, replayed: true,
@@ -527,7 +527,7 @@ async function createBookingFrom(event: H3Event, env: CloudflareEnv, context: Bo
   const limited = !operator && await bookingRateLimit(db, env, ipHash)
   if (limited) return creationResult({ error: limited }, { status: 429 })
 
-  const cancellation = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET ?? '', threadId)
+  const cancellation = await createReplayableReservationCancelToken(env.EMAIL_REPLY_SECRET, threadId)
   const cancellationTokenHash = await hashReservationCancelToken(cancellation.token)
   // The person is the Better Auth user; what they typed stays on the thread as
   // this booking's guest snapshot and is never copied onto that user.

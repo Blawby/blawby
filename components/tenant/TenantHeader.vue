@@ -28,6 +28,7 @@
       </nav>
 
       <div class="flex items-center justify-end gap-2">
+        <NuxtLink v-if="cart?.count.value" :to="localePath('/cart')" class="rounded-full px-3 py-1.5 text-sm font-semibold text-default no-underline hover:bg-muted">{{ t('shop.cart') }} ({{ cart.count.value }})</NuxtLink>
         <TenantButton v-if="primaryAction" :to="localePath(primaryAction.path)" :data-public-consultation="primaryAction.consultation ? consultation?.schedule_path : undefined" size="sm" @click="primaryAction.consultation && trackConsultation()">
           {{ primaryAction.label }}
         </TenantButton>
@@ -95,6 +96,8 @@ const props = withDefaults(defineProps<{
 const route = useRoute()
 const { locale, localePath, t } = useI18n()
 const navAriaLabel = computed(() => t('site.header.nav_aria'))
+// The buyer's cart on this business's site, shown once it holds something.
+const cart = typeof props.organization?.id === 'string' ? useCart(props.organization.id) : null
 
 const { trackConsultationClick } = useOrganizationConversionTracking()
 

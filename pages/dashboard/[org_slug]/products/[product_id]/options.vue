@@ -72,7 +72,8 @@ const locations = computed(() => p.allOrganizationLocations.value.filter(locatio
 const stockLocationId = ref<string | null>(null)
 watchEffect(() => { if (!stockLocationId.value || !locations.value.some(location => location.id === stockLocationId.value)) stockLocationId.value = locations.value[0]?.id ?? null })
 
-interface Row { key: string; id: string | null; option_values: string[]; title: string; price: string; sku: string; available: string; media_asset_id: string | undefined }
+// `price_id` and `opened_price` are the price as the page opened: an unchanged price is not written, an edited one only onto that same offer.
+interface Row { key: string; id: string | null; option_values: string[]; title: string; price: string; price_id: string | null; opened_price: string; sku: string; available: string; media_asset_id: string | undefined }
 const options = ref<Array<{ name: string; values: string }>>([])
 const tracked = ref(false)
 const madeToOrder = ref(false)
@@ -102,7 +103,7 @@ function savedRow(optionValues: string[]): Row {
   const level = variant ? levels.value.find(entry => entry.product_variant_id === variant.id && entry.location_id === stockLocationId.value) : undefined
   return {
     key: JSON.stringify(optionValues), id: variant?.id ?? null, option_values: optionValues, title: optionValues.length ? variantTitle(optionValues) : product.value?.name ?? '',
-    price: price ? minorAmountToMajor(price.unit_amount, price.currency) : '', sku: variant?.sku ?? '', available: level ? String(level.available) : '0', media_asset_id: variant?.media_asset_id ?? undefined,
+    price: price ? minorAmountToMajor(price.unit_amount, price.currency) : '', price_id: price?.id ?? null, opened_price: price ? minorAmountToMajor(price.unit_amount, price.currency) : '', sku: variant?.sku ?? '', available: level ? String(level.available) : '0', media_asset_id: variant?.media_asset_id ?? undefined,
   }
 }
 
@@ -134,7 +135,10 @@ watch(product, () => { if (!keepDraft) reset() }, { immediate: true, flush: 'syn
 await loadLevels().catch(cause => { levelsError.value = getErrorMessage(cause, 'Stock could not be read') })
 
 const photoChoices = computed(() => (p.photoAssets.value ?? []).map((asset, index) => ({ value: asset.asset_id, label: `Photo ${index + 1}` })))
+// Options whose values make more variants than allowed cannot be saved: the rows on screen would not match them.
+const matrixError = computed(() => { try { optionCombinations(parsedOptions.value); return null } catch (cause) { return getErrorMessage(cause, 'Too many variants') } })
 const invalid = computed(() => {
+  if (matrixError.value) return matrixError.value
   if (levelsError.value) return `${levelsError.value}. Reload the page before saving.`
   for (const row of rows.value) {
     if (row.price.trim()) { try { majorAmountToMinor(row.price.trim(), p.currency) } catch { return `Enter a price for ${row.title}` } }
@@ -153,14 +157,16 @@ async function save() {
   // The location the counts were typed for, fixed now: the selector stays live while the product saves.
   const stockLocation = stockLocationId.value
   // Only counts the merchant changed are written: an order taken since the page opened keeps its effect on the others.
-  const changedStock = tracked.value && stockLocation ? rows.value.filter(row => row.available.trim() !== savedRow(row.option_values).available) : []
+  // By combination and count, read now: rows are replaced while the save is in flight, and new variants get their ids from its answer.
+  const changedStock = tracked.value && stockLocation ? rows.value.filter(row => row.available.trim() !== savedRow(row.option_values).available).map(row => ({ key: row.key, available: Number(row.available.trim()) })) : []
   let committed = false
   const switched = tracked.value !== openedSwitches.tracked || madeToOrder.value !== openedSwitches.madeToOrder
   try {
     const variants = rows.value.map((row, index) => {
       const saved = row.id ? current.variants.find(variant => variant.id === row.id) : undefined
       const price = saved ? neutralPrice(saved) : null
-      const amount = row.price.trim() ? majorAmountToMinor(row.price.trim(), p.currency) : null
+      if (row.price.trim() !== row.opened_price && (price?.id ?? null) !== row.price_id) throw new Error(`The price of ${row.title} changed since this page opened. Reload it before changing the price.`)
+      const amount = row.price.trim() && row.price.trim() !== row.opened_price ? majorAmountToMinor(row.price.trim(), p.currency) : null
       const prices = amount === null ? [] : price ? [{ id: price.id, unit_amount: amount }] : [{ unit_amount: amount, currency: p.currency, location_id: null }]
       return { ...(row.id ? { id: row.id } : {}), name: row.title, sku: row.sku.trim() || null, sort_order: index, option_values: row.option_values,
         media_asset_id: row.media_asset_id ?? null, prices, prices_mode: 'merge' as const,
@@ -173,12 +179,13 @@ async function save() {
       validate: (value): value is { product: { variants: Array<{ id: string; option_values: string[] }> } } => isRecord(value) && isRecord(value.product) && Array.isArray(value.product.variants),
     })
     committed = true
+    const savedId = (key: string) => saved.product.variants.find(variant => JSON.stringify(variant.option_values) === key)?.id ?? null
     // New variants now have ids; the draft keeps them so a retry updates rather than adds.
-    for (const row of rows.value) row.id = saved.product.variants.find(variant => JSON.stringify(variant.option_values) === row.key)?.id ?? null
+    for (const row of rows.value) row.id = savedId(row.key)
     if (changedStock.length) {
-      if (changedStock.some(row => !row.id)) throw new Error('A saved variant was not read back')
-      await applicationFetch(inventoryPath.value, { method: 'PUT', validate: isLevels,
-        body: { levels: changedStock.map(row => ({ product_variant_id: row.id, location_id: stockLocation, available: Number(row.available.trim()) })) } })
+      const levelsToWrite = changedStock.map(entry => ({ product_variant_id: savedId(entry.key), location_id: stockLocation, available: entry.available }))
+      if (levelsToWrite.some(level => !level.product_variant_id)) throw new Error('A saved variant was not read back')
+      await applicationFetch(inventoryPath.value, { method: 'PUT', validate: isLevels, body: { levels: levelsToWrite } })
     }
     await p.reload()
     // A failed re-read blocks the next save rather than comparing against counts that may be stale.

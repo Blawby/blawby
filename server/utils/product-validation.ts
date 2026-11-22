@@ -108,8 +108,10 @@ const optionalPositiveInteger = (value: unknown, field: string, max: number): nu
 export function validateVariantGoods(variant: Partial<ProductVariantGoods>, field: string): ProductVariantGoods {
   const optionValues = variant.option_values ?? []
   if (!Array.isArray(optionValues) || optionValues.length > 3 || optionValues.some(value => typeof value !== 'string' || !value.trim() || value.length > 100)) invalid(`${field}.option_values must be up to three option values`)
-  const hsCode = normalizeOptionalProductString(variant.hs_code, `${field}.hs_code`, 12)
-  if (hsCode !== null && !HS_CODE_PATTERN.test(hsCode)) invalid(`${field}.hs_code: ${HS_CODE_RULE}`)
+  const typedHsCode = normalizeOptionalProductString(variant.hs_code, `${field}.hs_code`, 13)
+  if (typedHsCode !== null && !HS_CODE_PATTERN.test(typedHsCode)) invalid(`${field}.hs_code: ${HS_CODE_RULE}`)
+  // Stored as its digits ("6913.90.00.00" is 6913900000), which every dotted form of it fits.
+  const hsCode = typedHsCode?.replaceAll('.', '') ?? null
   const origin = normalizeOptionalProductString(variant.country_of_origin, `${field}.country_of_origin`, 2)?.toUpperCase() ?? null
   if (origin !== null && !/^[A-Z]{2}$/u.test(origin)) invalid(`${field}.country_of_origin must be a two-letter country code`)
   const policy = variant.inventory_policy ?? 'deny'

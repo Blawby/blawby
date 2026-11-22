@@ -1,7 +1,7 @@
 {
   "surface": "tenant",
-  "fingerprint": "sha256:a61d339774337c2bd90e75c6edbd049376f78e27f092903aee3cd3ea29b63031",
-  "documentationFingerprint": "sha256:d41cef958c2164f7699b63847e41ad86ffc103d4556b42e9f92482c20a696b7d",
+  "fingerprint": "sha256:06dc24f9238a45aecd6524fef39bd6a92877e211fc6c55d85e82dc6a303bd727",
+  "documentationFingerprint": "sha256:6b642f4ca82edc429792a5300cd590083862b8dd7b2327b383f458a429d5a105",
   "tools": [
     {
       "name": "add_organization_language",
@@ -72504,12 +72504,14 @@
                         "type": "string"
                       },
                       "delivery_days_max": {
+                        "maximum": 365,
                         "type": [
                           "integer",
                           "null"
                         ]
                       },
                       "delivery_days_min": {
+                        "maximum": 365,
                         "type": [
                           "integer",
                           "null"
@@ -72560,6 +72562,9 @@
                     "type": "object"
                   },
                   "type": "array"
+                },
+                "updated_at": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -72567,6 +72572,7 @@
                 "location_id",
                 "name",
                 "countries",
+                "updated_at",
                 "rates"
               ],
               "type": "object"
@@ -100197,12 +100203,14 @@
                   "type": "integer"
                 },
                 "delivery_days_max": {
+                  "maximum": 365,
                   "type": [
                     "integer",
                     "null"
                   ]
                 },
                 "delivery_days_min": {
+                  "maximum": 365,
                   "type": [
                     "integer",
                     "null"
@@ -100254,6 +100262,11 @@
             "description": "Omit to create a zone.",
             "minLength": 1,
             "type": "string"
+          },
+          "updated_at": {
+            "description": "Required to replace a zone: its updated_at from list_shipping_zones. A zone changed since is refused (SHIPPING_ZONE_CHANGED), so a stale list cannot delete a rate.",
+            "minLength": 1,
+            "type": "string"
           }
         },
         "required": [
@@ -100297,12 +100310,14 @@
                       "type": "string"
                     },
                     "delivery_days_max": {
+                      "maximum": 365,
                       "type": [
                         "integer",
                         "null"
                       ]
                     },
                     "delivery_days_min": {
+                      "maximum": 365,
                       "type": [
                         "integer",
                         "null"
@@ -100353,6 +100368,9 @@
                   "type": "object"
                 },
                 "type": "array"
+              },
+              "updated_at": {
+                "type": "string"
               }
             },
             "required": [
@@ -100360,6 +100378,7 @@
               "location_id",
               "name",
               "countries",
+              "updated_at",
               "rates"
             ],
             "type": "object"

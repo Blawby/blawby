@@ -66,6 +66,7 @@ export default {
     "note": "Note for the seller",
     "order_confirmed": "Thank you, your order #{number} is confirmed",
     "order_shipped": "Shipped",
+    "order_collected": "Collected",
     "receipt": "Receipt"
   },
   "reservations": {

@@ -793,5 +793,6 @@
   "email.subject.order_cancelled": "La commande n° {number} a été annulée",
   "order.cancelled_unpaid": "Votre paiement n’a pas abouti, votre commande a donc été annulée. Aucun montant ne vous a été débité.",
   "order.cancelled_refunded": "Votre commande a été annulée et intégralement remboursée. Le remboursement fait l’objet d’un e-mail distinct.",
-  "order.payment_method": "Moyen de paiement"
+  "order.payment_method": "Moyen de paiement",
+  "shop.order_collected": "Retiré"
 }

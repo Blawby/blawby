@@ -6,7 +6,7 @@
     </div>
     <BookingConfirmation
       v-else-if="order"
-      :kicker="order.fulfilled_at ? t('shop.order_shipped') : t('reservations.confirmed')"
+      :kicker="order.fulfilled_at ? t(order.delivery_method === 'pickup' ? 'shop.order_collected' : 'shop.order_shipped') : t('reservations.confirmed')"
       :cancelled="order.status === 'cancelled'"
       :item-title="order.lines[0]?.title ?? organization.name"
       :item-subtitle="organization.name"

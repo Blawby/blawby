@@ -78,8 +78,10 @@ watch(zone, () => { if (!settingsError.value) reset() }, { immediate: true })
 function grams(value: string) {
   if (!value.trim()) return null
   const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed < 0) throw new Error('Weights are positive numbers of kilograms')
-  return Math.round(parsed * 1000)
+  // Checked after conversion: 1e308 kg is no whole number of grams, and would otherwise be sent as "no limit".
+  const converted = Math.round(parsed * 1000)
+  if (!Number.isSafeInteger(converted) || converted < 0) throw new Error('Weights are positive numbers of kilograms')
+  return converted
 }
 function payload() {
   const countries = form.countries.split(',').map(value => value.trim().toUpperCase()).filter(Boolean)
@@ -90,13 +92,15 @@ function payload() {
     const days = rate.days.trim() ? /^(\d{1,3})?\s*(-)?\s*(\d{1,3})?$/u.exec(rate.days.trim()) : null
     // Two bounds are a range only with a hyphen between them: "7 14" is not read as 7–14.
     if (rate.days.trim() && (!days || (!days[1] && !days[3]) || (days[1] && days[3] && !days[2]))) throw new Error('Delivery days are a number or a range, such as 7-14')
+    if (days && [days[1], days[3]].some(bound => bound && Number(bound) > 365)) throw new Error('Delivery days are at most 365')
     return { ...(rate.id ? { id: rate.id } : {}), name: rate.name.trim(), amount: majorAmountToMinor(rate.amount.trim(), currency.value), min_weight_grams: grams(rate.min_kg), max_weight_grams: grams(rate.max_kg),
       min_subtotal: rate.min_subtotal.trim() ? majorAmountToMinor(rate.min_subtotal.trim(), currency.value) : null,
       delivery_days_min: days?.[1] ? Number(days[1]) : null, delivery_days_max: days?.[3] ? Number(days[3]) : days?.[1] && !days[2] ? Number(days[1]) : null }
   })
   const locationId = creating.value ? String(route.query.location_id ?? '') : zone.value!.location_id
   if (!locationId) throw new Error('Choose the location this zone ships from')
-  return { location_id: locationId, name: form.name.trim(), countries, rates }
+  // A replacement names the revision it was edited from, so it cannot drop a rate another editor added meanwhile.
+  return { location_id: locationId, name: form.name.trim(), countries, rates, ...(creating.value ? {} : { updated_at: zone.value!.updated_at }) }
 }
 const invalid = computed(() => { try { payload(); return null } catch (cause) { return getErrorMessage(cause, 'Check the zone') } })
 
@@ -109,10 +113,11 @@ async function save() {
   try {
     const saved = await dashboardApi(creating.value ? '/api/dashboard/shipping/zones' : `/api/dashboard/shipping/zones/${encodeURIComponent(zoneId.value)}`,
       { method: creating.value ? 'POST' : 'PUT', body: payload(), validate: isZone })
+    // A new zone leaves create mode at once: a retry must edit it, not create it again.
+    if (creating.value) await navigateTo(`${shippingPath.value}/zones/${saved.zone.id}`, { replace: true })
     await refresh()
     // useAsyncData records a failed refresh instead of rejecting it.
     if (settingsError.value) throw new Error(`The zone was saved, but it could not be read back: ${getErrorMessage(settingsError.value, 'reload the page')}`)
-    if (creating.value) await navigateTo(`${shippingPath.value}/zones/${saved.zone.id}`, { replace: true })
   } catch (cause) {
     error.value = getErrorMessage(cause, 'The zone could not be saved')
   } finally {

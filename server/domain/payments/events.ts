@@ -20,7 +20,7 @@ import { notifyOrderPlaced, notifyStayBooked, raiseSettledFailures } from '~/ser
 import { paymentsBillingBasis } from './fx'
 import { deliverPaymentsUsage, paymentUsageEventQuery } from './usage'
 import { isStayPurchase } from './checkout'
-import { cancelUncapturedOrderQueries, OrderStockUnavailableError, releaseOrderQuery, saveCheckoutOrder } from '~/server/domain/goods'
+import { cancelRefundedOrderQueries, cancelUncapturedOrderQueries, OrderStockUnavailableError, releaseOrderQuery, saveCheckoutOrder } from '~/server/domain/goods'
 import { TURNOVER_HOME_FROM } from '~/server/domain/tasks'
 import { organizationEventQuery } from '~/server/utils/organization-events'
 import { conversationTaskQueries } from '~/server/domain/guest-threads/repository'
@@ -305,7 +305,14 @@ export async function reconcilePaymentIntent(db:DbClient,stripe:Stripe,payment:P
     })
     return { intent, settlement: { payment: recorded, hold, receiptRows: conversion?.receiptRows } }
   }
-  if (payment.subject_type === 'order') return finish(orderStatus === 'paid' && recorded.refunded_amount === 0 ? { unit: 'order', id: payment.subject_id! } : null)
+  if (payment.subject_type === 'order') {
+    // A full refund recorded before this capture found nothing to cancel then; it is cancelled now that the capture is.
+    if (orderStatus === 'paid' && recorded.captured_amount > 0 && recorded.refunded_amount >= recorded.captured_amount) {
+      const cancelled = await executeBatch(db, cancelRefundedOrderQueries(recorded, new Date().toISOString()), { operation: 'Cancel refunded order' })
+      if (cancelled.at(-1)?.results.length) await publishEvent(env, { type: 'order.cancelled', organization_id: payment.organization_id, order_id: payment.subject_id! })
+    }
+    return finish(orderStatus === 'paid' && recorded.refunded_amount === 0 ? { unit: 'order', id: payment.subject_id! } : null)
+  }
   if (!bookingId || !hold || keepPaymentOnly || recorded.refunded_amount > 0 || capture?.retained_without_organization) return finish()
   if (hold.session_id === null) return finish({ unit: 'nights', id: bookingId })
   if (!hold.conversation_id) throw new Error('Captured visit payment has no guest conversation')

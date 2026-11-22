@@ -81,16 +81,17 @@ function stripeAddress(stored: string | null): StripeAddress | null {
 // ---------------------------------------------------------------------------
 
 export interface ShippingRate { id: string; name: string; currency: string; amount: number; min_weight_grams: number | null; max_weight_grams: number | null; min_subtotal: number | null; delivery_days_min: number | null; delivery_days_max: number | null }
-export interface ShippingZone { id: string; location_id: string; name: string; countries: string[]; rates: ShippingRate[] }
+/** `updated_at` is the zone's revision: a replacement names the one it was edited from. */
+export interface ShippingZone { id: string; location_id: string; name: string; countries: string[]; updated_at: string; rates: ShippingRate[] }
 
 /** Where the business ships from and to, and where buyers can collect: one batch. */
 export async function readShippingSettings(db: DbClient, organizationId: string) {
   const [zoneRows, rateRows, locationRows] = await executeBatch(db, [
-    { query: 'SELECT id, location_id, name, countries FROM shipping_zones WHERE organization_id = ? ORDER BY location_id, created_at, id', params: [organizationId] },
+    { query: 'SELECT id, location_id, name, countries, updated_at FROM shipping_zones WHERE organization_id = ? ORDER BY location_id, created_at, id', params: [organizationId] },
     { query: 'SELECT * FROM shipping_rates WHERE organization_id = ? ORDER BY sort_order, id', params: [organizationId] },
     { query: "SELECT id, title, pickup_enabled FROM business_locations WHERE organization_id = ? AND status = 'active' ORDER BY created_at, id", params: [organizationId] },
   ], { operation: 'Read shipping settings' })
-  const zones = (zoneRows?.results ?? []) as Array<{ id: string; location_id: string; name: string; countries: string }>
+  const zones = (zoneRows?.results ?? []) as Array<{ id: string; location_id: string; name: string; countries: string; updated_at: string }>
   const rates = (rateRows?.results ?? []) as Array<ShippingRate & { shipping_zone_id: string }>
   const locations = (locationRows?.results ?? []) as Array<{ id: string; title: string; pickup_enabled: number }>
   return {
@@ -105,6 +106,8 @@ export async function listShippingZones(db: DbClient, organizationId: string): P
 
 export interface ShippingZoneInput {
   location_id: string; name: string; countries: string[]
+  /** The revision a replacement was edited from; required to replace a zone. */
+  updated_at: string | null
   /** A rate restated with its id keeps it, so a buyer who chose it can still check out. */
   rates: Array<Omit<ShippingRate, 'id' | 'currency'> & { id: string | null }>
 }
@@ -136,16 +139,20 @@ function shippingZoneInput(value: unknown): ShippingZoneInput {
     if (entry.id !== undefined && (typeof entry.id !== 'string' || !entry.id)) fail(400, 'VALIDATION_ERROR', `rates[${index}].id must be a saved rate id`, `rates[${index}].id`)
     const rate = { id: typeof entry.id === 'string' ? entry.id : null, name: rateName, amount, min_weight_grams: whole(entry, 'min_weight_grams', index), max_weight_grams: whole(entry, 'max_weight_grams', index, 1),
       min_subtotal: whole(entry, 'min_subtotal', index), delivery_days_min: whole(entry, 'delivery_days_min', index), delivery_days_max: whole(entry, 'delivery_days_max', index) }
+    // A year is the longest delivery promise, as the dashboard editor takes it.
+    if ((rate.delivery_days_min ?? 0) > 365 || (rate.delivery_days_max ?? 0) > 365) fail(400, 'VALIDATION_ERROR', `rates[${index}] delivery days are at most 365`, `rates[${index}].delivery_days_max`)
     if (rate.min_weight_grams !== null && rate.max_weight_grams !== null && rate.max_weight_grams <= rate.min_weight_grams) fail(400, 'VALIDATION_ERROR', `rates[${index}] weight band is empty`, `rates[${index}].max_weight_grams`)
     if (rate.delivery_days_min !== null && rate.delivery_days_max !== null && rate.delivery_days_max < rate.delivery_days_min) fail(400, 'VALIDATION_ERROR', `rates[${index}] delivery days are reversed`, `rates[${index}].delivery_days_max`)
     return rate
   })
-  return { location_id: value.location_id, name, countries, rates }
+  if (value.updated_at !== undefined && typeof value.updated_at !== 'string') fail(400, 'VALIDATION_ERROR', 'updated_at is the zone revision being replaced', 'updated_at')
+  return { location_id: value.location_id, name, countries, rates, updated_at: typeof value.updated_at === 'string' ? value.updated_at : null }
 }
 
 /** Creates or replaces one zone and its rates, in the organization's currency. A country is in at most one zone per location. */
 export async function saveShippingZone(db: DbClient, organizationId: string, zoneId: string | null, value: unknown): Promise<ShippingZone> {
   const input = shippingZoneInput(value)
+  if (zoneId && !input.updated_at) fail(400, 'VALIDATION_ERROR', 'Replacing a zone names the revision it was edited from (updated_at)', 'updated_at')
   const organization = await queryFirst<{ default_currency: string | null; location: string | null; taken: string | null }>(db, `SELECT o.default_currency,
       (SELECT id FROM business_locations WHERE organization_id = o.id AND id = ?) AS location,
       (SELECT group_concat(c.value) FROM shipping_zones z, json_each(z.countries) c WHERE z.organization_id = o.id AND z.location_id = ? AND z.id IS NOT ? AND c.value IN (SELECT value FROM json_each(?))) AS taken
@@ -156,7 +163,10 @@ export async function saveShippingZone(db: DbClient, organizationId: string, zon
   if (organization.taken) fail(409, 'COUNTRY_IN_ANOTHER_ZONE', `Already shipped to in another zone: ${organization.taken}`, 'countries')
   const id = zoneId ?? crypto.randomUUID()
   const now = new Date().toISOString()
-  const queries: BatchQuery[] = [zoneId
+  const queries: BatchQuery[] = [
+  // A save edited from an older revision (another editor saved meanwhile, perhaps adding a rate) is refused, so it cannot delete what it never saw.
+  ...(zoneId ? [{ query: `SELECT CASE WHEN EXISTS (SELECT 1 FROM shipping_zones WHERE organization_id = ? AND id = ? AND updated_at <> ?) THEN json_extract('{}', 'SHIPPING_ZONE_CHANGED') ELSE 1 END`, params: [organizationId, zoneId, input.updated_at] }] : []),
+  zoneId
     ? { query: 'UPDATE shipping_zones SET location_id = ?, name = ?, countries = ?, updated_at = ? WHERE organization_id = ? AND id = ?', params: [input.location_id, input.name, JSON.stringify(input.countries), now, organizationId, id] }
     : { query: 'INSERT INTO shipping_zones (id, organization_id, location_id, name, countries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', params: [id, organizationId, input.location_id, input.name, JSON.stringify(input.countries), now, now] },
   assertBookingBatchWrite({ query: 'changes() = 1', params: [] }),
@@ -179,6 +189,7 @@ export async function saveShippingZone(db: DbClient, organizationId: string, zon
   assertBookingBatchWrite({ query: '(SELECT count(*) FROM shipping_rates WHERE organization_id = ? AND shipping_zone_id = ?) = ?', params: [organizationId, id, input.rates.length] })]
   try { await executeBatch(db, queries, { operation: 'Save shipping zone' }) }
   catch (error) {
+    if (error instanceof Error && /SHIPPING_ZONE_CHANGED/.test(error.message)) fail(409, 'SHIPPING_ZONE_CHANGED', 'This zone was changed since you opened it. Nothing was saved; reload it and try again.')
     if (error instanceof Error && /COUNTRY_IN_ANOTHER_ZONE/.test(error.message)) fail(409, 'COUNTRY_IN_ANOTHER_ZONE', 'A country in this zone is already shipped to in another zone', 'countries')
     if (error instanceof Error && /BOOKING_WRITE_REFUSED/.test(error.message)) fail(404, 'SHIPPING_ZONE_NOT_FOUND', 'Shipping zone or rate not found')
     throw error
@@ -224,6 +235,8 @@ export interface OrderQuote {
   pickup_locations: Array<{ id: string; title: string }>
   /** The countries a location offering these items ships to. */
   ship_to_countries: string[]
+  /** The ship-by date if stock on hand now has gone by payment and make-to-order lines are made instead. */
+  ship_by_if_short: string | null
   /** The rates the buyer may choose, cheapest first; empty for pickup. */
   shipping_rates: Array<ShippingRate & { applies: true }>
   /** The local date the order should leave by, when the products state their shipping times. */
@@ -332,6 +345,8 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
     if ('failure' in priced) { firstFailure ??= priced.failure; continue }
     const rates = delivery?.method === 'shipping' ? ratesAt(candidate.id, country!.data!, priced.subtotal) : []
     if (delivery?.method === 'shipping' && !rates.length) continue
+    // A rate the buyer chose is honoured at the location that offers it, even if an earlier one has since restocked.
+    if (delivery?.method === 'shipping' && delivery.shipping_rate_id && !rates.some(rate => rate.id === delivery.shipping_rate_id)) continue
     chosen = { location: candidate, priced, rates }
     break
   }
@@ -347,6 +362,13 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
     return [...(line.quantity > line.made_to_order_quantity ? [variant.processing_days] : []), ...(line.made_to_order_quantity > 0 ? [variant.made_to_order_days] : [])]
   })
   const shipBy = productDays.every(days => days !== null) ? addBusinessDays(localDateAt(at, location.timezone), Math.max(0, ...(productDays as number[]))) : null
+  // If stock that was on hand at the quote is gone by payment, a make-to-order line ships on its make-to-order time: the date settlement uses then.
+  const shortDays = quoted.flatMap(line => {
+    const variant = variants.find(row => row.id === line.product_variant_id)!
+    const canBeMade = variant.inventory_tracked === 1 && variant.inventory_policy === 'continue'
+    return [...(line.quantity > line.made_to_order_quantity ? [variant.processing_days] : []), ...(line.made_to_order_quantity > 0 || canBeMade ? [variant.made_to_order_days] : [])]
+  })
+  const shipByIfShort = shortDays.every(days => days !== null) ? addBusinessDays(localDateAt(at, location.timezone), Math.max(0, ...(shortDays as number[]))) : null
   // Where else the cart can be bought: each location offering it that can price and stock it, priced once.
   const sellable = offering.flatMap(candidate => {
     const priced = candidate.id === location.id ? chosen.priced : priceAt(candidate)
@@ -363,7 +385,7 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
     delivery_method: delivery === null ? null : delivery.method as DeliveryMethod,
     ship_to_countries: [...shipToCountries].sort(),
     pickup_locations: sellable.filter(({ candidate }) => candidate.pickup_enabled === 1).map(({ candidate }) => ({ id: candidate.id, title: candidate.title })),
-    shipping_rates: shippingRates, ship_by: shipBy }
+    shipping_rates: shippingRates, ship_by: shipBy, ship_by_if_short: shipByIfShort }
 }
 
 // ---------------------------------------------------------------------------
@@ -380,6 +402,9 @@ export interface OrderSnapshot {
   ship_by: string | null
   /** The end of the ship-by day where it ships from, the fulfilment task's due instant. */
   ship_by_due_at: string | null
+  /** The ship-by date and due instant settlement uses when stock quoted on hand had gone by payment. */
+  ship_by_if_short?: string | null
+  ship_by_if_short_due_at?: string | null
   /** A pickup order is taxed where it is collected: the location's address. */
   pickup_address?: StripeAddress | null
 }
@@ -466,6 +491,8 @@ export async function createOrderCheckout(db: DbClient, env: CloudflareEnv, inpu
     shipping, shipping_details: shippingDetails, guest, note, ship_by: quote.ship_by,
     ...(quote.delivery_method === 'pickup' ? { pickup_address: quote.location.address } : {}),
     ship_by_due_at: quote.ship_by ? localDateTimeToInstant(quote.ship_by, '23:59', quote.location.timezone, 'compatible').toISOString() : null,
+    ship_by_if_short: quote.ship_by_if_short,
+    ship_by_if_short_due_at: quote.ship_by_if_short ? localDateTimeToInstant(quote.ship_by_if_short, '23:59', quote.location.timezone, 'compatible').toISOString() : null,
   }
   const purchase = {
     title, tax_code: null, quantity: 1, price: { unit_amount: total, currency: quote.currency, tax_behavior: behaviors.length === 1 ? behaviors[0] : 'unspecified' },
@@ -559,12 +586,17 @@ export async function saveCheckoutOrder(db: DbClient, payment: Payment, snapshot
         WHERE organization_id = ? AND id = ? AND status = 'pending' AND EXISTS (SELECT 1 FROM conversations WHERE id = ?)`,
       params: [paidAt, conversationId, payment.buyer_user_id, paidAt, payment.organization_id, order.id, conversationId] },
     assertBookingBatchWrite({ query: 'changes() = 1', params: [] }),
+    // Stock the quote counted on that has gone by now makes those units made to order: the order ships on the make-to-order date. Read before the lines are settled.
+    { query: `UPDATE orders SET ship_by = ? WHERE organization_id = ? AND id = ? AND EXISTS (SELECT 1 FROM order_lines l JOIN product_variants v ON v.organization_id = l.organization_id AND v.id = l.product_variant_id
+        WHERE l.organization_id = orders.organization_id AND l.order_id = orders.id AND v.inventory_tracked = 1
+          AND MAX(l.quantity - MAX(COALESCE((SELECT available FROM inventory_levels WHERE product_variant_id = l.product_variant_id AND location_id = orders.location_id), 0), 0), 0) > l.made_to_order_quantity)`,
+      params: [order.ship_by_if_short ?? null, payment.organization_id, order.id] },
     ...stockQueries,
     { query: `INSERT INTO tasks (id, organization_id, kind, subject_type, subject_id, location_id, assigned_member_id, due_at, timezone, status, dedupe_key, version, created_at, updated_at)
-        SELECT ?, o.organization_id, 'order_fulfillment', 'order', o.id, o.location_id, ${jobAssigneeSql('o.organization_id', 'NULL')}, ?, l.timezone, 'open', ?, 1, ?, ?
+        SELECT ?, o.organization_id, 'order_fulfillment', 'order', o.id, o.location_id, ${jobAssigneeSql('o.organization_id', 'NULL')}, CASE WHEN o.ship_by IS ? THEN ? ELSE ? END, l.timezone, 'open', ?, 1, ?, ?
         FROM orders o JOIN business_locations l ON l.organization_id = o.organization_id AND l.id = o.location_id
         WHERE o.organization_id = ? AND o.id = ? AND o.status = 'paid' ON CONFLICT (dedupe_key) DO NOTHING`,
-      params: [crypto.randomUUID(), order.ship_by_due_at, `order_fulfillment:${order.id}`, paidAt, paidAt, payment.organization_id, order.id] },
+      params: [crypto.randomUUID(), order.ship_by, order.ship_by_due_at, order.ship_by_if_short_due_at ?? null, `order_fulfillment:${order.id}`, paidAt, paidAt, payment.organization_id, order.id] },
     ...following,
   ]
   try { return await executeBatch(db, queries, { operation: 'Pay order' }) }
@@ -597,6 +629,28 @@ export function cancelUncapturedOrderQueries(payment: Pick<Payment, 'id' | 'orga
     // Last: whether the order now stands cancelled with nothing captured, so a retry after the commit still announces it.
     { query: `SELECT 1 AS cancelled FROM orders o JOIN payments p ON p.id = ? AND p.captured_amount = 0 WHERE o.organization_id = ? AND o.id = ? AND o.status = 'cancelled'`,
       params: [payment.id, payment.organization_id, payment.subject_id] },
+  ]
+}
+
+/**
+ * Cancels an unshipped order whose capture is refunded in full, as Shopify's
+ * is: its stock comes back, it is cancelled, its ship task closes. Run where
+ * the refund is recorded and where the capture is, whichever lands second.
+ * The last query reads whether the order stands cancelled by a full refund,
+ * so a retry after the commit still announces it.
+ */
+export function cancelRefundedOrderQueries(payment: Pick<Payment, 'id' | 'organization_id' | 'subject_id'>, now: string): BatchQuery[] {
+  const refunded = `EXISTS (SELECT 1 FROM orders o JOIN payments p ON p.id = ? AND p.captured_amount > 0 AND p.refunded_amount = p.captured_amount
+    WHERE o.organization_id = ? AND o.id = ? AND o.status = 'paid' AND o.fulfilled_at IS NULL)`
+  const scope = [payment.id, payment.organization_id, payment.subject_id]
+  return [
+    returnOrderStockQuery(payment, now, { query: refunded, params: scope }),
+    { query: `UPDATE orders SET status = 'cancelled', cancelled_at = ?, updated_at = ? WHERE organization_id = ? AND id = ? AND ${refunded}`, params: [now, now, payment.organization_id, payment.subject_id, ...scope] },
+    { query: `UPDATE tasks SET status = 'cancelled', closed_at = ?, closed_by_user_id = NULL, version = version + 1, updated_at = ? WHERE dedupe_key = ? AND status = 'open'
+        AND EXISTS (SELECT 1 FROM orders WHERE organization_id = ? AND id = ? AND status = 'cancelled')`,
+      params: [now, now, `order_fulfillment:${payment.subject_id}`, payment.organization_id, payment.subject_id] },
+    { query: `SELECT 1 AS cancelled FROM orders o JOIN payments p ON p.id = ? AND p.captured_amount > 0 AND p.refunded_amount = p.captured_amount
+        WHERE o.organization_id = ? AND o.id = ? AND o.status = 'cancelled'`, params: scope },
   ]
 }
 
@@ -692,7 +746,11 @@ export async function fulfillOrder(db: DbClient, env: CloudflareEnv, input: { or
       params: [now, input.actorId, now, `order_fulfillment:${order.id}`] },
     ...message.queries,
   ], { operation: 'Fulfill order' })
-  await publishEvent(env, { type: 'order.fulfilled', organization_id: input.organizationId, order_id: order.id })
+  try { await publishEvent(env, { type: 'order.fulfilled', organization_id: input.organizationId, order_id: order.id }) }
+  catch (error) {
+    // The shipment is recorded; only the buyer's email was not queued. Said so, not reported as an unshipped order.
+    throw new HTTPError({ statusCode: 502, statusMessage: `Order #${order.number} is marked as ${order.delivery_method === 'pickup' ? 'collected' : 'shipped'}, but the buyer's email could not be queued: ${error instanceof Error ? error.message : String(error)}`, data: { code: 'ORDER_FULFILLED_NOTICE_NOT_QUEUED' }, cause: error })
+  }
   const saved = await readOrder(db, input.organizationId, { orderId: order.id })
   if (!saved?.fulfilled_at) throw new Error('Fulfilled order was not read back')
   return saved

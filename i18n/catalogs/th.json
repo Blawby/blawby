@@ -793,5 +793,6 @@
   "email.subject.order_cancelled": "คำสั่งซื้อ #{number} ถูกยกเลิกแล้ว",
   "order.cancelled_unpaid": "การชำระเงินของคุณไม่สำเร็จ คำสั่งซื้อจึงถูกยกเลิก คุณไม่ได้ถูกเรียกเก็บเงิน",
   "order.cancelled_refunded": "คำสั่งซื้อของคุณถูกยกเลิกและได้รับเงินคืนเต็มจำนวน รายละเอียดการคืนเงินจะส่งในอีเมลแยกต่างหาก",
-  "order.payment_method": "วิธีชำระเงิน"
+  "order.payment_method": "วิธีชำระเงิน",
+  "shop.order_collected": "รับสินค้าแล้ว"
 }

@@ -793,5 +793,6 @@
   "email.subject.order_cancelled": "L’ordine n. {number} è stato annullato",
   "order.cancelled_unpaid": "Il pagamento non è stato completato, quindi l’ordine è stato annullato. Non ti è stato addebitato nulla.",
   "order.cancelled_refunded": "L’ordine è stato annullato e rimborsato per intero. Il rimborso ti viene comunicato in un’e-mail separata.",
-  "order.payment_method": "Metodo di pagamento"
+  "order.payment_method": "Metodo di pagamento",
+  "shop.order_collected": "Ritirato"
 }

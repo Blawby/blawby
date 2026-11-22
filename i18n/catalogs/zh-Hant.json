@@ -793,5 +793,6 @@
   "email.subject.order_cancelled": "訂單 #{number} 已取消",
   "order.cancelled_unpaid": "您的付款未完成，因此訂單已取消。您未被扣款。",
   "order.cancelled_refunded": "您的訂單已取消並已全額退款。退款資訊將另行以電子郵件寄送。",
-  "order.payment_method": "付款方式"
+  "order.payment_method": "付款方式",
+  "shop.order_collected": "已取貨"
 }

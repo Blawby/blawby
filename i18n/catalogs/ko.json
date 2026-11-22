@@ -793,5 +793,6 @@
   "email.subject.order_cancelled": "주문 #{number}이(가) 취소되었습니다",
   "order.cancelled_unpaid": "결제가 완료되지 않아 주문이 취소되었습니다. 청구된 금액은 없습니다.",
   "order.cancelled_refunded": "주문이 취소되고 전액 환불되었습니다. 환불 내역은 별도의 이메일로 안내해 드립니다.",
-  "order.payment_method": "결제 수단"
+  "order.payment_method": "결제 수단",
+  "shop.order_collected": "수령 완료"
 }

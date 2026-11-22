@@ -793,5 +793,6 @@
   "email.subject.order_cancelled": "El pedido #{number} se ha cancelado",
   "order.cancelled_unpaid": "Tu pago no se completó, así que tu pedido se ha cancelado. No se te ha cobrado nada.",
   "order.cancelled_refunded": "Tu pedido se ha cancelado y reembolsado en su totalidad. Recibirás el reembolso en un correo aparte.",
-  "order.payment_method": "Método de pago"
+  "order.payment_method": "Método de pago",
+  "shop.order_collected": "Recogido"
 }

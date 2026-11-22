@@ -12,15 +12,16 @@ const rateWrite = { type: 'object', properties: {
   min_weight_grams: { ...nullableInteger, description: 'The parcel weight band this rate covers: at least this many grams.' },
   max_weight_grams: { ...nullableInteger, description: 'Less than this many grams.' },
   min_subtotal: { ...nullableInteger, description: 'Offered only for orders of at least this subtotal (free shipping over an amount).' },
-  delivery_days_min: nullableInteger, delivery_days_max: nullableInteger,
+  delivery_days_min: { ...nullableInteger, maximum: 365 }, delivery_days_max: { ...nullableInteger, maximum: 365 },
 }, required: ['name', 'amount'], additionalProperties: false }
 const rate = { type: 'object', properties: { ...rateWrite.properties, id: text, currency: text }, required: ['id', 'name', 'currency', 'amount', 'min_weight_grams', 'max_weight_grams', 'min_subtotal', 'delivery_days_min', 'delivery_days_max'] }
-const zone = { type: 'object', properties: { id: text, location_id: text, name: text, countries: { type: 'array', items: text }, rates: { type: 'array', items: rate } }, required: ['id', 'location_id', 'name', 'countries', 'rates'] }
+const zone = { type: 'object', properties: { id: text, location_id: text, name: text, countries: { type: 'array', items: text }, updated_at: text, rates: { type: 'array', items: rate } }, required: ['id', 'location_id', 'name', 'countries', 'updated_at', 'rates'] }
 const zoneWrite = {
   location_id: { ...text, minLength: 1, description: 'The location it ships from.' },
   name: { ...text, minLength: 1, maxLength: 100 },
   countries: { type: 'array', minItems: 1, maxItems: 250, items: { ...text, pattern: '^[A-Za-z]{2}$' }, description: 'ISO 3166-1 alpha-2 destination countries. A country is in one zone per location.' },
   rates: { type: 'array', maxItems: 20, items: rateWrite, description: 'The complete list of rates; it replaces the zone’s rates.' },
+  updated_at: { ...text, minLength: 1, description: 'Required to replace a zone: its updated_at from list_shipping_zones. A zone changed since is refused (SHIPPING_ZONE_CHANGED), so a stale list cannot delete a rate.' },
 }
 const line = { type: 'object', properties: { id: text, product_id: text, product_variant_id: text, title: text, variant_title: nullableText, sku: nullableText, quantity: { type: 'integer' }, unit_amount: { type: 'integer' }, made_to_order_quantity: { type: 'integer' }, stock_taken: { type: 'integer', description: 'Units taken from the location’s stock when paid; given back if the order is cancelled.' } },
   required: ['id', 'product_id', 'product_variant_id', 'title', 'variant_title', 'sku', 'quantity', 'unit_amount', 'made_to_order_quantity', 'stock_taken'] }

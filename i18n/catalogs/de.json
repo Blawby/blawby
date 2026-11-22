@@ -793,5 +793,6 @@
   "email.subject.order_cancelled": "Bestellung #{number} wurde storniert",
   "order.cancelled_unpaid": "Ihre Zahlung wurde nicht abgeschlossen, daher wurde Ihre Bestellung storniert. Ihnen wurde nichts berechnet.",
   "order.cancelled_refunded": "Ihre Bestellung wurde storniert und vollständig erstattet. Die Erstattung erhalten Sie in einer separaten E-Mail.",
-  "order.payment_method": "Zahlungsmethode"
+  "order.payment_method": "Zahlungsmethode",
+  "shop.order_collected": "Abgeholt"
 }

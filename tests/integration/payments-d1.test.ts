@@ -1909,10 +1909,13 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
   })
   // Renaming the zone keeps its rates' ids (a quoted rate stays valid); an id another editor deleted meanwhile is refused, not recreated.
   const rate = (id: string, name: string, amount: number, band: { min_weight_grams?: number; max_weight_grams?: number }) => ({ id, name, amount, min_weight_grams: band.min_weight_grams ?? null, max_weight_grams: band.max_weight_grams ?? null, min_subtotal: null, delivery_days_min: null, delivery_days_max: null })
-  const renamed = await saveShippingZone(db, ORG, 'laos', { location_id: 'studio', name: 'Laos by post', countries: ['LA'], rates: [rate('ems', 'EMS', 1000, { max_weight_grams: 10000 }), rate('freight', 'Freight', 5000, { min_weight_grams: 10000 })] })
+  const renamed = await saveShippingZone(db, ORG, 'laos', { updated_at: NOW, location_id: 'studio', name: 'Laos by post', countries: ['LA'], rates: [rate('ems', 'EMS', 1000, { max_weight_grams: 10000 }), rate('freight', 'Freight', 5000, { min_weight_grams: 10000 })] })
   assert.deepEqual(renamed.rates.map(entry => entry.id).sort(), ['ems', 'freight'])
-  await assert.rejects(() => saveShippingZone(db, ORG, 'laos', { location_id: 'studio', name: 'Laos by post', countries: ['LA'], rates: [rate('ems', 'EMS', 1000, { max_weight_grams: 10000 }), rate('deleted-rate', 'Gone', 2000, {})] }),
+  await assert.rejects(() => saveShippingZone(db, ORG, 'laos', { updated_at: renamed.updated_at, location_id: 'studio', name: 'Laos by post', countries: ['LA'], rates: [rate('ems', 'EMS', 1000, { max_weight_grams: 10000 }), rate('deleted-rate', 'Gone', 2000, {})] }),
     error => error instanceof HTTPError && (error.data as { code: string }).code === 'SHIPPING_ZONE_NOT_FOUND')
+  // A save edited from the revision before the rename cannot drop rates it never saw.
+  await assert.rejects(() => saveShippingZone(db, ORG, 'laos', { updated_at: NOW, location_id: 'studio', name: 'Laos', countries: ['LA'], rates: [rate('ems', 'EMS', 1000, { max_weight_grams: 10000 })] }),
+    error => error instanceof HTTPError && (error.data as { code: string }).code === 'SHIPPING_ZONE_CHANGED')
   assert.deepEqual((await db.prepare("SELECT id FROM shipping_rates WHERE shipping_zone_id = 'laos' ORDER BY id").all()).results.map(row => row.id), ['ems', 'freight'])
 
   const handoff = await checkout('first-order')

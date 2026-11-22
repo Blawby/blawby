@@ -51,8 +51,10 @@ export function parseOptionValues(value: string | null | undefined): string[] {
 
 /** Every combination of the options' values, in option order (Shopify's variant matrix). */
 export function optionCombinations(options: readonly ProductOption[]): string[][] {
+  // Counted before anything is built: three options of 100 values would otherwise allocate a million rows to refuse.
+  const count = options.reduce((total, option) => total * option.values.length, 1)
+  if (count > PRODUCT_OPTION_LIMITS.variants) throw new Error(`These options make ${count} variants; at most ${PRODUCT_OPTION_LIMITS.variants} are allowed`)
   const combinations = options.reduce<string[][]>((rows, option) => rows.flatMap(row => option.values.map(value => [...row, value])), [[]])
-  if (combinations.length > PRODUCT_OPTION_LIMITS.variants) throw new Error(`These options make ${combinations.length} variants; at most ${PRODUCT_OPTION_LIMITS.variants} are allowed`)
   return options.length ? combinations : []
 }
 

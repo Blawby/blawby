@@ -20,7 +20,7 @@ import { notifyOrderPlaced, notifyStayBooked, raiseSettledFailures } from '~/ser
 import { paymentsBillingBasis } from './fx'
 import { deliverPaymentsUsage, paymentUsageEventQuery } from './usage'
 import { isStayPurchase } from './checkout'
-import { OrderStockUnavailableError, releaseOrderQuery, saveCheckoutOrder } from '~/server/domain/goods'
+import { cancelUncapturedOrderQueries, OrderStockUnavailableError, releaseOrderQuery, saveCheckoutOrder } from '~/server/domain/goods'
 import { TURNOVER_HOME_FROM } from '~/server/domain/tasks'
 import { organizationEventQuery } from '~/server/utils/organization-events'
 import { conversationTaskQueries } from '~/server/domain/guest-threads/repository'
@@ -147,6 +147,12 @@ export async function reconcilePaymentIntent(db:DbClient,stripe:Stripe,payment:P
   if (intent.status === 'requires_capture') {
     intent = await stripe.paymentIntents.capture(intent.id, { expand }, { ...account, idempotencyKey: `krabiclaw-capture:${payment.id}` })
   }
+  // A paid order whose bank debit or card then failed is never charged: Stripe closes it, and the cancelled branch undoes the order.
+  if (failed && payment.subject_type === 'order' && orderStatus === 'paid') {
+    intent = await stripe.paymentIntents.cancel(intent.id, { cancellation_reason: 'abandoned', expand },
+      { ...account, idempotencyKey: `krabiclaw-failed:${payment.id}` })
+    if (intent.status !== 'canceled') throw new Error('Stripe did not close the failed order payment')
+  }
   if (failed && hold?.status === 'converted') {
     intent = await stripe.paymentIntents.cancel(intent.id, { cancellation_reason: 'abandoned', expand },
       { ...account, idempotencyKey: `krabiclaw-failed:${payment.id}` })
@@ -154,7 +160,11 @@ export async function reconcilePaymentIntent(db:DbClient,stripe:Stripe,payment:P
   }
   if (intent.status === 'canceled') {
     await execute(db, "UPDATE payment_checkout_holds SET status='released' WHERE payment_id=? AND organization_id=? AND status='active'", [payment.id, payment.organization_id])
-    if (payment.subject_type === 'order') {
+    if (payment.subject_type === 'order' && orderStatus === 'paid' && payment.captured_amount === 0) {
+      // Paid on authorization but never captured: its stock comes back, it is cancelled, and nothing is left to ship.
+      await executeBatch(db, cancelUncapturedOrderQueries(payment, new Date().toISOString()), { operation: 'Cancel uncaptured order' })
+      await publishPaymentNotification(env, payment, { kind: 'payment_failed', nativeId: intent.id, status: intent.status, amount: intent.amount })
+    } else if (payment.subject_type === 'order') {
       const released = releaseOrderQuery(payment)
       await execute(db, released.query, released.params ?? [])
     }

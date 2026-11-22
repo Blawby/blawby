@@ -51,18 +51,23 @@ const zone = computed(() => data.value?.zones.find(entry => entry.id === zoneId.
 const currency = computed(() => dashboard.organization.value?.default_currency ?? '')
 if (!creating.value && !zone.value) throw createError({ statusCode: 404, statusMessage: 'Shipping zone not found' })
 
-type RateForm = { name: string; amount: string; min_kg: string; max_kg: string; min_subtotal: string; days: string }
-const blankRate = (): RateForm => ({ name: '', amount: '', min_kg: '', max_kg: '', min_subtotal: '', days: '' })
+type RateForm = { id: string | null; name: string; amount: string; min_kg: string; max_kg: string; min_subtotal: string; days: string }
+const blankRate = (): RateForm => ({ id: null, name: '', amount: '', min_kg: '', max_kg: '', min_subtotal: '', days: '' })
 const form = reactive({ name: '', countries: '', rates: [] as RateForm[] })
 const kg = (grams: number | null) => grams === null ? '' : String(grams / 1000)
+// Either bound may stand alone: "7" is exactly 7 days, "7-14" a range, "7-" at least 7, "-14" at most 14.
+function deliveryDays(min: number | null, max: number | null) {
+  if (min !== null && min === max) return String(min)
+  return min === null && max === null ? '' : `${min ?? ''}-${max ?? ''}`
+}
 function reset() {
   error.value = ''
   const saved = zone.value
   form.name = saved?.name ?? ''
   form.countries = saved?.countries.join(', ') ?? ''
-  form.rates = saved ? saved.rates.map(rate => ({ name: rate.name, amount: minorAmountToMajor(rate.amount, rate.currency ?? currency.value), min_kg: kg(rate.min_weight_grams), max_kg: kg(rate.max_weight_grams),
+  form.rates = saved ? saved.rates.map(rate => ({ id: rate.id, name: rate.name, amount: minorAmountToMajor(rate.amount, rate.currency ?? currency.value), min_kg: kg(rate.min_weight_grams), max_kg: kg(rate.max_weight_grams),
     min_subtotal: rate.min_subtotal === null ? '' : minorAmountToMajor(rate.min_subtotal, rate.currency ?? currency.value),
-    days: rate.delivery_days_min === null ? '' : rate.delivery_days_max !== null && rate.delivery_days_max !== rate.delivery_days_min ? `${rate.delivery_days_min}-${rate.delivery_days_max}` : String(rate.delivery_days_min) })) : [blankRate()]
+    days: deliveryDays(rate.delivery_days_min, rate.delivery_days_max) })) : [blankRate()]
 }
 const error = ref('')
 watch(zone, reset, { immediate: true })
@@ -79,11 +84,11 @@ function payload() {
   if (!countries.length || countries.some(code => !/^[A-Z]{2}$/u.test(code))) throw new Error('List two-letter country codes')
   const rates = form.rates.filter(rate => rate.name.trim() || rate.amount.trim()).map(rate => {
     if (!rate.name.trim()) throw new Error('Name every rate')
-    const days = rate.days.trim() ? /^(\d{1,3})(?:\s*-\s*(\d{1,3}))?$/u.exec(rate.days.trim()) : null
-    if (rate.days.trim() && !days) throw new Error('Delivery days are a number or a range, such as 7-14')
-    return { name: rate.name.trim(), amount: majorAmountToMinor(rate.amount.trim(), currency.value), min_weight_grams: grams(rate.min_kg), max_weight_grams: grams(rate.max_kg),
+    const days = rate.days.trim() ? /^(\d{1,3})?\s*(-)?\s*(\d{1,3})?$/u.exec(rate.days.trim()) : null
+    if (rate.days.trim() && (!days || (!days[1] && !days[3]))) throw new Error('Delivery days are a number or a range, such as 7-14')
+    return { ...(rate.id ? { id: rate.id } : {}), name: rate.name.trim(), amount: majorAmountToMinor(rate.amount.trim(), currency.value), min_weight_grams: grams(rate.min_kg), max_weight_grams: grams(rate.max_kg),
       min_subtotal: rate.min_subtotal.trim() ? majorAmountToMinor(rate.min_subtotal.trim(), currency.value) : null,
-      delivery_days_min: days ? Number(days[1]) : null, delivery_days_max: days ? Number(days[2] ?? days[1]) : null }
+      delivery_days_min: days?.[1] ? Number(days[1]) : null, delivery_days_max: days?.[3] ? Number(days[3]) : days?.[1] && !days[2] ? Number(days[1]) : null }
   })
   const locationId = creating.value ? String(route.query.location_id ?? '') : zone.value!.location_id
   if (!locationId) throw new Error('Choose the location this zone ships from')

@@ -80,6 +80,10 @@ const rows = ref<Row[]>([])
 const levels = ref<Array<{ product_variant_id: string; location_id: string; available: number }>>([])
 const saving = ref(false)
 const error = ref('')
+// Stock that could not be read is not shown as zero and saved over the real count.
+const levelsError = ref('')
+// Set while the product is re-read after a save whose stock step failed, so the typed draft survives the new version.
+let keepDraft = false
 
 const isLevels = (value: unknown): value is { levels: typeof levels.value } => isRecord(value) && Array.isArray(value.levels)
 const inventoryPath = computed(() => `/api/editor/organizations/${encodeURIComponent(p.organizationId)}/products/${encodeURIComponent(product.value?.id ?? '')}/inventory`)
@@ -121,13 +125,17 @@ function reset() {
   rows.value = []
   rebuild()
 }
-watch(product, () => reset(), { immediate: true })
-await loadLevels().catch(cause => { error.value = getErrorMessage(cause, 'Stock could not be read') })
+// Synchronous, so the draft flag is still set when the re-read product arrives.
+watch(product, () => { if (!keepDraft) reset() }, { immediate: true, flush: 'sync' })
+await loadLevels().catch(cause => { levelsError.value = getErrorMessage(cause, 'Stock could not be read') })
 
 const photoChoices = computed(() => (p.photoAssets.value ?? []).map((asset, index) => ({ value: asset.asset_id, label: `Photo ${index + 1}` })))
 const invalid = computed(() => {
+  if (levelsError.value) return `${levelsError.value}. Reload the page before saving.`
   for (const row of rows.value) {
     if (row.price.trim()) { try { majorAmountToMinor(row.price.trim(), p.currency) } catch { return `Enter a price for ${row.title}` } }
+    // A saved price is changed, not cleared: a variant without a price could not be sold.
+    else if (savedRow(row.option_values).price) return `Enter a price for ${row.title}`
     if (tracked.value && !/^-?\d+$/u.test(row.available.trim())) return `Enter how many ${row.title} are in stock`
   }
   return null
@@ -137,6 +145,9 @@ async function save() {
   if (!current || invalid.value) return
   saving.value = true
   error.value = ''
+  // Only counts the merchant changed are written: an order taken since the page opened keeps its effect on the others.
+  const changedStock = tracked.value && stockLocationId.value ? rows.value.filter(row => row.available.trim() !== savedRow(row.option_values).available) : []
+  let committed = false
   try {
     const variants = rows.value.map((row, index) => {
       const saved = row.id ? current.variants.find(variant => variant.id === row.id) : undefined
@@ -150,16 +161,25 @@ async function save() {
       method: 'PATCH', body: { updated_at: current.updated_at, options: parsedOptions.value, variants, variants_mode: 'replace' },
       validate: (value): value is { product: { variants: Array<{ id: string; option_values: string[] }> } } => isRecord(value) && isRecord(value.product) && Array.isArray(value.product.variants),
     })
-    if (tracked.value && stockLocationId.value) {
-      const stock = rows.value.map(row => ({ row, id: saved.product.variants.find(variant => JSON.stringify(variant.option_values) === row.key)?.id }))
-      if (stock.some(entry => !entry.id)) throw new Error('A saved variant was not read back')
+    committed = true
+    // New variants now have ids; the draft keeps them so a retry updates rather than adds.
+    for (const row of rows.value) row.id = saved.product.variants.find(variant => JSON.stringify(variant.option_values) === row.key)?.id ?? null
+    if (changedStock.length) {
+      if (changedStock.some(row => !row.id)) throw new Error('A saved variant was not read back')
       await applicationFetch(inventoryPath.value, { method: 'PUT', validate: isLevels,
-        body: { levels: stock.map(({ row, id }) => ({ product_variant_id: id, location_id: stockLocationId.value, available: Number(row.available.trim()) })) } })
+        body: { levels: changedStock.map(row => ({ product_variant_id: row.id, location_id: stockLocationId.value, available: Number(row.available.trim()) })) } })
     }
     await p.reload()
     await loadLevels()
   } catch (cause) {
     error.value = getErrorMessage(cause, 'Options and stock could not be saved')
+    // The options were saved; read the new version so the next save is not refused, keeping the typed stock to retry.
+    if (committed) {
+      keepDraft = true
+      try { await p.reload() }
+      catch (reloadCause) { error.value = `${error.value}. ${getErrorMessage(reloadCause, 'Reload the page before saving again')}` }
+      finally { keepDraft = false }
+    }
   } finally {
     saving.value = false
   }

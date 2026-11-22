@@ -6,7 +6,8 @@
  */
 export interface CartLine { product_variant_id: string; quantity: number }
 
-const MAX_LINES = 50
+// A browser keeps a cookie of at most 4 KB: 30 lines of UUID variants encode to about 3 KB.
+const MAX_LINES = 30
 
 export function useCart(organizationId: string) {
   const cookie = useCookie<CartLine[]>(`cart_${organizationId}`, { default: () => [], sameSite: 'lax', maxAge: 60 * 60 * 24 * 30, path: '/' })

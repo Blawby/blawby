@@ -38,7 +38,10 @@ export async function notifyPaymentFinancialEvent(db: DbClient, stripe: Stripe, 
   // business.
   // An order is a checkout too: its own placed notice states what was paid, and a decline before capture is the pay page's.
   const checkout = payment.subject_type === 'booking' || payment.subject_type === 'order'
-  if (checkout && input.kind === 'payment_failed' && (payment.subject_type === 'order' ? payment.captured_amount === 0 : !payment.subject_id)) return
+  if (checkout && input.kind === 'payment_failed' && payment.subject_type === 'booking' && !payment.subject_id) return
+  // An order's failure is told only once the order existed for the buyer: paid on authorization, then cancelled when the payment failed.
+  if (input.kind === 'payment_failed' && payment.subject_type === 'order'
+    && (await queryFirst<{ status: string }>(db, 'SELECT status FROM orders WHERE organization_id=? AND id=?', [payment.organization_id, payment.subject_id]))?.status !== 'cancelled') return
   const guestKind = (input.kind.startsWith('refund_') || input.kind === 'payment_failed' || (!checkout && input.kind.startsWith('payment_'))) ? input.kind as GuestPaymentNotificationKind : null
   const ownerAlert = !checkout || input.kind !== 'payment_captured'
   // A deleted merchant and an unclaimed contact have no application audience.

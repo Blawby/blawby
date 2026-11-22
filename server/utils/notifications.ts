@@ -2219,7 +2219,7 @@ export async function notifyOrderPlaced(env: NotificationEnv, db: DbClient, orga
   const results = await Promise.allSettled([
     notifyOwner(env, db, {
       organizationId, organizationName: studio, locationId: order.location_id, template: 'new_order', title: ownerMessage.title, payload, message: ownerMessage,
-      source: { conversationId: order.conversation_id, messageId: anchorId(threadContext.subject) },
+      source: { conversationId: order.conversation_id, messageId: anchorId(threadContext.subject) }, surfaceDeliveryFailures: true,
     }),
     sendEmailNotification(env, db, {
       organizationId, organizationName: studio, locationId: order.location_id, to: guestContact.email, replyAs: { kind: 'guest' },

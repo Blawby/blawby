@@ -1,7 +1,7 @@
 {
   "surface": "tenant",
-  "fingerprint": "sha256:f71f1952b29c5580c0df90668775758ee68d32c82693ad71c31ea345e2b04a96",
-  "documentationFingerprint": "sha256:a85f0621c250df3ea20e148a4aec3eadaae7c899497e2dde7742c832c36a0215",
+  "fingerprint": "sha256:89739bd6943b5216fc643385f50522154d10ce9763532ee801193118ae0091c7",
+  "documentationFingerprint": "sha256:fe5d9f6a6f6e0c971b2c1ca9f05c8901d4715718fe77fa403c1626fe559f9488",
   "tools": [
     {
       "name": "add_organization_language",
@@ -100198,6 +100198,11 @@
                     "null"
                   ]
                 },
+                "id": {
+                  "description": "A saved rate’s id, to keep it (buyers who chose it can still check out). Omit for a new rate.",
+                  "minLength": 1,
+                  "type": "string"
+                },
                 "max_weight_grams": {
                   "description": "Less than this many grams.",
                   "type": [
@@ -100356,7 +100361,7 @@
         "type": "object"
       },
       "annotations": {
-        "destructiveHint": false,
+        "destructiveHint": true,
         "openWorldHint": false,
         "readOnlyHint": false,
         "title": "Save shipping zone"
@@ -101729,6 +101734,8 @@
               "additionalProperties": false,
               "properties": {
                 "available": {
+                  "maximum": 1000000,
+                  "minimum": -100000,
                   "type": "integer"
                 },
                 "location_id": {
@@ -101805,7 +101812,7 @@
         "type": "object"
       },
       "annotations": {
-        "destructiveHint": false,
+        "destructiveHint": true,
         "openWorldHint": false,
         "readOnlyHint": false,
         "title": "Set inventory"
@@ -103019,7 +103026,7 @@
         "type": "object"
       },
       "annotations": {
-        "destructiveHint": false,
+        "destructiveHint": true,
         "openWorldHint": false,
         "readOnlyHint": false,
         "title": "Set pickup"

@@ -6,6 +6,7 @@ import { NOT_HANDLED, requiredString, type McpExecutorContext } from './executio
 const text = { type: 'string' }, nullableText = { type: ['string', 'null'] }, nullableInteger = { type: ['integer', 'null'] }
 const level = { type: 'object', properties: { product_variant_id: text, location_id: text, available: { type: 'integer' }, updated_at: text }, required: ['product_variant_id', 'location_id', 'available', 'updated_at'] }
 const rateWrite = { type: 'object', properties: {
+  id: { ...text, minLength: 1, description: 'A saved rate’s id, to keep it (buyers who chose it can still check out). Omit for a new rate.' },
   name: { ...text, minLength: 1, maxLength: 100, description: 'What the buyer chooses, such as Thailand Post EMS.' },
   amount: { type: 'integer', minimum: 0, description: 'In the currency’s smallest unit, in the business currency.' },
   min_weight_grams: { ...nullableInteger, description: 'The parcel weight band this rate covers: at least this many grams.' },
@@ -35,7 +36,7 @@ export const GOODS_TOOLS: McpToolDefinition[] = [
     inputSchema: { product_id: { ...text, minLength: 1 } }, required: ['product_id'],
     outputSchema: { type: 'object', properties: { levels: { type: 'array', items: level } }, required: ['levels'] } }),
   organizationTool({ name: 'set_inventory', domain: 'goods', minimumRole: 'member', description: 'Set how many of each variant of a physical item are available at a location (a count, not an adjustment). Orders take stock when they are paid.',
-    inputSchema: { product_id: { ...text, minLength: 1 }, levels: { type: 'array', minItems: 1, maxItems: 300, items: { type: 'object', properties: { product_variant_id: { ...text, minLength: 1 }, location_id: { ...text, minLength: 1 }, available: { type: 'integer' } }, required: ['product_variant_id', 'location_id', 'available'], additionalProperties: false } } },
+    inputSchema: { product_id: { ...text, minLength: 1 }, levels: { type: 'array', minItems: 1, maxItems: 300, items: { type: 'object', properties: { product_variant_id: { ...text, minLength: 1 }, location_id: { ...text, minLength: 1 }, available: { type: 'integer', minimum: -100000, maximum: 1000000 } }, required: ['product_variant_id', 'location_id', 'available'], additionalProperties: false } } },
     required: ['product_id', 'levels'],
     outputSchema: { type: 'object', properties: { levels: { type: 'array', items: level } }, required: ['levels'] } }),
   organizationTool({ name: 'list_shipping_zones', domain: 'goods', minimumRole: 'admin', description: 'List where physical items ship: each zone is a set of destination countries served from one location, with the rates buyers choose from.',

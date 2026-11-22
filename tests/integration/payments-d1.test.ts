@@ -1861,6 +1861,7 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
    db.prepare("INSERT INTO shipping_rates(id,organization_id,shipping_zone_id,name,currency,amount,min_weight_grams,created_at,updated_at) VALUES('freight',?,'laos','Freight','USD',5000,10000,?,?)").bind(ORG, NOW, NOW),
   ])
   const statuses: Record<string, string> = {}
+  const declined = new Set<string>()
   const calls: string[] = []
   const realFetch = globalThis.fetch
   t.mock.method(globalThis, 'fetch', async (request: RequestInfo | URL, init?: RequestInit) => {
@@ -1886,6 +1887,7 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
    const charge = { id: `ch_${paymentId}`, object: 'charge', livemode: false, amount: 10000, currency: 'usd', created: 1_790_000_000, payment_intent: `pi_${paymentId}`, receipt_url: 'https://pay.stripe.com/receipts/order', billing_details: { email: 'buyer@example.com' } }
    const intent = () => ({ id: `pi_${paymentId}`, object: 'payment_intent', livemode: false, currency: 'usd', amount: 10000, amount_received: statuses[paymentId] === 'succeeded' ? 10000 : 0, status: statuses[paymentId],
     payment_method: 'pm_proof', latest_charge: ['succeeded', 'requires_capture'].includes(statuses[paymentId]!) ? charge : null, cancellation_reason: statuses[paymentId] === 'canceled' ? 'abandoned' : null, last_payment_error: null, metadata: { blawby_payment_id: paymentId } })
+   if (resource === 'payment_intents' && action === 'capture' && declined.has(paymentId)) { calls.push(`capture:${paymentId}`); return Response.json({ error: { type: 'card_error', code: 'card_declined', message: 'Your card was declined.' } }, { status: 402 }) }
    if (resource === 'payment_intents' && action === 'capture') { calls.push(`capture:${paymentId}`); statuses[paymentId] = 'succeeded'; return Response.json(intent()) }
    if (resource === 'payment_intents' && action === 'cancel') { calls.push(`cancel:${paymentId}`); statuses[paymentId] = 'canceled'; return Response.json(intent()) }
    if (resource === 'payment_intents') return Response.json(intent())
@@ -1949,6 +1951,22 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
   assert.deepEqual(calls.slice(-1), [`refund:${redirected.payment_id}`])
   assert.equal(await db.prepare('SELECT o.status FROM orders o JOIN payments p ON p.subject_id = o.id WHERE p.id = ?').bind(redirected.payment_id).first('status'), 'released')
   assert.deepEqual(await db.prepare('SELECT captured_amount, refunded_amount FROM payments WHERE id = ?').bind(redirected.payment_id).first(), { captured_amount: 10000, refunded_amount: 10000 })
+
+  // An order paid on authorization whose capture is declined, and whose authorization Stripe then cancels, gives its stock back and leaves nothing to ship.
+  await db.prepare("UPDATE inventory_levels SET available = 1 WHERE product_variant_id = 'ruby'").run()
+  const declinedCheckout = await checkout('declined-order')
+  declined.add(declinedCheckout.payment_id)
+  statuses[declinedCheckout.payment_id] = 'requires_capture'
+  const declinedOutcome = await processPaymentEvent(db, getStripe(env), authorized(declinedCheckout.payment_id), env).then(() => null, (error: unknown) => error)
+  const declinedOrder = await db.prepare('SELECT o.id, o.status FROM orders o JOIN payments p ON p.subject_id = o.id WHERE p.id = ?').bind(declinedCheckout.payment_id).first<{ id: string; status: string }>()
+  assert.equal(declinedOrder?.status, 'paid', `the order is paid before capture is tried (${String(declinedOutcome)})`)
+  assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'ruby'").first('available'), 0)
+  statuses[declinedCheckout.payment_id] = 'canceled'
+  await processPaymentEvent(db, getStripe(env), { ...authorized(declinedCheckout.payment_id), id: `evt_canceled_${declinedCheckout.payment_id}`, type: 'payment_intent.canceled' } as unknown as Stripe.Event, env)
+  assert.equal(await db.prepare('SELECT status FROM orders WHERE id = ?').bind(declinedOrder!.id).first('status'), 'cancelled')
+  assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'ruby'").first('available'), 1)
+  assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'celadon'").first('available'), -1)
+  assert.equal(await db.prepare("SELECT status FROM tasks WHERE subject_type = 'order' AND subject_id = ?").bind(declinedOrder!.id).first('status'), 'cancelled')
 
   // Shipping it closes the task and tells the buyer in their conversation.
   const shipped = await fulfillOrder(db, env, { organizationId: ORG, orderId: paid!.id, actorId: 'host', carrier: 'Thailand Post EMS', tracking_number: 'EE123456789TH', tracking_url: null })

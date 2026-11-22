@@ -19,8 +19,8 @@
     <p class="text-sm text-muted">{{ stockLine }}</p>
     <div class="flex items-center gap-3">
       <label class="sr-only" :for="quantityId">{{ t('shop.quantity') }}</label>
-      <UInputNumber :id="quantityId" v-model="quantity" :min="1" :max="maxQuantity" class="w-32" />
-      <TenantButton :disabled="!variant || soldOut" class="flex-1" @click="addToCart">{{ soldOut ? t('shop.sold_out') : t('shop.add_to_cart') }}</TenantButton>
+      <UInputNumber :id="quantityId" v-model="quantity" :min="1" :max="Math.max(maxQuantity, 1)" class="w-32" />
+      <TenantButton :disabled="!variant || soldOut || maxQuantity === 0" class="flex-1" @click="addToCart">{{ soldOut ? t('shop.sold_out') : t('shop.add_to_cart') }}</TenantButton>
     </div>
     <p v-if="added" class="text-sm text-default">
       <NuxtLink :to="localePath('/cart')" class="underline">{{ t('shop.cart') }} ({{ cart.count.value }}) · {{ t('shop.checkout') }} →</NuxtLink>
@@ -50,15 +50,17 @@ function choose(index: number, value: string) {
   chosen.value = next
 }
 
-// Stock counted at the locations offering the item, or the one this page is for.
+// An order is sent from one location, so the most one order can take is the stock at the best-stocked location offering the item (or the one this page is for).
 const available = computed(() => {
   const current = variant.value
   if (!current?.inventory_tracked) return null
-  return current.inventory_levels.filter(level => props.locationId === null || level.location_id === props.locationId).reduce((sum, level) => sum + Math.max(level.available, 0), 0)
+  return Math.max(0, ...current.inventory_levels.filter(level => props.locationId === null || level.location_id === props.locationId).map(level => level.available))
 })
 const limit = computed(() => variant.value ? purchasableQuantity({ inventory_tracked: variant.value.inventory_tracked, inventory_policy: variant.value.inventory_policy, available: available.value }) : 0)
 const soldOut = computed(() => limit.value === 0)
-const maxQuantity = computed(() => Math.min(limit.value ?? 99, 99))
+// What is already in the cart counts against the stock.
+const inCart = computed(() => cart.lines.value.find(line => line.product_variant_id === variant.value?.id)?.quantity ?? 0)
+const maxQuantity = computed(() => Math.max(Math.min(limit.value ?? 99, 99) - inCart.value, 0))
 const quantity = ref(1)
 watch(maxQuantity, max => { if (quantity.value > max) quantity.value = Math.max(max, 1) })
 
@@ -74,7 +76,7 @@ const stockLine = computed(() => {
 
 const added = ref(false)
 function addToCart() {
-  if (!variant.value || soldOut.value) return
+  if (!variant.value || soldOut.value || maxQuantity.value === 0) return
   cart.add(variant.value.id, quantity.value)
   added.value = true
 }

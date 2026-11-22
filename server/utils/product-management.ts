@@ -1243,6 +1243,9 @@ async function planProduct(
     prices: (declaredVariants[index]?.prices ?? []).map((price, priceIndex) =>
       normalizePriceInput(price, defaultCurrency, `variants[${index}].prices[${priceIndex}]`)),
   }))
+  // A variant's photo is one of this organization's images; the foreign key alone would admit another's.
+  const variantPhotos = [...new Set(plannedVariants.flatMap(variant => variant.media_asset_id ? [variant.media_asset_id] : []))]
+  await hydrateMediaAssetRefs(db, { organizationId, refs: variantPhotos.map(asset_id => ({ asset_id })), allowedKinds: ['image'], fieldName: 'variants.media_asset_id' })
   const stay = await planStayConfig(db, organizationId, kind, input.stay && { ...input.stay, internal_name: Object.hasOwn(input.stay, 'internal_name') ? input.stay.internal_name : name }, context.stayResponsibility)
   if (stay) {
     try { validateStayAlarmDetails(input.details ?? {}, stay.amenity_answers) }

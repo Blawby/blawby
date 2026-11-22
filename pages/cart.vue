@@ -3,7 +3,11 @@
     <div class="tenant-container py-12 sm:py-16">
       <h1 class="tenant-display text-3xl sm:text-4xl text-default">{{ t('shop.cart') }}</h1>
       <p v-if="!cart.lines.value.length" class="mt-8 text-muted">{{ t('shop.cart_empty') }}</p>
-      <UAlert v-else-if="quoteError" class="mt-8" color="error" variant="soft" :description="quoteError" />
+      <div v-else-if="quoteFailure" class="mt-8 space-y-3">
+        <!-- The quote names the item it could not sell, so the buyer can take it out and buy the rest. -->
+        <UAlert color="error" variant="soft" :description="quoteFailure.message" />
+        <button v-if="quoteFailure.product_variant_id" type="button" class="text-sm text-muted underline" @click="cart.set(quoteFailure.product_variant_id, 0)">{{ t('shop.remove') }}</button>
+      </div>
       <div v-else-if="quote" class="mt-8 grid gap-10 lg:grid-cols-12">
         <form class="space-y-8 lg:col-span-7" @submit.prevent="checkout">
           <section class="space-y-3">
@@ -66,9 +70,9 @@
             <span class="font-medium text-default">{{ money(line.amount) }}</span>
           </div>
           <div class="space-y-2 border-t border-default pt-4 text-sm">
-            <div class="flex justify-between"><span>{{ t('shop.subtotal') }}</span><span>{{ money(quote.subtotal) }}</span></div>
+            <div class="flex justify-between"><span>{{ t('shop.subtotal') }}</span><span>{{ money(summary.subtotal) }}</span></div>
             <div v-if="method === 'shipping' && chosenRate" class="flex justify-between"><span>{{ t('shop.shipping') }}</span><span>{{ money(chosenRate.amount) }}</span></div>
-            <div class="flex justify-between pt-2 text-base font-semibold text-default"><span>{{ t('shop.total') }}</span><span>{{ money(quote.subtotal + (method === 'shipping' ? chosenRate?.amount ?? 0 : 0)) }}</span></div>
+            <div class="flex justify-between pt-2 text-base font-semibold text-default"><span>{{ t('shop.total') }}</span><span>{{ money(summary.subtotal + (method === 'shipping' ? chosenRate?.amount ?? 0 : 0)) }}</span></div>
             <p class="text-muted">{{ t('shop.taxes_at_payment') }}</p>
           </div>
         </aside>
@@ -79,7 +83,7 @@
 
 <script setup lang="ts">
 import { formatMinorAmount } from '~/shared/prices'
-import { publicApiMutation, isRecord } from '~/utils/api-clients'
+import { ApiClientError, publicApiMutation, isRecord } from '~/utils/api-clients'
 import { getErrorMessage } from '~/utils/errors'
 import type { OrderQuote } from '~/server/domain/goods'
 
@@ -95,12 +99,22 @@ const isQuote = (value: unknown): value is OrderQuote => isRecord(value) && Arra
 const money = (amount: number) => quote.value ? formatMinorAmount(amount, quote.value.currency, locale.value) : ''
 
 const quote = ref<OrderQuote | null>(null)
-const quoteError = ref('')
+const quoteFailure = ref<{ message: string; product_variant_id: string | null } | null>(null)
+// Only the newest request's answer is shown: an earlier cart's quote can arrive after a later one.
+let priceRequest = 0
 async function price() {
-  quoteError.value = ''
+  const request = ++priceRequest
+  quoteFailure.value = null
   if (!cart.lines.value.length) { quote.value = null; return }
-  try { quote.value = await publicApiMutation('/api/public/orders/quote', { method: 'POST', body: { lines: cart.lines.value }, validate: isQuote }) }
-  catch (cause) { quoteError.value = getErrorMessage(cause, t('shop.cart')) }
+  try {
+    const next = await publicApiMutation('/api/public/orders/quote', { method: 'POST', body: { lines: cart.lines.value }, validate: isQuote })
+    if (request === priceRequest) quote.value = next
+  } catch (cause) {
+    if (request !== priceRequest) return
+    quote.value = null
+    const variantId = cause instanceof ApiClientError && typeof cause.data.product_variant_id === 'string' ? cause.data.product_variant_id : null
+    quoteFailure.value = { message: getErrorMessage(cause, t('shop.cart')), product_variant_id: variantId }
+  }
 }
 watch(() => JSON.stringify(cart.lines.value), price, { immediate: true })
 
@@ -116,15 +130,22 @@ const shippingQuote = ref<OrderQuote | null>(null)
 const rateError = ref('')
 const rateId = ref<string | null>(null)
 const chosenRate = computed(() => shippingQuote.value?.shipping_rates.find(rate => rate.id === rateId.value) ?? null)
+let shippingRequest = 0
 watch([() => address.country, () => JSON.stringify(cart.lines.value), method], async () => {
+  const request = ++shippingRequest
   shippingQuote.value = null
+  rateId.value = null
   rateError.value = ''
   if (method.value !== 'shipping' || !address.country || !cart.lines.value.length) return
   try {
-    shippingQuote.value = await publicApiMutation('/api/public/orders/quote', { method: 'POST', body: { lines: cart.lines.value, delivery: { method: 'shipping', country: address.country } }, validate: isQuote })
-    rateId.value = shippingQuote.value.shipping_rates[0]?.id ?? null
-  } catch (cause) { rateError.value = getErrorMessage(cause, t('shop.no_shipping')) }
+    const next = await publicApiMutation('/api/public/orders/quote', { method: 'POST', body: { lines: cart.lines.value, delivery: { method: 'shipping', country: address.country } }, validate: isQuote })
+    if (request !== shippingRequest) return
+    shippingQuote.value = next
+    rateId.value = next.shipping_rates[0]?.id ?? null
+  } catch (cause) { if (request === shippingRequest) rateError.value = getErrorMessage(cause, t('shop.no_shipping')) }
 })
+// Shipping is priced at the location that ships to the buyer, which may price the items differently from the first one offering them.
+const summary = computed(() => (method.value === 'shipping' ? shippingQuote.value : null) ?? quote.value!)
 
 const guest = reactive({ name: '', email: '', phone: '' })
 const note = ref('')

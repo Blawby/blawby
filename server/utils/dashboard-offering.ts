@@ -29,9 +29,11 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
       WHERE m.organizationId = ${organization} AND m.id IN (SELECT assigned_member_id FROM product_booking_configs WHERE organization_id = m.organizationId AND product_id = ?) AND (${readMembers} OR m.userId = ${BATCH_VIEWER.user})`,
     params: [...params, productId],
   }, {
-    // A physical item's stock across the locations that count it, read with the rest of the editor.
+    // A physical item's sellable stock: active variants at active locations that still offer it, read with the rest of the editor.
     query: `SELECT COALESCE(SUM(MAX(l.available, 0)), 0) AS available FROM inventory_levels l JOIN product_variants v ON v.organization_id = l.organization_id AND v.id = l.product_variant_id
-      WHERE l.organization_id = ${organization} AND v.product_id = ? AND v.inventory_tracked = 1`,
+      JOIN product_locations pl ON pl.organization_id = l.organization_id AND pl.product_id = v.product_id AND pl.location_id = l.location_id AND pl.active = 1
+      JOIN business_locations bl ON bl.organization_id = l.organization_id AND bl.id = l.location_id AND bl.status = 'active'
+      WHERE l.organization_id = ${organization} AND v.product_id = ? AND v.inventory_tracked = 1 AND v.active = 1`,
     params: [...params, productId],
   }]
   return { queries, async read(rows: D1Result[], product: Product, locationId: string | null, context: Pick<ProductEditorContext, 'env' | 'organization'>) {

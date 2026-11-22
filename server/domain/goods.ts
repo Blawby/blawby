@@ -25,8 +25,8 @@ import { messageQueries } from '~/server/domain/conversations'
 import { isRecord } from '~/server/utils/type-guards'
 import type { Payment } from '~/server/domain/payments'
 
-function fail(statusCode: number, code: string, message: string, field?: string): never {
-  throw new HTTPError({ statusCode, statusMessage: message, data: { code, ...(field ? { field } : {}) } })
+function fail(statusCode: number, code: string, message: string, field?: string, detail: Record<string, unknown> = {}): never {
+  throw new HTTPError({ statusCode, statusMessage: message, data: { code, ...(field ? { field } : {}), ...detail } })
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +105,8 @@ export async function listShippingZones(db: DbClient, organizationId: string): P
 
 export interface ShippingZoneInput {
   location_id: string; name: string; countries: string[]
-  rates: Array<Omit<ShippingRate, 'id' | 'currency'>>
+  /** A rate restated with its id keeps it, so a buyer who chose it can still check out. */
+  rates: Array<Omit<ShippingRate, 'id' | 'currency'> & { id: string | null }>
 }
 
 function shippingZoneInput(value: unknown): ShippingZoneInput {
@@ -132,7 +133,8 @@ function shippingZoneInput(value: unknown): ShippingZoneInput {
     if (!rateName || rateName.length > 100) fail(400, 'VALIDATION_ERROR', `rates[${index}].name must be 1–100 characters`, `rates[${index}].name`)
     const amount = whole(entry, 'amount', index)
     if (amount === null) fail(400, 'VALIDATION_ERROR', `rates[${index}].amount is required`, `rates[${index}].amount`)
-    const rate = { name: rateName, amount, min_weight_grams: whole(entry, 'min_weight_grams', index), max_weight_grams: whole(entry, 'max_weight_grams', index, 1),
+    if (entry.id !== undefined && (typeof entry.id !== 'string' || !entry.id)) fail(400, 'VALIDATION_ERROR', `rates[${index}].id must be a saved rate id`, `rates[${index}].id`)
+    const rate = { id: typeof entry.id === 'string' ? entry.id : null, name: rateName, amount, min_weight_grams: whole(entry, 'min_weight_grams', index), max_weight_grams: whole(entry, 'max_weight_grams', index, 1),
       min_subtotal: whole(entry, 'min_subtotal', index), delivery_days_min: whole(entry, 'delivery_days_min', index), delivery_days_max: whole(entry, 'delivery_days_max', index) }
     if (rate.min_weight_grams !== null && rate.max_weight_grams !== null && rate.max_weight_grams <= rate.min_weight_grams) fail(400, 'VALIDATION_ERROR', `rates[${index}] weight band is empty`, `rates[${index}].max_weight_grams`)
     if (rate.delivery_days_min !== null && rate.delivery_days_max !== null && rate.delivery_days_max < rate.delivery_days_min) fail(400, 'VALIDATION_ERROR', `rates[${index}] delivery days are reversed`, `rates[${index}].delivery_days_max`)
@@ -158,14 +160,26 @@ export async function saveShippingZone(db: DbClient, organizationId: string, zon
     ? { query: 'UPDATE shipping_zones SET location_id = ?, name = ?, countries = ?, updated_at = ? WHERE organization_id = ? AND id = ?', params: [input.location_id, input.name, JSON.stringify(input.countries), now, organizationId, id] }
     : { query: 'INSERT INTO shipping_zones (id, organization_id, location_id, name, countries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', params: [id, organizationId, input.location_id, input.name, JSON.stringify(input.countries), now, now] },
   assertBookingBatchWrite({ query: 'changes() = 1', params: [] }),
-  { query: 'DELETE FROM shipping_rates WHERE organization_id = ? AND shipping_zone_id = ?', params: [organizationId, id] },
+  // A concurrent save can give a country to another zone of this location after the read above; the batch refuses it.
+  { query: `SELECT CASE WHEN EXISTS (SELECT 1 FROM shipping_zones z, json_each(z.countries) c WHERE z.organization_id = ? AND z.location_id = ? AND z.id <> ? AND c.value IN (SELECT value FROM json_each(?)))
+      THEN json_extract('{}', 'COUNTRY_IN_ANOTHER_ZONE') ELSE 1 END`, params: [organizationId, input.location_id, id, JSON.stringify(input.countries)] },
+  { query: 'DELETE FROM shipping_rates WHERE organization_id = ? AND shipping_zone_id = ? AND id NOT IN (SELECT value FROM json_each(?))', params: [organizationId, id, d1JsonArray(input.rates.flatMap(rate => rate.id ? [rate.id] : []))] },
   ...input.rates.map((rate, index) => ({
     query: `INSERT INTO shipping_rates (id, organization_id, shipping_zone_id, name, currency, amount, min_weight_grams, max_weight_grams, min_subtotal, delivery_days_min, delivery_days_max, sort_order, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    params: [crypto.randomUUID(), organizationId, id, rate.name, organization.default_currency, rate.amount, rate.min_weight_grams, rate.max_weight_grams, rate.min_subtotal, rate.delivery_days_min, rate.delivery_days_max, index, now, now],
-  }))]
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (id) DO UPDATE SET name = excluded.name, currency = excluded.currency, amount = excluded.amount, min_weight_grams = excluded.min_weight_grams, max_weight_grams = excluded.max_weight_grams,
+        min_subtotal = excluded.min_subtotal, delivery_days_min = excluded.delivery_days_min, delivery_days_max = excluded.delivery_days_max, sort_order = excluded.sort_order, updated_at = excluded.updated_at
+      WHERE shipping_rates.organization_id = excluded.organization_id AND shipping_rates.shipping_zone_id = excluded.shipping_zone_id`,
+    params: [rate.id ?? crypto.randomUUID(), organizationId, id, rate.name, organization.default_currency, rate.amount, rate.min_weight_grams, rate.max_weight_grams, rate.min_subtotal, rate.delivery_days_min, rate.delivery_days_max, index, now, now],
+  })),
+  // A restated id that belongs to another zone wrote nothing: it is refused, not silently dropped.
+  assertBookingBatchWrite({ query: '(SELECT count(*) FROM shipping_rates WHERE organization_id = ? AND shipping_zone_id = ?) = ?', params: [organizationId, id, input.rates.length] })]
   try { await executeBatch(db, queries, { operation: 'Save shipping zone' }) }
-  catch (error) { if (error instanceof Error && /BOOKING_WRITE_REFUSED/.test(error.message)) fail(404, 'SHIPPING_ZONE_NOT_FOUND', 'Shipping zone not found'); throw error }
+  catch (error) {
+    if (error instanceof Error && /COUNTRY_IN_ANOTHER_ZONE/.test(error.message)) fail(409, 'COUNTRY_IN_ANOTHER_ZONE', 'A country in this zone is already shipped to in another zone', 'countries')
+    if (error instanceof Error && /BOOKING_WRITE_REFUSED/.test(error.message)) fail(404, 'SHIPPING_ZONE_NOT_FOUND', 'Shipping zone or rate not found')
+    throw error
+  }
   const zone = (await listShippingZones(db, organizationId)).find(entry => entry.id === id)
   if (!zone) throw new Error('Saved shipping zone was not read back')
   return zone
@@ -241,7 +255,7 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
     { query: `SELECT v.id, v.product_id, v.name, v.sku, v.active, v.option_values, v.media_asset_id, v.weight_grams, v.inventory_tracked, v.inventory_policy,
         p.kind, p.name AS product_name, p.active AS product_active, pub.published, p.tax_code, p.processing_days, p.made_to_order_days, p.options AS product_options,
         COALESCE(ma.public_url, (SELECT pa.public_url FROM media_placements mp JOIN media_assets pa ON pa.id = mp.asset_id
-          WHERE mp.organization_id = p.organization_id AND mp.owner_type = 'product' AND mp.owner_id = p.id AND mp.slot = 'image' ORDER BY mp.sort_order LIMIT 1)) AS image_url
+          WHERE mp.organization_id = p.organization_id AND mp.owner_type = 'product' AND mp.owner_id = p.id AND mp.slot = 'image' AND mp.status = 'active' AND pa.status = 'active' ORDER BY mp.sort_order LIMIT 1)) AS image_url
       FROM product_variants v JOIN products p ON p.organization_id = v.organization_id AND p.id = v.product_id
       LEFT JOIN product_publications pub ON pub.organization_id = p.organization_id AND pub.product_id = p.id
       LEFT JOIN media_assets ma ON ma.id = v.media_asset_id AND ma.organization_id = v.organization_id
@@ -269,49 +283,76 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
   }
   const productIds = [...new Set(variants.map(variant => variant.product_id))]
   const offering = locations.filter(location => productIds.every(productId => offers.some(offer => offer.product_id === productId && offer.location_id === location.id)))
-  const location = delivery === null ? offering[0]
-    : delivery.method === 'pickup'
-      ? offering.find(candidate => candidate.id === delivery.location_id && candidate.pickup_enabled === 1)
-      : offering.find(candidate => zoneRates.some(rate => rate.location_id === candidate.id && (JSON.parse(rate.countries) as string[]).includes(country!.data!)))
-  if (!location) fail(409, delivery === null ? 'ITEM_UNAVAILABLE' : delivery.method === 'pickup' ? 'PICKUP_UNAVAILABLE' : 'SHIPPING_UNAVAILABLE',
-    delivery === null ? 'These items are not offered together at one location' : delivery.method === 'pickup' ? 'These items cannot be collected there' : 'These items do not ship to that country', 'delivery')
   const at_ = at.toISOString()
-  const quoted = lines.map(line => {
-    const variant = variants.find(row => row.id === line.product_variant_id)!
-    let price: Price | null
-    try { price = selectPrice(prices.filter(row => row.product_variant_id === variant.id).map(row => ({ ...row, active: Boolean(row.active) })), { currency, location_id: location.id, at: at_ }) }
-    catch (error) { if (error instanceof AmbiguousPriceError) throw new Error(`Variant ${variant.id} has ambiguous prices`, { cause: error }); throw error }
-    if (!price) fail(409, 'ITEM_UNPRICED', `${variant.product_name} has no price here`, 'lines')
-    const available = stock.find(row => row.product_variant_id === variant.id && row.location_id === location.id)?.available ?? 0
-    const state = { inventory_tracked: variant.inventory_tracked === 1, inventory_policy: variant.inventory_policy, available }
-    const madeToOrder = madeToOrderQuantity(state, line.quantity)
-    if (madeToOrder > 0 && variant.inventory_policy === 'deny') fail(409, 'OUT_OF_STOCK', `Only ${Math.max(available, 0)} of ${variant.product_name} left`, 'lines')
-    const optionValues = JSON.parse(variant.option_values) as string[]
-    return {
-      product_id: variant.product_id, product_variant_id: variant.id, title: variant.product_name,
-      variant_title: optionValues.length ? variantTitle(optionValues) : null, sku: variant.sku,
-      quantity: line.quantity, unit_amount: price.unit_amount, amount: price.unit_amount * line.quantity,
-      tax_code: variant.tax_code, tax_behavior: price.tax_behavior, made_to_order_quantity: madeToOrder, image_asset_id: variant.media_asset_id, image_url: variant.image_url,
-      available: variant.inventory_tracked === 1 ? available : null,
-    }
-  })
-  const subtotal = quoted.reduce((sum, line) => sum + line.amount, 0)
   const weights = lines.map(line => variants.find(row => row.id === line.product_variant_id)!.weight_grams)
   const weight = weights.every(value => value !== null) ? lines.reduce((sum, line, index) => sum + (weights[index] as number) * line.quantity, 0) : null
-  const shippingRates = delivery?.method !== 'shipping' ? [] : zoneRates
-    .filter(rate => rate.location_id === location.id && (JSON.parse(rate.countries) as string[]).includes(country!.data!) && rate.currency === currency)
+  // The variant named so the buyer's cart can offer to remove it.
+  type Failure = { failure: { status: number; code: string; message: string; product_variant_id: string } }
+  // The cart as one location sells it: its prices and its stock, or why it cannot.
+  const priceAt = (location: typeof locations[number]): { lines: QuotedLine[]; subtotal: number } | Failure => {
+    const quoted: QuotedLine[] = []
+    for (const line of lines) {
+      const variant = variants.find(row => row.id === line.product_variant_id)!
+      let price: Price | null
+      try { price = selectPrice(prices.filter(row => row.product_variant_id === variant.id).map(row => ({ ...row, active: Boolean(row.active) })), { currency, location_id: location.id, at: at_ }) }
+      catch (error) { if (error instanceof AmbiguousPriceError) throw new Error(`Variant ${variant.id} has ambiguous prices`, { cause: error }); throw error }
+      if (!price) return { failure: { status: 409, code: 'ITEM_UNPRICED', message: `${variant.product_name} has no price here`, product_variant_id: variant.id } }
+      const available = stock.find(row => row.product_variant_id === variant.id && row.location_id === location.id)?.available ?? 0
+      const madeToOrder = madeToOrderQuantity({ inventory_tracked: variant.inventory_tracked === 1, inventory_policy: variant.inventory_policy, available }, line.quantity)
+      if (madeToOrder > 0 && variant.inventory_policy === 'deny') return { failure: { status: 409, code: 'OUT_OF_STOCK', message: `Only ${Math.max(available, 0)} of ${variant.product_name} left`, product_variant_id: variant.id } }
+      const optionValues = JSON.parse(variant.option_values) as string[]
+      quoted.push({
+        product_id: variant.product_id, product_variant_id: variant.id, title: variant.product_name,
+        variant_title: optionValues.length ? variantTitle(optionValues) : null, sku: variant.sku,
+        quantity: line.quantity, unit_amount: price.unit_amount, amount: price.unit_amount * line.quantity,
+        tax_code: variant.tax_code, tax_behavior: price.tax_behavior, made_to_order_quantity: madeToOrder, image_asset_id: variant.media_asset_id, image_url: variant.image_url,
+        available: variant.inventory_tracked === 1 ? available : null,
+      })
+    }
+    return { lines: quoted, subtotal: quoted.reduce((sum, line) => sum + line.amount, 0) }
+  }
+  // The rates a location offers a country for this parcel and subtotal, cheapest first.
+  const ratesAt = (locationId: string, destination: string, subtotal: number) => zoneRates
+    .filter(rate => rate.location_id === locationId && rate.currency === currency && (JSON.parse(rate.countries) as string[]).includes(destination))
     .filter(rate => (weight === null ? rate.min_weight_grams === null && rate.max_weight_grams === null : true) && rateApplies(rate, { weight_grams: weight ?? 0, subtotal }))
-    .map(({ zone_id: _zone, location_id: _location, countries: _countries, ...rate }) => ({ id: rate.id, name: rate.name, currency: rate.currency, amount: rate.amount, min_weight_grams: rate.min_weight_grams,
+    .map(rate => ({ id: rate.id, name: rate.name, currency: rate.currency, amount: rate.amount, min_weight_grams: rate.min_weight_grams,
       max_weight_grams: rate.max_weight_grams, min_subtotal: rate.min_subtotal, delivery_days_min: rate.delivery_days_min, delivery_days_max: rate.delivery_days_max, applies: true as const }))
-  if (delivery?.method === 'shipping' && shippingRates.length === 0) fail(409, 'SHIPPING_UNAVAILABLE', 'No shipping rate covers this order', 'delivery')
+  // Shopify's location priority: the first location, in the order the business added them, that can sell and deliver the whole cart.
+  const candidates = delivery === null ? offering
+    : delivery.method === 'pickup' ? offering.filter(candidate => candidate.id === delivery.location_id && candidate.pickup_enabled === 1) : offering
+  let chosen: { location: typeof locations[number]; priced: { lines: QuotedLine[]; subtotal: number }; rates: ReturnType<typeof ratesAt> } | null = null
+  let firstFailure: Failure['failure'] | null = null
+  for (const candidate of candidates) {
+    const priced = priceAt(candidate)
+    if ('failure' in priced) { firstFailure ??= priced.failure; continue }
+    const rates = delivery?.method === 'shipping' ? ratesAt(candidate.id, country!.data!, priced.subtotal) : []
+    if (delivery?.method === 'shipping' && !rates.length) continue
+    chosen = { location: candidate, priced, rates }
+    break
+  }
+  if (!chosen) {
+    if (firstFailure) fail(firstFailure.status, firstFailure.code, firstFailure.message, 'lines', { product_variant_id: firstFailure.product_variant_id })
+    fail(409, delivery === null ? 'ITEM_UNAVAILABLE' : delivery.method === 'pickup' ? 'PICKUP_UNAVAILABLE' : 'SHIPPING_UNAVAILABLE',
+      delivery === null ? 'These items are not offered together at one location' : delivery.method === 'pickup' ? 'These items cannot be collected there' : 'No shipping rate covers this order to that country', 'delivery')
+  }
+  const { location, priced: { lines: quoted, subtotal }, rates: shippingRates } = chosen
   const productDays = quoted.map(line => {
     const variant = variants.find(row => row.id === line.product_variant_id)!
     return line.made_to_order_quantity > 0 ? variant.made_to_order_days : variant.processing_days
   })
   const shipBy = productDays.every(days => days !== null) ? addBusinessDays(localDateAt(at, location.timezone), Math.max(0, ...(productDays as number[]))) : null
+  // The countries some location offering the cart can deliver it to, under the same rate conditions a shipping quote applies.
+  const shipToCountries = new Set<string>()
+  for (const candidate of offering) {
+    const priced = priceAt(candidate)
+    if ('failure' in priced) continue
+    for (const rate of zoneRates.filter(entry => entry.location_id === candidate.id)) {
+      for (const destination of JSON.parse(rate.countries) as string[]) if (ratesAt(candidate.id, destination, priced.subtotal).length) shipToCountries.add(destination)
+    }
+  }
   return { currency, location: { id: location.id, title: location.title, timezone: location.timezone, address: stripeAddress(location.address) }, lines: quoted, subtotal, weight_grams: weight,
     delivery_method: delivery === null ? null : delivery.method as DeliveryMethod,
-    ship_to_countries: [...new Set(zoneRates.filter(rate => offering.some(candidate => candidate.id === rate.location_id) && rate.currency === currency).flatMap(rate => JSON.parse(rate.countries) as string[]))].sort(),
+    ship_to_countries: [...shipToCountries].sort(),
     pickup_locations: offering.filter(candidate => candidate.pickup_enabled === 1).map(candidate => ({ id: candidate.id, title: candidate.title })),
     shipping_rates: shippingRates, ship_by: shipBy }
 }
@@ -365,88 +406,92 @@ export async function createOrderCheckout(db: DbClient, env: CloudflareEnv, inpu
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(guest.email)) fail(400, 'VALIDATION_ERROR', 'Enter a valid email', 'guest_email')
   const note = trimmedText(input.note, 'note', 2000, false)
-  if (!isRecord(input.delivery)) fail(400, 'VALIDATION_ERROR', 'Choose shipping or pickup', 'delivery')
+  if (!isRecord(input.delivery) || (input.delivery.method !== 'shipping' && input.delivery.method !== 'pickup')) fail(400, 'VALIDATION_ERROR', 'Choose shipping or pickup', 'delivery')
+  const shipped = input.delivery.method === 'shipping'
+  const parsedDetails = shipped ? shippingDetailsSchema.safeParse(input.shipping_details) : null
+  if (parsedDetails && !parsedDetails.success) fail(400, 'VALIDATION_ERROR', 'A shipping name and address are required', 'shipping_details')
+  const shippingDetails: ShippingDetails | null = parsedDetails?.success ? parsedDetails.data : null
+  // The request as the buyer made it: a retry with the same key reopens its checkout without repricing it.
+  const fingerprint = await tokenHash(JSON.stringify({ lines: input.lines, delivery: input.delivery, shippingDetails, guest, note }))
+  const previous = await readCheckoutAttempt(db, input.organizationId, key)
+  if (previous) {
+    const frozen = JSON.parse(previous.price_snapshot_json) as { request_fingerprint?: unknown; method_configuration_id: string; title: string }
+    if (previous.subject_type !== 'order' || frozen.request_fingerprint !== fingerprint) fail(409, 'IDEMPOTENCY_CONFLICT', 'This checkout key was used for a different order', 'idempotency_key')
+    const handoff: PaymentHandoff = { payment_id: previous.id, pay_path: `/pay/${encodeURIComponent(previous.id)}`, purchase_claim: previous.return_token!, expires_at: previous.checkout_expires_at! }
+    if (previous.stripe_payment_intent_id) return handoff
+    // The saved purchase is reopened at the amount and currency it was saved with.
+    const connected = { stripe_account_id: previous.stripe_account_id, livemode: previous.livemode === 1 }
+    const savedCards = await openPaymentIntent(db, paymentsStripe(env, connected.livemode), {
+      paymentId: previous.id, organizationId: input.organizationId, idempotencyKey: `checkout:${input.organizationId}:${key}`, retry: true, amount: previous.amount, currency: previous.currency,
+      connected, methodConfigurationId: frozen.method_configuration_id, surcharge: validatedSurchargeBasisPoints(previous.surcharge_basis_points), description: frozen.title,
+      buyerUserId: input.buyerUserId, buyer: input.buyer ?? null, saveCard: false,
+    })
+    await publishEvent(env, { type: 'payment.checkout_started', organization_id: input.organizationId, payment_id: previous.id, saved_cards_offered: savedCards })
+    return handoff
+  }
   const quote = await quoteOrder(db, input.organizationId, { lines: input.lines, delivery: input.delivery })
   if (quote.delivery_method === null) throw new Error('A checkout quote has no delivery')
-  let shippingDetails: ShippingDetails | null = null
   let shipping: OrderSnapshot['shipping'] = null
   if (quote.delivery_method === 'shipping') {
-    const parsed = shippingDetailsSchema.safeParse(input.shipping_details)
-    if (!parsed.success) fail(400, 'VALIDATION_ERROR', 'A shipping name and address are required', 'shipping_details')
-    shippingDetails = parsed.data
     const delivery = input.delivery as { country: string; shipping_rate_id?: unknown }
-    if (shippingDetails.address.country !== delivery.country.toUpperCase()) fail(400, 'VALIDATION_ERROR', 'The address country must match the country quoted', 'shipping_details.address.country')
+    if (shippingDetails!.address.country !== delivery.country.toUpperCase()) fail(400, 'VALIDATION_ERROR', 'The address country must match the country quoted', 'shipping_details.address.country')
     const rate = quote.shipping_rates.find(candidate => candidate.id === delivery.shipping_rate_id)
     if (!rate) fail(409, 'SHIPPING_RATE_UNAVAILABLE', 'Choose one of the shipping rates offered', 'delivery.shipping_rate_id')
     shipping = { rate_id: rate.id, name: rate.name, amount: rate.amount }
   }
-  const fingerprint = await tokenHash(JSON.stringify({ lines: quote.lines.map(line => [line.product_variant_id, line.quantity, line.unit_amount]), shipping, shippingDetails, guest, note, location: quote.location.id }))
-  const previous = await readCheckoutAttempt(db, input.organizationId, key)
-  if (previous) {
-    const frozen = JSON.parse(previous.price_snapshot_json) as Record<string, unknown>
-    if (previous.subject_type !== 'order' || frozen.request_fingerprint !== fingerprint) fail(409, 'IDEMPOTENCY_CONFLICT', 'This checkout key was used for a different order', 'idempotency_key')
-  }
   const now = new Date().toISOString()
-  const acceptance = previous ? null : await requireStripeCheckoutAcceptance(db, env, input.organizationId, input.seller)
-  const connected = acceptance?.connected ?? (previous ? { stripe_account_id: previous.stripe_account_id, livemode: previous.livemode === 1 } : null)
-  if (!connected?.stripe_account_id) throw new Error('Checkout has no connected account')
-  const stripe = acceptance?.stripe ?? paymentsStripe(env, connected.livemode)
-  const frozenSnapshot = previous ? JSON.parse(previous.price_snapshot_json) as { method_configuration_id: string; title: string } : null
-  const methodConfigurationId = acceptance?.methodConfigurationId ?? frozenSnapshot!.method_configuration_id
-  const surcharge = acceptance ? acceptance.surchargeBasisPoints : validatedSurchargeBasisPoints(previous!.surcharge_basis_points)
+  const acceptance = await requireStripeCheckoutAcceptance(db, env, input.organizationId, input.seller)
+  const { connected, stripe, methodConfigurationId } = acceptance
+  if (!connected.stripe_account_id) throw new Error('Checkout has no connected account')
   const total = quote.subtotal + (shipping?.amount ?? 0)
-  const id = previous?.id ?? crypto.randomUUID()
-  const returnToken = previous?.return_token ?? crypto.randomUUID() + crypto.randomUUID()
-  const expiresAt = previous?.checkout_expires_at ?? new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const id = crypto.randomUUID()
+  const returnToken = crypto.randomUUID() + crypto.randomUUID()
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString()
   const handoff: PaymentHandoff = { payment_id: id, pay_path: `/pay/${encodeURIComponent(id)}`, purchase_claim: returnToken, expires_at: expiresAt }
-  const title = frozenSnapshot?.title ?? (quote.lines.length === 1 ? quote.lines[0]!.title : `${quote.lines[0]!.title} and ${quote.lines.length - 1} more`)
-  if (previous?.stripe_payment_intent_id) return handoff
-  if (!previous) {
-    if (expiresAt <= now) throw new Error('A new checkout cannot have expired')
-    const orderId = crypto.randomUUID()
-    const behaviors = [...new Set(quote.lines.map(line => line.tax_behavior))]
-    const order: Omit<OrderSnapshot, 'number'> = {
-      id: orderId, location_id: quote.location.id, delivery_method: quote.delivery_method,
-      lines: quote.lines.map(({ product_id, product_variant_id, title: lineTitle, variant_title, quantity, unit_amount, amount, tax_code, tax_behavior }) => ({ product_id, product_variant_id, title: lineTitle, variant_title, quantity, unit_amount, amount, tax_code, tax_behavior })),
-      shipping, shipping_details: shippingDetails, guest, note, ship_by: quote.ship_by,
-      ...(quote.delivery_method === 'pickup' ? { pickup_address: quote.location.address } : {}),
-      ship_by_due_at: quote.ship_by ? localDateTimeToInstant(quote.ship_by, '23:59', quote.location.timezone, 'compatible').toISOString() : null,
-    }
-    const purchase = {
-      title, tax_code: null, quantity: 1, price: { unit_amount: total, currency: quote.currency, tax_behavior: behaviors.length === 1 ? behaviors[0] : 'unspecified' },
-      automatic_tax: acceptance!.automaticTax, method_configuration_id: methodConfigurationId, request_fingerprint: fingerprint,
-      billing_fx: await quotePaymentsBillingFx(stripe, quote.currency), product_id: quote.lines[0]!.product_id, order,
-    }
-    const origin = conversionOriginSnapshotQuery(input.organizationId, input.origin)
-    const number = `(SELECT COALESCE(MAX(number), 1000) + 1 FROM orders WHERE organization_id = ?)`
-    const queries: BatchQuery[] = [
-      { query: `INSERT INTO orders (id, organization_id, number, buyer_user_id, location_id, status, delivery_method, shipping_details, shipping_rate_name, shipping_amount, currency, subtotal_amount, ship_by, created_at, updated_at)
-          VALUES (?, ?, ${number}, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        params: [orderId, input.organizationId, input.organizationId, input.buyerUserId, quote.location.id, quote.delivery_method, shippingDetails ? JSON.stringify(shippingDetails) : null,
-          shipping?.name ?? null, shipping?.amount ?? 0, quote.currency, quote.subtotal, quote.ship_by, now, now] },
-      ...quote.lines.map((line, index) => ({
-        query: `INSERT INTO order_lines (id, organization_id, order_id, product_id, product_variant_id, title, variant_title, sku, quantity, unit_amount, made_to_order_quantity, sort_order)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-        params: [crypto.randomUUID(), input.organizationId, orderId, line.product_id, line.product_variant_id, line.title, line.variant_title, line.sku, line.quantity, line.unit_amount, index],
-      })),
-      { query: `INSERT INTO payments (id, organization_id, buyer_user_id, stripe_account_id, livemode, subject_type, subject_id, location_id, currency, amount, price_snapshot_json,
-          idempotency_key, checkout_expires_at, return_token, return_token_hash, return_expires_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'order', ?, ?, ?, ?, json_set(?, '$.checkout_origin', json((${origin.query})), '$.order.number', (SELECT number FROM orders WHERE id = ?)), ?, ?, ?, ?, ?, ?, ?)`,
-        params: [id, input.organizationId, input.buyerUserId, connected.stripe_account_id, Number(connected.livemode), orderId, quote.location.id, quote.currency, total,
-          JSON.stringify(purchase), ...(origin.params ?? []), orderId, `checkout:${input.organizationId}:${key}`, expiresAt, returnToken, await tokenHash(returnToken),
-          new Date(Date.now() + 86_400_000).toISOString(), now, now] },
-    ]
-    try { await executeBatch(db, queries, { operation: 'Save order checkout' }) }
-    catch (error) {
-      if (await readCheckoutAttempt(db, input.organizationId, key)) return createOrderCheckout(db, env, input, attempt)
-      // Two buyers took the same next order number; the later one takes the one after it.
-      if (attempt < 3 && error instanceof Error && /orders\.organization_id, orders\.number|orders_org_number_unique/u.test(error.message + String((error as { cause?: unknown }).cause ?? ''))) return createOrderCheckout(db, env, input, attempt + 1)
-      throw error
-    }
+  const title = quote.lines.length === 1 ? quote.lines[0]!.title : `${quote.lines[0]!.title} and ${quote.lines.length - 1} more`
+  const orderId = crypto.randomUUID()
+  const behaviors = [...new Set(quote.lines.map(line => line.tax_behavior))]
+  const order: Omit<OrderSnapshot, 'number'> = {
+    id: orderId, location_id: quote.location.id, delivery_method: quote.delivery_method,
+    lines: quote.lines.map(({ product_id, product_variant_id, title: lineTitle, variant_title, quantity, unit_amount, amount, tax_code, tax_behavior }) => ({ product_id, product_variant_id, title: lineTitle, variant_title, quantity, unit_amount, amount, tax_code, tax_behavior })),
+    shipping, shipping_details: shippingDetails, guest, note, ship_by: quote.ship_by,
+    ...(quote.delivery_method === 'pickup' ? { pickup_address: quote.location.address } : {}),
+    ship_by_due_at: quote.ship_by ? localDateTimeToInstant(quote.ship_by, '23:59', quote.location.timezone, 'compatible').toISOString() : null,
+  }
+  const purchase = {
+    title, tax_code: null, quantity: 1, price: { unit_amount: total, currency: quote.currency, tax_behavior: behaviors.length === 1 ? behaviors[0] : 'unspecified' },
+    automatic_tax: acceptance.automaticTax, method_configuration_id: methodConfigurationId, request_fingerprint: fingerprint,
+    billing_fx: await quotePaymentsBillingFx(stripe, quote.currency), product_id: quote.lines[0]!.product_id, order,
+  }
+  const origin = conversionOriginSnapshotQuery(input.organizationId, input.origin)
+  const number = `(SELECT COALESCE(MAX(number), 1000) + 1 FROM orders WHERE organization_id = ?)`
+  const queries: BatchQuery[] = [
+    { query: `INSERT INTO orders (id, organization_id, number, buyer_user_id, location_id, status, delivery_method, shipping_details, shipping_rate_name, shipping_amount, currency, subtotal_amount, ship_by, created_at, updated_at)
+        VALUES (?, ?, ${number}, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      params: [orderId, input.organizationId, input.organizationId, input.buyerUserId, quote.location.id, quote.delivery_method, shippingDetails ? JSON.stringify(shippingDetails) : null,
+        shipping?.name ?? null, shipping?.amount ?? 0, quote.currency, quote.subtotal, quote.ship_by, now, now] },
+    ...quote.lines.map((line, index) => ({
+      query: `INSERT INTO order_lines (id, organization_id, order_id, product_id, product_variant_id, title, variant_title, sku, quantity, unit_amount, made_to_order_quantity, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      params: [crypto.randomUUID(), input.organizationId, orderId, line.product_id, line.product_variant_id, line.title, line.variant_title, line.sku, line.quantity, line.unit_amount, index],
+    })),
+    { query: `INSERT INTO payments (id, organization_id, buyer_user_id, stripe_account_id, livemode, subject_type, subject_id, location_id, currency, amount, price_snapshot_json,
+        idempotency_key, checkout_expires_at, return_token, return_token_hash, return_expires_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'order', ?, ?, ?, ?, json_set(?, '$.checkout_origin', json((${origin.query})), '$.order.number', (SELECT number FROM orders WHERE id = ?)), ?, ?, ?, ?, ?, ?, ?)`,
+      params: [id, input.organizationId, input.buyerUserId, connected.stripe_account_id, Number(connected.livemode), orderId, quote.location.id, quote.currency, total,
+        JSON.stringify(purchase), ...(origin.params ?? []), orderId, `checkout:${input.organizationId}:${key}`, expiresAt, returnToken, await tokenHash(returnToken),
+        new Date(Date.now() + 86_400_000).toISOString(), now, now] },
+  ]
+  try { await executeBatch(db, queries, { operation: 'Save order checkout' }) }
+  catch (error) {
+    if (await readCheckoutAttempt(db, input.organizationId, key)) return createOrderCheckout(db, env, input, attempt)
+    // Two buyers took the same next order number; the later one takes the one after it.
+    if (attempt < 3 && error instanceof Error && /orders\.organization_id, orders\.number|orders_org_number_unique/u.test(error.message + String((error as { cause?: unknown }).cause ?? ''))) return createOrderCheckout(db, env, input, attempt + 1)
+    throw error
   }
   const savedCards = await openPaymentIntent(db, stripe, {
-    paymentId: id, organizationId: input.organizationId, idempotencyKey: `checkout:${input.organizationId}:${key}`, retry: Boolean(previous), amount: total, currency: quote.currency,
-    connected, methodConfigurationId, surcharge, description: title, buyerUserId: input.buyerUserId, buyer: input.buyer ?? null, saveCard: false,
+    paymentId: id, organizationId: input.organizationId, idempotencyKey: `checkout:${input.organizationId}:${key}`, retry: false, amount: total, currency: quote.currency,
+    connected, methodConfigurationId, surcharge: acceptance.surchargeBasisPoints, description: title, buyerUserId: input.buyerUserId, buyer: input.buyer ?? null, saveCard: false,
   })
   await publishEvent(env, { type: 'payment.checkout_started', organization_id: input.organizationId, payment_id: id, saved_cards_offered: savedCards })
   return handoff
@@ -522,6 +567,30 @@ export async function saveCheckoutOrder(db: DbClient, payment: Payment, snapshot
   }
 }
 
+/**
+ * Undoes an order marked paid on authorization whose payment then failed or
+ * was cancelled before capture: its stock returns to the location, the order
+ * is cancelled and its fulfilment task closes, in one batch.
+ */
+export function cancelUncapturedOrderQueries(payment: Pick<Payment, 'id' | 'organization_id' | 'subject_id'>, now: string): BatchQuery[] {
+  const uncaptured = `EXISTS (SELECT 1 FROM orders o JOIN payments p ON p.id = ? AND p.subject_type = 'order' AND p.subject_id = o.id AND p.captured_amount = 0
+    WHERE o.organization_id = ? AND o.id = ? AND o.status = 'paid')`
+  const scope = [payment.id, payment.organization_id, payment.subject_id]
+  return [
+    { query: `UPDATE inventory_levels SET available = available + (SELECT SUM(l.quantity) FROM order_lines l WHERE l.organization_id = inventory_levels.organization_id AND l.order_id = ? AND l.product_variant_id = inventory_levels.product_variant_id),
+        updated_at = ?, updated_by = ?
+      WHERE organization_id = ? AND location_id = (SELECT location_id FROM orders WHERE organization_id = ? AND id = ?)
+        AND product_variant_id IN (SELECT product_variant_id FROM order_lines WHERE organization_id = ? AND order_id = ?) AND ${uncaptured}`,
+      params: [payment.subject_id, now, `order:${payment.subject_id}`, payment.organization_id, payment.organization_id, payment.subject_id, payment.organization_id, payment.subject_id, ...scope] },
+    { query: `UPDATE orders SET status = 'cancelled', cancelled_at = ?, updated_at = ? WHERE organization_id = ? AND id = ? AND status = 'paid'
+        AND EXISTS (SELECT 1 FROM payments p WHERE p.id = ? AND p.captured_amount = 0)`,
+      params: [now, now, payment.organization_id, payment.subject_id, payment.id] },
+    { query: `UPDATE tasks SET status = 'cancelled', closed_at = ?, closed_by_user_id = NULL, version = version + 1, updated_at = ? WHERE dedupe_key = ? AND status = 'open'
+        AND EXISTS (SELECT 1 FROM orders WHERE organization_id = ? AND id = ? AND status = 'cancelled')`,
+      params: [now, now, `order_fulfillment:${payment.subject_id}`, payment.organization_id, payment.subject_id] },
+  ]
+}
+
 /** Releases an order whose payment never completed. */
 export function releaseOrderQuery(payment: Pick<Payment, 'organization_id' | 'subject_id'>): BatchQuery {
   return { query: "UPDATE orders SET status = 'released', updated_at = ? WHERE organization_id = ? AND id = ? AND status = 'pending'", params: [new Date().toISOString(), payment.organization_id, payment.subject_id] }
@@ -577,11 +646,13 @@ export async function fulfillOrder(db: DbClient, env: CloudflareEnv, input: { or
   const order = await readOrder(db, input.organizationId, { orderId: input.orderId })
   if (!order) fail(404, 'ORDER_NOT_FOUND', 'Order not found')
   if (order.status !== 'paid') fail(409, 'ORDER_NOT_PAID', 'Only a paid order can be fulfilled')
+  // An authorized card is captured right after the order is saved; nothing ships before the money is taken.
+  if (!order.payment || order.payment.captured_amount <= 0) fail(409, 'ORDER_NOT_CAPTURED', 'This order’s payment has not been collected yet')
   if (order.fulfilled_at) fail(409, 'ORDER_FULFILLED', 'This order is already fulfilled')
   const carrier = trimmedText(input.carrier, 'carrier', 100, false)
   const tracking = trimmedText(input.tracking_number, 'tracking_number', 100, false)
   const url = trimmedText(input.tracking_url, 'tracking_url', 500, false)
-  if (url && !/^https:\/\/[^\s]+$/u.test(url)) fail(400, 'VALIDATION_ERROR', 'tracking_url must be an https link', 'tracking_url')
+  if (url && (!URL.canParse(url) || new URL(url).protocol !== 'https:' || !new URL(url).hostname)) fail(400, 'VALIDATION_ERROR', 'tracking_url must be an https link', 'tracking_url')
   if (order.delivery_method === 'shipping' && !carrier) fail(400, 'VALIDATION_ERROR', 'carrier is required for a shipped order', 'carrier')
   if ((tracking || url) && order.delivery_method === 'pickup') fail(400, 'VALIDATION_ERROR', 'A collected order has no tracking', 'tracking_number')
   if (!order.conversation_id) throw new Error('Paid order has no conversation')

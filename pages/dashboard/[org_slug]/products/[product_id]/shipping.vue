@@ -61,6 +61,8 @@ const saving = ref(false)
 const error = ref('')
 
 const text = (value: number | null, scale = 1) => value === null ? '' : String(value / scale)
+// What the form showed when it opened: the first variant's parcel. Only fields changed from it are written, so variants that differ keep their own.
+const opened = ref<Record<string, string>>({})
 function reset() {
   error.value = ''
   const current = product.value
@@ -70,6 +72,7 @@ function reset() {
     weight_kg: text(variant?.weight_grams ?? null, 1000), length_cm: text(variant?.length_mm ?? null, 10), width_cm: text(variant?.width_mm ?? null, 10), height_cm: text(variant?.height_mm ?? null, 10),
     country_of_origin: variant?.country_of_origin ?? '', hs_code: variant?.hs_code ?? '',
   })
+  opened.value = { weight_kg: form.weight_kg, length_cm: form.length_cm, width_cm: form.width_cm, height_cm: form.height_cm, country_of_origin: form.country_of_origin, hs_code: form.hs_code }
 }
 watch(product, reset, { immediate: true })
 
@@ -97,11 +100,15 @@ async function save() {
   saving.value = true
   error.value = ''
   try {
-    const parcel = { weight_grams: amount(form.weight_kg, 1000), length_mm: amount(form.length_cm, 10), width_mm: amount(form.width_cm, 10), height_mm: amount(form.height_cm, 10),
-      country_of_origin: form.country_of_origin.trim().toUpperCase() || null, hs_code: form.hs_code.trim() || null }
+    const fields = [
+      ['weight_kg', 'weight_grams', () => amount(form.weight_kg, 1000)], ['length_cm', 'length_mm', () => amount(form.length_cm, 10)],
+      ['width_cm', 'width_mm', () => amount(form.width_cm, 10)], ['height_cm', 'height_mm', () => amount(form.height_cm, 10)],
+      ['country_of_origin', 'country_of_origin', () => form.country_of_origin.trim().toUpperCase() || null], ['hs_code', 'hs_code', () => form.hs_code.trim() || null],
+    ] as const
+    const parcel = Object.fromEntries(fields.filter(([key]) => form[key] !== opened.value[key]).map(([, column, value]) => [column, value()]))
     await applicationFetch(`/api/editor/organizations/${encodeURIComponent(p.organizationId)}/products/${encodeURIComponent(current.id)}`, {
       method: 'PATCH', body: { updated_at: current.updated_at, processing_days: days(form.processing_days), made_to_order_days: days(form.made_to_order_days),
-        variants: current.variants.map(variant => ({ id: variant.id, ...parcel })) },
+        ...(Object.keys(parcel).length ? { variants: current.variants.map(variant => ({ id: variant.id, ...parcel })) } : {}) },
       validate: (value): value is { product: unknown } => isRecord(value) && isRecord(value.product),
     })
     await p.reload()

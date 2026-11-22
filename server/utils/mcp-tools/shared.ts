@@ -931,11 +931,12 @@ export const EXPECTED_TOOL_ANNOTATIONS = {
   skip_task: D,
   list_opportunities: R,
   get_inventory: R,
-  set_inventory: W,
+  // Each replaces what is there: a stock count, a zone's rate list, a location's pickup.
+  set_inventory: D,
   list_shipping_zones: R,
-  save_shipping_zone: W,
+  save_shipping_zone: D,
   delete_shipping_zone: D,
-  set_pickup: W,
+  set_pickup: D,
   list_orders: R,
   // Emails the buyer.
   fulfill_order: { ...W, openWorldHint: true },

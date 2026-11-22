@@ -86,7 +86,9 @@ export async function handleGoodsTools(ctx: McpExecutorContext): Promise<unknown
     case 'list_orders': {
       if (typeof args.conversation_id === 'string') {
         const found = await readOrder(db, organizationId, { conversationId: args.conversation_id })
-        return { orders: found && found.status !== 'pending' && found.status !== 'released' ? [found] : [] }
+        // `open` keeps only orders still to send, as the list does.
+        const listed = found && (args.open === true ? found.status === 'paid' && !found.fulfilled_at : found.status !== 'pending' && found.status !== 'released')
+        return { orders: listed ? [found] : [] }
       }
       return { orders: await listOrders(db, organizationId, args.open === true) }
     }

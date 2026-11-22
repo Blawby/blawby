@@ -44,11 +44,13 @@ const route = useRoute()
 const dashboardApi = useDashboardApi()
 const dashboard = useDashboardOrganization()
 const shippingPath = computed(() => `/dashboard/${encodeURIComponent(String(route.params.org_slug))}/shipping`)
-const { data, refresh } = await useShippingSettings()
+const { data, refresh, error: settingsError } = await useShippingSettings()
 const zoneId = computed(() => String(route.params.zone_id))
 const creating = computed(() => zoneId.value === 'new')
 const zone = computed(() => data.value?.zones.find(entry => entry.id === zoneId.value) ?? null)
 const currency = computed(() => dashboard.organization.value?.default_currency ?? '')
+// A failed read is that failure, not a missing zone.
+if (settingsError.value) throw createError({ statusCode: 500, statusMessage: getErrorMessage(settingsError.value, 'Shipping settings could not be read') })
 if (!creating.value && !zone.value) throw createError({ statusCode: 404, statusMessage: 'Shipping zone not found' })
 
 type RateForm = { id: string | null; name: string; amount: string; min_kg: string; max_kg: string; min_subtotal: string; days: string }
@@ -70,7 +72,8 @@ function reset() {
     days: deliveryDays(rate.delivery_days_min, rate.delivery_days_max) })) : [blankRate()]
 }
 const error = ref('')
-watch(zone, reset, { immediate: true })
+// A refresh that failed leaves no zone to read: the draft stays rather than resetting to blank.
+watch(zone, () => { if (!settingsError.value) reset() }, { immediate: true })
 
 function grams(value: string) {
   if (!value.trim()) return null
@@ -85,7 +88,8 @@ function payload() {
   const rates = form.rates.filter(rate => rate.name.trim() || rate.amount.trim()).map(rate => {
     if (!rate.name.trim()) throw new Error('Name every rate')
     const days = rate.days.trim() ? /^(\d{1,3})?\s*(-)?\s*(\d{1,3})?$/u.exec(rate.days.trim()) : null
-    if (rate.days.trim() && (!days || (!days[1] && !days[3]))) throw new Error('Delivery days are a number or a range, such as 7-14')
+    // Two bounds are a range only with a hyphen between them: "7 14" is not read as 7–14.
+    if (rate.days.trim() && (!days || (!days[1] && !days[3]) || (days[1] && days[3] && !days[2]))) throw new Error('Delivery days are a number or a range, such as 7-14')
     return { ...(rate.id ? { id: rate.id } : {}), name: rate.name.trim(), amount: majorAmountToMinor(rate.amount.trim(), currency.value), min_weight_grams: grams(rate.min_kg), max_weight_grams: grams(rate.max_kg),
       min_subtotal: rate.min_subtotal.trim() ? majorAmountToMinor(rate.min_subtotal.trim(), currency.value) : null,
       delivery_days_min: days?.[1] ? Number(days[1]) : null, delivery_days_max: days?.[3] ? Number(days[3]) : days?.[1] && !days[2] ? Number(days[1]) : null }
@@ -106,6 +110,8 @@ async function save() {
     const saved = await dashboardApi(creating.value ? '/api/dashboard/shipping/zones' : `/api/dashboard/shipping/zones/${encodeURIComponent(zoneId.value)}`,
       { method: creating.value ? 'POST' : 'PUT', body: payload(), validate: isZone })
     await refresh()
+    // useAsyncData records a failed refresh instead of rejecting it.
+    if (settingsError.value) throw new Error(`The zone was saved, but it could not be read back: ${getErrorMessage(settingsError.value, 'reload the page')}`)
     if (creating.value) await navigateTo(`${shippingPath.value}/zones/${saved.zone.id}`, { replace: true })
   } catch (cause) {
     error.value = getErrorMessage(cause, 'The zone could not be saved')

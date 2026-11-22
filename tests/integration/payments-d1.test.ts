@@ -42,7 +42,7 @@ import { approveRefundAuthorization, reconcileRefundState, requirePayment } from
 import { paymentTransactionDestination } from '../../server/domain/payments/earnings.ts'
 import { completePaymentReturn, reviewPayment, confirmPayment, paymentHandoff, preparePaymentReturn, requireClaimedPayment } from '../../server/domain/payments/intent.ts'
 import { reconcilePaymentIntent, processPaymentEvent } from '../../server/domain/payments/events.ts'
-import { createOrderCheckout, fulfillOrder, quoteOrder, readOrder } from '../../server/domain/goods.ts'
+import { createOrderCheckout, fulfillOrder, quoteOrder, readOrder, saveShippingZone } from '../../server/domain/goods.ts'
 import { mcpFinancialApprovalErrorResult } from '../../server/utils/mcp-financial-handoff.ts'
 import { handlePaymentsTools } from '../../server/utils/mcp-tools/payments.ts'
 import { NOT_HANDLED } from '../../server/utils/mcp-tools/execution.ts'
@@ -1907,6 +1907,14 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
    shipping_details: { name: 'Somchai', phone: null, address: { line1: 'Sisavangvong Road', city: 'Luang Prabang', country: 'LA' } },
    guest: { name: 'Somchai', email: 'somchai@example.com', phone: null }, note: 'Photo before it ships, please', idempotencyKey: key, origin: null,
   })
+  // Renaming the zone keeps its rates' ids (a quoted rate stays valid); an id another editor deleted meanwhile is refused, not recreated.
+  const rate = (id: string, name: string, amount: number, band: { min_weight_grams?: number; max_weight_grams?: number }) => ({ id, name, amount, min_weight_grams: band.min_weight_grams ?? null, max_weight_grams: band.max_weight_grams ?? null, min_subtotal: null, delivery_days_min: null, delivery_days_max: null })
+  const renamed = await saveShippingZone(db, ORG, 'laos', { location_id: 'studio', name: 'Laos by post', countries: ['LA'], rates: [rate('ems', 'EMS', 1000, { max_weight_grams: 10000 }), rate('freight', 'Freight', 5000, { min_weight_grams: 10000 })] })
+  assert.deepEqual(renamed.rates.map(entry => entry.id).sort(), ['ems', 'freight'])
+  await assert.rejects(() => saveShippingZone(db, ORG, 'laos', { location_id: 'studio', name: 'Laos by post', countries: ['LA'], rates: [rate('ems', 'EMS', 1000, { max_weight_grams: 10000 }), rate('deleted-rate', 'Gone', 2000, {})] }),
+    error => error instanceof HTTPError && (error.data as { code: string }).code === 'SHIPPING_ZONE_NOT_FOUND')
+  assert.deepEqual((await db.prepare("SELECT id FROM shipping_rates WHERE shipping_zone_id = 'laos' ORDER BY id").all()).results.map(row => row.id), ['ems', 'freight'])
+
   const handoff = await checkout('first-order')
   assert.deepEqual(await checkout('first-order'), handoff, 'the same key reopens the same checkout')
   assert.deepEqual(calls, ['create:10000'])
@@ -1964,7 +1972,10 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
   await db.prepare("UPDATE product_variants SET inventory_tracked = 0 WHERE id = 'celadon'").run()
   const declinedOutcome = await processPaymentEvent(db, getStripe(env), authorized(declinedCheckout.payment_id), env).then(() => null, (error: unknown) => error)
   const declinedOrder = await db.prepare('SELECT o.id, o.status FROM orders o JOIN payments p ON p.subject_id = o.id WHERE p.id = ?').bind(declinedCheckout.payment_id).first<{ id: string; status: string }>()
-  assert.equal(declinedOrder?.status, 'paid', `the order is paid before capture is tried (${String(declinedOutcome)})`)
+  assert.ok(declinedOutcome instanceof Error, 'the declined capture fails the event')
+  assert.deepEqual(calls.slice(-1), [`capture:${declinedCheckout.payment_id}`])
+  assert.equal((await requirePayment(db, ORG, declinedCheckout.payment_id)).captured_amount, 0)
+  assert.equal(declinedOrder?.status, 'paid', 'the order is paid before capture is tried')
   assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'ruby'").first('available'), 0)
   assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'celadon'").first('available'), -1)
   await db.prepare("UPDATE product_variants SET inventory_tracked = 1 WHERE id = 'celadon'").run()

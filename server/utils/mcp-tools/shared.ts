@@ -939,7 +939,8 @@ export const EXPECTED_TOOL_ANNOTATIONS = {
   set_pickup: D,
   list_orders: R,
   // Emails the buyer.
-  fulfill_order: { ...W, openWorldHint: true },
+  // Closes the order's ship task and takes it off the open list, and tells the buyer.
+  fulfill_order: { ...D, openWorldHint: true },
 } as const satisfies Record<string, McpToolAnnotations>
 
 export function buildToolAnnotationsByName() {

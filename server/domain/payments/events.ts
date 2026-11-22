@@ -160,10 +160,12 @@ export async function reconcilePaymentIntent(db:DbClient,stripe:Stripe,payment:P
   }
   if (intent.status === 'canceled') {
     await execute(db, "UPDATE payment_checkout_holds SET status='released' WHERE payment_id=? AND organization_id=? AND status='active'", [payment.id, payment.organization_id])
-    if (payment.subject_type === 'order' && orderStatus === 'paid' && payment.captured_amount === 0) {
+    if (payment.subject_type === 'order' && (orderStatus === 'paid' || orderStatus === 'cancelled') && payment.captured_amount === 0) {
       // Paid on authorization but never captured: its stock comes back, it is cancelled, and nothing is left to ship.
-      const [, cancelled] = await executeBatch(db, cancelUncapturedOrderQueries(payment, new Date().toISOString()), { operation: 'Cancel uncaptured order' })
-      if (cancelled?.meta.changes === 1) await publishEvent(env, { type: 'order.cancelled', organization_id: payment.organization_id, order_id: payment.subject_id! })
+      // A retry finds it already cancelled: the writes change nothing and the announcement goes out again.
+      const cancelled = await executeBatch(db, cancelUncapturedOrderQueries(payment, new Date().toISOString()), { operation: 'Cancel uncaptured order' })
+      // Its notices are keyed by order and recipient, so publishing again on a retry sends nothing twice.
+      if (cancelled.at(-1)?.results.length) await publishEvent(env, { type: 'order.cancelled', organization_id: payment.organization_id, order_id: payment.subject_id! })
     } else if (payment.subject_type === 'order') {
       const released = releaseOrderQuery(payment)
       await execute(db, released.query, released.params ?? [])

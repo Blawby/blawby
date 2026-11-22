@@ -164,6 +164,9 @@ export async function saveShippingZone(db: DbClient, organizationId: string, zon
   { query: `SELECT CASE WHEN EXISTS (SELECT 1 FROM shipping_zones z, json_each(z.countries) c WHERE z.organization_id = ? AND z.location_id = ? AND z.id <> ? AND c.value IN (SELECT value FROM json_each(?)))
       THEN json_extract('{}', 'COUNTRY_IN_ANOTHER_ZONE') ELSE 1 END`, params: [organizationId, input.location_id, id, JSON.stringify(input.countries)] },
   { query: 'DELETE FROM shipping_rates WHERE organization_id = ? AND shipping_zone_id = ? AND id NOT IN (SELECT value FROM json_each(?))', params: [organizationId, id, d1JsonArray(input.rates.flatMap(rate => rate.id ? [rate.id] : []))] },
+  // A restated id updates a rate this zone still has; one deleted meanwhile (another editor's save) is refused, not recreated.
+  assertBookingBatchWrite({ query: '(SELECT count(*) FROM shipping_rates WHERE organization_id = ? AND shipping_zone_id = ? AND id IN (SELECT value FROM json_each(?))) = ?',
+    params: [organizationId, id, d1JsonArray(input.rates.flatMap(rate => rate.id ? [rate.id] : [])), input.rates.filter(rate => rate.id).length] }),
   ...input.rates.map((rate, index) => ({
     query: `INSERT INTO shipping_rates (id, organization_id, shipping_zone_id, name, currency, amount, min_weight_grams, max_weight_grams, min_subtotal, delivery_days_min, delivery_days_max, sort_order, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -312,9 +315,11 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
     return { lines: quoted, subtotal: quoted.reduce((sum, line) => sum + line.amount, 0) }
   }
   // The rates a location offers a country for this parcel and subtotal, cheapest first.
+  // A parcel of unknown weight takes only rates without a weight band.
+  const qualifies = (rate: typeof zoneRates[number], subtotal: number) => rate.currency === currency
+    && (weight === null ? rate.min_weight_grams === null && rate.max_weight_grams === null : true) && rateApplies(rate, { weight_grams: weight ?? 0, subtotal })
   const ratesAt = (locationId: string, destination: string, subtotal: number) => zoneRates
-    .filter(rate => rate.location_id === locationId && rate.currency === currency && (JSON.parse(rate.countries) as string[]).includes(destination))
-    .filter(rate => (weight === null ? rate.min_weight_grams === null && rate.max_weight_grams === null : true) && rateApplies(rate, { weight_grams: weight ?? 0, subtotal }))
+    .filter(rate => rate.location_id === locationId && qualifies(rate, subtotal) && (JSON.parse(rate.countries) as string[]).includes(destination))
     .map(rate => ({ id: rate.id, name: rate.name, currency: rate.currency, amount: rate.amount, min_weight_grams: rate.min_weight_grams,
       max_weight_grams: rate.max_weight_grams, min_subtotal: rate.min_subtotal, delivery_days_min: rate.delivery_days_min, delivery_days_max: rate.delivery_days_max, applies: true as const }))
   // Shopify's location priority: the first location, in the order the business added them, that can sell and deliver the whole cart.
@@ -336,24 +341,28 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
       delivery === null ? 'These items are not offered together at one location' : delivery.method === 'pickup' ? 'These items cannot be collected there' : 'No shipping rate covers this order to that country', 'delivery')
   }
   const { location, priced: { lines: quoted, subtotal }, rates: shippingRates } = chosen
-  const productDays = quoted.map(line => {
+  // Each line waits for the longer of the times that apply to its units: those from stock, and those made to order.
+  const productDays = quoted.flatMap(line => {
     const variant = variants.find(row => row.id === line.product_variant_id)!
-    return line.made_to_order_quantity > 0 ? variant.made_to_order_days : variant.processing_days
+    return [...(line.quantity > line.made_to_order_quantity ? [variant.processing_days] : []), ...(line.made_to_order_quantity > 0 ? [variant.made_to_order_days] : [])]
   })
   const shipBy = productDays.every(days => days !== null) ? addBusinessDays(localDateAt(at, location.timezone), Math.max(0, ...(productDays as number[]))) : null
-  // The countries some location offering the cart can deliver it to, under the same rate conditions a shipping quote applies.
+  // Where else the cart can be bought: each location offering it that can price and stock it, priced once.
+  const sellable = offering.flatMap(candidate => {
+    const priced = candidate.id === location.id ? chosen.priced : priceAt(candidate)
+    return 'failure' in priced ? [] : [{ candidate, subtotal: priced.subtotal }]
+  })
+  // The countries those locations deliver it to, each rate's conditions checked once.
   const shipToCountries = new Set<string>()
-  for (const candidate of offering) {
-    const priced = priceAt(candidate)
-    if ('failure' in priced) continue
-    for (const rate of zoneRates.filter(entry => entry.location_id === candidate.id)) {
-      for (const destination of JSON.parse(rate.countries) as string[]) if (ratesAt(candidate.id, destination, priced.subtotal).length) shipToCountries.add(destination)
+  for (const { candidate, subtotal } of sellable) {
+    for (const rate of zoneRates) {
+      if (rate.location_id === candidate.id && qualifies(rate, subtotal)) for (const destination of JSON.parse(rate.countries) as string[]) shipToCountries.add(destination)
     }
   }
   return { currency, location: { id: location.id, title: location.title, timezone: location.timezone, address: stripeAddress(location.address) }, lines: quoted, subtotal, weight_grams: weight,
     delivery_method: delivery === null ? null : delivery.method as DeliveryMethod,
     ship_to_countries: [...shipToCountries].sort(),
-    pickup_locations: offering.filter(candidate => candidate.pickup_enabled === 1).map(candidate => ({ id: candidate.id, title: candidate.title })),
+    pickup_locations: sellable.filter(({ candidate }) => candidate.pickup_enabled === 1).map(({ candidate }) => ({ id: candidate.id, title: candidate.title })),
     shipping_rates: shippingRates, ship_by: shipBy }
 }
 
@@ -434,7 +443,7 @@ export async function createOrderCheckout(db: DbClient, env: CloudflareEnv, inpu
   let shipping: OrderSnapshot['shipping'] = null
   if (quote.delivery_method === 'shipping') {
     const delivery = input.delivery as { country: string; shipping_rate_id?: unknown }
-    if (shippingDetails!.address.country !== delivery.country.toUpperCase()) fail(400, 'VALIDATION_ERROR', 'The address country must match the country quoted', 'shipping_details.address.country')
+    if (shippingDetails!.address.country !== delivery.country.trim().toUpperCase()) fail(400, 'VALIDATION_ERROR', 'The address country must match the country quoted', 'shipping_details.address.country')
     const rate = quote.shipping_rates.find(candidate => candidate.id === delivery.shipping_rate_id)
     if (!rate) fail(409, 'SHIPPING_RATE_UNAVAILABLE', 'Choose one of the shipping rates offered', 'delivery.shipping_rate_id')
     shipping = { rate_id: rate.id, name: rate.name, amount: rate.amount }
@@ -585,6 +594,9 @@ export function cancelUncapturedOrderQueries(payment: Pick<Payment, 'id' | 'orga
     { query: `UPDATE tasks SET status = 'cancelled', closed_at = ?, closed_by_user_id = NULL, version = version + 1, updated_at = ? WHERE dedupe_key = ? AND status = 'open'
         AND EXISTS (SELECT 1 FROM orders WHERE organization_id = ? AND id = ? AND status = 'cancelled')`,
       params: [now, now, `order_fulfillment:${payment.subject_id}`, payment.organization_id, payment.subject_id] },
+    // Last: whether the order now stands cancelled with nothing captured, so a retry after the commit still announces it.
+    { query: `SELECT 1 AS cancelled FROM orders o JOIN payments p ON p.id = ? AND p.captured_amount = 0 WHERE o.organization_id = ? AND o.id = ? AND o.status = 'cancelled'`,
+      params: [payment.id, payment.organization_id, payment.subject_id] },
   ]
 }
 
@@ -662,7 +674,8 @@ export async function fulfillOrder(db: DbClient, env: CloudflareEnv, input: { or
   const carrier = trimmedText(input.carrier, 'carrier', 100, false)
   const tracking = trimmedText(input.tracking_number, 'tracking_number', 100, false)
   const url = trimmedText(input.tracking_url, 'tracking_url', 500, false)
-  if (url && (!URL.canParse(url) || new URL(url).protocol !== 'https:' || !new URL(url).hostname)) fail(400, 'VALIDATION_ERROR', 'tracking_url must be an https link', 'tracking_url')
+  // Stored as typed, so it is checked as typed: an https:// link to a host (the URL parser alone also admits "https:host").
+  if (url && (!url.startsWith('https://') || !URL.canParse(url) || !new URL(url).hostname)) fail(400, 'VALIDATION_ERROR', 'tracking_url must be an https link', 'tracking_url')
   if (order.delivery_method === 'shipping' && !carrier) fail(400, 'VALIDATION_ERROR', 'carrier is required for a shipped order', 'carrier')
   if ((tracking || url) && order.delivery_method === 'pickup') fail(400, 'VALIDATION_ERROR', 'A collected order has no tracking', 'tracking_number')
   if (!order.conversation_id) throw new Error('Paid order has no conversation')

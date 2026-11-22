@@ -112,6 +112,10 @@ export function addBusinessDays(date: string, days: number): string {
   return day.toISOString().slice(0, 10)
 }
 
+/** An HS code as customs forms take it: 6, 8 or 10 digits, dots optional between the pairs after the first four ("6913.90", "691390.00"). */
+export const HS_CODE_PATTERN = /^\d{4}\.?\d{2}(?:\.?\d{2}){0,2}$/u
+export const HS_CODE_RULE = 'An HS code is 6, 8 or 10 digits, such as 6913.90'
+
 export const countryCodeSchema = z.string().trim().toUpperCase().regex(/^[A-Z]{2}$/u, 'Use a two-letter country code')
 
 /** Stripe's shipping details, which the PaymentIntent carries and the order keeps. */

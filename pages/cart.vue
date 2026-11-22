@@ -64,8 +64,8 @@
               <p v-if="line.variant_title" class="text-sm text-muted">{{ line.variant_title }}</p>
               <p class="text-sm text-muted">{{ line.made_to_order_quantity ? t('shop.made_to_order') : line.available !== null ? t('shop.in_stock', { count: line.available }) : '' }}</p>
               <div class="mt-2 flex items-center gap-3">
-                <UInputNumber :model-value="line.quantity" :min="1" :max="99" size="sm" class="w-28" :aria-label="t('shop.quantity')" @update:model-value="value => cart.set(line.product_variant_id, value ?? 1)" />
-                <button type="button" class="text-sm text-muted underline" @click="cart.set(line.product_variant_id, 0)">{{ t('shop.remove') }}</button>
+                <UInputNumber :model-value="line.quantity" :min="1" :max="99" size="sm" class="w-28" :disabled="submitting" :aria-label="t('shop.quantity')" @update:model-value="value => cart.set(line.product_variant_id, value ?? 1)" />
+                <button type="button" class="text-sm text-muted underline" :disabled="submitting" @click="cart.set(line.product_variant_id, 0)">{{ t('shop.remove') }}</button>
               </div>
             </div>
             <span class="font-medium text-default">{{ money(line.amount) }}</span>

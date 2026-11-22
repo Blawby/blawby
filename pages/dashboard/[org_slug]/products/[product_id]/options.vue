@@ -29,11 +29,11 @@
         <UButton v-if="options.length < 3" color="neutral" variant="link" class="px-0" @click="options.push({ name: '', values: '' })">Add option, such as Size or Colour</UButton>
       </section>
 
-      <section v-if="locations.length" class="mt-8">
+      <section class="mt-8">
         <div class="mb-2 flex items-center justify-between gap-4">
           <h2 class="text-sm font-semibold text-muted">Variants</h2>
-          <USelect v-if="locations.length > 1" :model-value="stockLocationId ?? undefined" @update:model-value="value => stockLocationId = value ?? null" :items="locations.map(location => ({ value: location.id, label: location.title }))" aria-label="Stock at" class="w-56" />
-          <span v-else class="text-sm text-muted">Stock at {{ locations[0]!.title }}</span>
+          <USelect v-if="tracked && locations.length > 1" :model-value="stockLocationId ?? undefined" @update:model-value="value => stockLocationId = value ?? null" :items="locations.map(location => ({ value: location.id, label: location.title }))" aria-label="Stock at" class="w-56" />
+          <span v-else-if="tracked && locations.length" class="text-sm text-muted">Stock at {{ locations[0]!.title }}</span>
         </div>
         <ul class="divide-y divide-default">
           <li v-for="row in rows" :key="row.key" class="flex items-center gap-3 py-3">
@@ -41,11 +41,11 @@
             <span class="min-w-0 flex-1 truncate text-highlighted">{{ row.title }}</span>
             <UInput v-model="row.price" :aria-label="`${row.title} price`" :placeholder="p.currency" inputmode="decimal" class="w-28" />
             <UInput v-model="row.sku" :aria-label="`${row.title} SKU`" placeholder="SKU" class="w-32" />
-            <UInput v-if="tracked" v-model="row.available" :aria-label="`${row.title} in stock`" type="number" inputmode="numeric" class="w-20" />
+            <UInput v-if="tracked && stockLocationId" v-model="row.available" :aria-label="`${row.title} in stock`" inputmode="numeric" class="w-20" />
           </li>
         </ul>
+        <p v-if="tracked && !locations.length" class="mt-2 text-sm text-muted">Offer this item at a location before counting its stock.</p>
       </section>
-      <p v-else class="mt-8 text-sm text-muted">Offer this item at a location before counting its stock.</p>
 
       <div class="mt-6">
         <SettingRow v-model="tracked" label="Track stock" description="Count how many are on hand at each location." />
@@ -90,6 +90,7 @@ const inventoryPath = computed(() => `/api/editor/organizations/${encodeURICompo
 async function loadLevels() {
   if (!product.value) return
   levels.value = (await applicationFetch(inventoryPath.value, { validate: isLevels })).levels
+  levelsError.value = ''
 }
 
 const parsedOptions = computed<ProductOption[]>(() => options.value.map(option => ({ name: option.name.trim(), values: [...new Set(option.values.split(',').map(value => value.trim()).filter(Boolean))] })).filter(option => option.name && option.values.length))
@@ -117,11 +118,14 @@ watch(parsedOptions, rebuild, { deep: true })
 // Another location's stock is that location's saved count.
 watch([stockLocationId, levels], () => { rows.value = rows.value.map(row => ({ ...row, available: savedRow(row.option_values).available })) })
 
+// The switches as they opened: until the merchant flips one, each saved variant keeps its own tracking and policy.
+const openedSwitches = { tracked: false, madeToOrder: false }
 function reset() {
   error.value = ''
   options.value = (product.value?.options ?? []).map(option => ({ name: option.name, values: option.values.join(', ') }))
   tracked.value = product.value?.variants.some(variant => variant.inventory_tracked) ?? false
   madeToOrder.value = product.value?.variants.some(variant => variant.inventory_policy === 'continue') ?? false
+  Object.assign(openedSwitches, { tracked: tracked.value, madeToOrder: madeToOrder.value })
   rows.value = []
   rebuild()
 }
@@ -136,7 +140,8 @@ const invalid = computed(() => {
     if (row.price.trim()) { try { majorAmountToMinor(row.price.trim(), p.currency) } catch { return `Enter a price for ${row.title}` } }
     // A saved price is changed, not cleared: a variant without a price could not be sold.
     else if (savedRow(row.option_values).price) return `Enter a price for ${row.title}`
-    if (tracked.value && !/^-?\d+$/u.test(row.available.trim())) return `Enter how many ${row.title} are in stock`
+    // The inventory endpoint's range, checked before either write.
+    if (tracked.value && (!/^-?\d+$/u.test(row.available.trim()) || Number(row.available) < -100000 || Number(row.available) > 1000000)) return `Enter how many ${row.title} are in stock, up to 1,000,000`
   }
   return null
 })
@@ -145,9 +150,12 @@ async function save() {
   if (!current || invalid.value) return
   saving.value = true
   error.value = ''
+  // The location the counts were typed for, fixed now: the selector stays live while the product saves.
+  const stockLocation = stockLocationId.value
   // Only counts the merchant changed are written: an order taken since the page opened keeps its effect on the others.
-  const changedStock = tracked.value && stockLocationId.value ? rows.value.filter(row => row.available.trim() !== savedRow(row.option_values).available) : []
+  const changedStock = tracked.value && stockLocation ? rows.value.filter(row => row.available.trim() !== savedRow(row.option_values).available) : []
   let committed = false
+  const switched = tracked.value !== openedSwitches.tracked || madeToOrder.value !== openedSwitches.madeToOrder
   try {
     const variants = rows.value.map((row, index) => {
       const saved = row.id ? current.variants.find(variant => variant.id === row.id) : undefined
@@ -155,7 +163,10 @@ async function save() {
       const amount = row.price.trim() ? majorAmountToMinor(row.price.trim(), p.currency) : null
       const prices = amount === null ? [] : price ? [{ id: price.id, unit_amount: amount }] : [{ unit_amount: amount, currency: p.currency, location_id: null }]
       return { ...(row.id ? { id: row.id } : {}), name: row.title, sku: row.sku.trim() || null, sort_order: index, option_values: row.option_values,
-        media_asset_id: row.media_asset_id ?? null, inventory_tracked: tracked.value, inventory_policy: tracked.value && madeToOrder.value ? 'continue' : 'deny', prices, prices_mode: 'merge' as const }
+        media_asset_id: row.media_asset_id ?? null, prices, prices_mode: 'merge' as const,
+        // A saved variant keeps its own stock settings unless a switch was flipped; new variants take the switches.
+        ...(saved && !switched ? { inventory_tracked: saved.inventory_tracked, inventory_policy: saved.inventory_policy }
+          : { inventory_tracked: tracked.value, inventory_policy: tracked.value && madeToOrder.value ? 'continue' : 'deny' }) }
     })
     const saved = await applicationFetch(`/api/editor/organizations/${encodeURIComponent(p.organizationId)}/products/${encodeURIComponent(current.id)}`, {
       method: 'PATCH', body: { updated_at: current.updated_at, options: parsedOptions.value, variants, variants_mode: 'replace' },
@@ -167,10 +178,11 @@ async function save() {
     if (changedStock.length) {
       if (changedStock.some(row => !row.id)) throw new Error('A saved variant was not read back')
       await applicationFetch(inventoryPath.value, { method: 'PUT', validate: isLevels,
-        body: { levels: changedStock.map(row => ({ product_variant_id: row.id, location_id: stockLocationId.value, available: Number(row.available.trim()) })) } })
+        body: { levels: changedStock.map(row => ({ product_variant_id: row.id, location_id: stockLocation, available: Number(row.available.trim()) })) } })
     }
     await p.reload()
-    await loadLevels()
+    // A failed re-read blocks the next save rather than comparing against counts that may be stale.
+    await loadLevels().catch(cause => { levelsError.value = getErrorMessage(cause, 'Stock could not be read') })
   } catch (cause) {
     error.value = getErrorMessage(cause, 'Options and stock could not be saved')
     // The options were saved; read the new version so the next save is not refused, keeping the typed stock to retry.

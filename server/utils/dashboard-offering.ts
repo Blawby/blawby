@@ -98,7 +98,7 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
       { ...leaf('price', priceLabel, prices), optional_detail: service && !booking && prices === 'No price set' },
       ...(item ? [
         leaf('options', 'Options and stock', [product.options.length ? `${product.options.map(option => option.name).join(', ')} · ${product.variants.length} variants` : null,
-          product.variants.some(variant => variant.inventory_tracked) ? `${stocked} in stock${product.variants.some(variant => variant.inventory_tracked && variant.inventory_policy === 'continue') ? ', then made to order' : ''}` : 'Stock not tracked'].filter(Boolean).join(' · ')),
+          product.variants.some(variant => variant.inventory_tracked) ? `${stocked} in stock${product.variants.some(variant => variant.active && variant.inventory_tracked && variant.inventory_policy === 'continue') ? ', then made to order' : ''}` : 'Stock not tracked'].filter(Boolean).join(' · ')),
         leaf('shipping', 'Shipping', [product.processing_days === null ? null : `Ships in ${product.processing_days} days`, product.made_to_order_days === null ? null : `made to order ${product.made_to_order_days} days`,
           product.variants[0]?.weight_grams ? `${product.variants[0].weight_grams / 1000} kg` : 'No parcel weight'].filter(Boolean).join(' · ')),
       ] : []),

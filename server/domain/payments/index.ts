@@ -303,12 +303,15 @@ export async function reconcileRefundState(db:DbClient,stripe:Stripe,payment:Pay
    returnOrderStockQuery(payment,now,{query:"EXISTS(SELECT 1 FROM orders o JOIN payments p ON p.id=? AND p.captured_amount>0 AND p.refunded_amount=p.captured_amount WHERE o.organization_id=? AND o.id=? AND o.status='paid' AND o.fulfilled_at IS NULL)",params:[payment.id,payment.organization_id,payment.subject_id]}),
    {query:"UPDATE orders SET status='cancelled',cancelled_at=?,updated_at=? WHERE organization_id=? AND id=? AND status='paid' AND fulfilled_at IS NULL AND EXISTS(SELECT 1 FROM payments p WHERE p.id=? AND p.captured_amount>0 AND p.refunded_amount=p.captured_amount)",params:[now,now,payment.organization_id,payment.subject_id,payment.id]},
    {query:"UPDATE tasks SET status='cancelled',closed_at=?,closed_by_user_id=NULL,version=version+1,updated_at=? WHERE dedupe_key=? AND status='open' AND EXISTS(SELECT 1 FROM orders o WHERE o.organization_id=? AND o.id=? AND o.status='cancelled')",params:[now,now,`order_fulfillment:${payment.subject_id}`,payment.organization_id,payment.subject_id]},
+   // Whether a full refund has cancelled it, read in the same batch: a retry after this commit still tells the buyer and business.
+   {query:"SELECT 1 AS cancelled FROM orders o JOIN payments p ON p.id=? AND p.captured_amount>0 AND p.refunded_amount=p.captured_amount WHERE o.organization_id=? AND o.id=? AND o.status='cancelled'",params:[payment.id,payment.organization_id,payment.subject_id]},
   ]:[]),
   {query:`UPDATE payment_authorizations SET consumed_at=COALESCE(consumed_at,?) WHERE payment_id=? AND approved_at IS NOT NULL AND action='refund' AND EXISTS(SELECT 1 FROM payment_refunds r WHERE r.id=? AND r.payment_id=payment_authorizations.payment_id AND r.idempotency_key='approved:'||payment_authorizations.id AND (payment_authorizations.amount IS NULL OR r.amount=payment_authorizations.amount) AND r.created_by=payment_authorizations.user_id)`,params:[now,payment.id,id]},
  ])
  await publishPaymentNotification(env,payment,{kind,nativeId:refund.id,status:refund.status!,amount:refund.amount})
  // The refund that cancelled an unshipped order also tells the buyer and the business the order is off.
- if(payment.subject_type==='order'&&written[3]?.meta.changes===1)await publishEvent(env,{type:'order.cancelled',organization_id:payment.organization_id,order_id:payment.subject_id!})
+ // Its notices are keyed by order and recipient, so publishing again on a retry sends nothing twice.
+ if(payment.subject_type==='order'&&written[5]?.results.length)await publishEvent(env,{type:'order.cancelled',organization_id:payment.organization_id,order_id:payment.subject_id!})
  if(refund.status==='succeeded')await recordPaymentRefunded(db,payment,refund,id)
  return {id,stripe_refund_id:refund.id,status:refund.status}
 }

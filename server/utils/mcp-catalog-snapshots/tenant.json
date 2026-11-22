@@ -1,7 +1,7 @@
 {
   "surface": "tenant",
-  "fingerprint": "sha256:5f252c69635934c3720aed71c20f14cb576cf904db2554a959a5b2212a9f90ed",
-  "documentationFingerprint": "sha256:07b7dfe47addf6e16c0b14ab909b76debd59600a24eb1ca5538fa16036ddd50e",
+  "fingerprint": "sha256:a61d339774337c2bd90e75c6edbd049376f78e27f092903aee3cd3ea29b63031",
+  "documentationFingerprint": "sha256:d41cef958c2164f7699b63847e41ad86ffc103d4556b42e9f92482c20a696b7d",
   "tools": [
     {
       "name": "add_organization_language",
@@ -43479,7 +43479,7 @@
         "type": "object"
       },
       "annotations": {
-        "destructiveHint": false,
+        "destructiveHint": true,
         "openWorldHint": true,
         "readOnlyHint": false,
         "title": "Fulfill order"

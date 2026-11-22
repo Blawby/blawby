@@ -1,6 +1,6 @@
 import { HTTPError } from 'nitro'
 import type { ProductVariantGoods, ProductVariantInput } from '~/server/types/products'
-import { INVENTORY_POLICIES } from '~/shared/goods'
+import { HS_CODE_PATTERN, HS_CODE_RULE, INVENTORY_POLICIES } from '~/shared/goods'
 import { PRODUCT_LIMITS, PRODUCT_METADATA_KEY, PRODUCT_SLUG } from '~/shared/product-limits'
 
 export { PRODUCT_LIMITS, PRODUCT_SLUG }
@@ -109,7 +109,7 @@ export function validateVariantGoods(variant: Partial<ProductVariantGoods>, fiel
   const optionValues = variant.option_values ?? []
   if (!Array.isArray(optionValues) || optionValues.length > 3 || optionValues.some(value => typeof value !== 'string' || !value.trim() || value.length > 100)) invalid(`${field}.option_values must be up to three option values`)
   const hsCode = normalizeOptionalProductString(variant.hs_code, `${field}.hs_code`, 12)
-  if (hsCode !== null && !/^[0-9.]{6,12}$/u.test(hsCode)) invalid(`${field}.hs_code must be a 6–10 digit HS code`)
+  if (hsCode !== null && !HS_CODE_PATTERN.test(hsCode)) invalid(`${field}.hs_code: ${HS_CODE_RULE}`)
   const origin = normalizeOptionalProductString(variant.country_of_origin, `${field}.country_of_origin`, 2)?.toUpperCase() ?? null
   if (origin !== null && !/^[A-Z]{2}$/u.test(origin)) invalid(`${field}.country_of_origin must be a two-letter country code`)
   const policy = variant.inventory_policy ?? 'deny'

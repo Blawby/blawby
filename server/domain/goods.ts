@@ -279,7 +279,7 @@ export async function quoteOrder(db: DbClient, organizationId: string, input: { 
   if (!currency) fail(409, 'CURRENCY_REQUIRED', 'This business has not set its currency')
   for (const line of lines) {
     const variant = variants.find(row => row.id === line.product_variant_id)
-    if (!variant || variant.kind !== 'item' || variant.active !== 1 || variant.product_active !== 1 || variant.published !== 1) fail(409, 'ITEM_UNAVAILABLE', 'An item in the order is no longer for sale', 'lines')
+    if (!variant || variant.kind !== 'item' || variant.active !== 1 || variant.product_active !== 1 || variant.published !== 1) fail(409, 'ITEM_UNAVAILABLE', 'An item in the order is no longer for sale', 'lines', { product_variant_id: line.product_variant_id })
   }
   const productIds = [...new Set(variants.map(variant => variant.product_id))]
   const offering = locations.filter(location => productIds.every(productId => offers.some(offer => offer.product_id === productId && offer.location_id === location.id)))
@@ -527,9 +527,11 @@ export async function saveCheckoutOrder(db: DbClient, payment: Payment, snapshot
     const variant = `(SELECT inventory_tracked FROM product_variants WHERE organization_id = ? AND id = ?)`
     const available = `COALESCE((SELECT available FROM inventory_levels WHERE product_variant_id = ? AND location_id = ?), 0)`
     stockQueries.push(
-      { query: `UPDATE order_lines SET made_to_order_quantity = CASE WHEN ${variant} = 1 THEN MAX(quantity - MAX(${available}, 0), 0) ELSE 0 END
+      // What is taken is recorded on the line, so a cancellation gives back exactly that even if tracking changes later.
+      { query: `UPDATE order_lines SET made_to_order_quantity = CASE WHEN ${variant} = 1 THEN MAX(quantity - MAX(${available}, 0), 0) ELSE 0 END,
+            stock_taken = CASE WHEN ${variant} = 1 THEN quantity ELSE 0 END
           WHERE organization_id = ? AND order_id = ? AND product_variant_id = ?`,
-        params: [payment.organization_id, line.product_variant_id, line.product_variant_id, order.location_id, payment.organization_id, order.id, line.product_variant_id] },
+        params: [payment.organization_id, line.product_variant_id, line.product_variant_id, order.location_id, payment.organization_id, line.product_variant_id, payment.organization_id, order.id, line.product_variant_id] },
       assertBookingBatchWrite({ query: `NOT EXISTS (SELECT 1 FROM order_lines l JOIN product_variants v ON v.organization_id = l.organization_id AND v.id = l.product_variant_id
           WHERE l.organization_id = ? AND l.order_id = ? AND l.product_variant_id = ? AND l.made_to_order_quantity > 0 AND v.inventory_policy = 'deny')`,
         params: [payment.organization_id, order.id, line.product_variant_id] }),
@@ -577,10 +579,10 @@ export function cancelUncapturedOrderQueries(payment: Pick<Payment, 'id' | 'orga
     WHERE o.organization_id = ? AND o.id = ? AND o.status = 'paid')`
   const scope = [payment.id, payment.organization_id, payment.subject_id]
   return [
-    { query: `UPDATE inventory_levels SET available = available + (SELECT SUM(l.quantity) FROM order_lines l WHERE l.organization_id = inventory_levels.organization_id AND l.order_id = ? AND l.product_variant_id = inventory_levels.product_variant_id),
+    { query: `UPDATE inventory_levels SET available = available + (SELECT SUM(l.stock_taken) FROM order_lines l WHERE l.organization_id = inventory_levels.organization_id AND l.order_id = ? AND l.product_variant_id = inventory_levels.product_variant_id),
         updated_at = ?, updated_by = ?
       WHERE organization_id = ? AND location_id = (SELECT location_id FROM orders WHERE organization_id = ? AND id = ?)
-        AND product_variant_id IN (SELECT product_variant_id FROM order_lines WHERE organization_id = ? AND order_id = ?) AND ${uncaptured}`,
+        AND product_variant_id IN (SELECT product_variant_id FROM order_lines WHERE organization_id = ? AND order_id = ? AND stock_taken > 0) AND ${uncaptured}`,
       params: [payment.subject_id, now, `order:${payment.subject_id}`, payment.organization_id, payment.organization_id, payment.subject_id, payment.organization_id, payment.subject_id, ...scope] },
     { query: `UPDATE orders SET status = 'cancelled', cancelled_at = ?, updated_at = ? WHERE organization_id = ? AND id = ? AND status = 'paid'
         AND EXISTS (SELECT 1 FROM payments p WHERE p.id = ? AND p.captured_amount = 0)`,

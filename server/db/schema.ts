@@ -3136,6 +3136,8 @@ export const order_lines = sqliteTable("order_lines", {
 	quantity: integer().notNull(),
 	unit_amount: integer().notNull(),
 	made_to_order_quantity: integer().default(0).notNull(),
+	// Units taken from the location's stock when the order was paid: the whole quantity for a tracked variant, else 0. A cancelled order gives back exactly this.
+	stock_taken: integer().default(0).notNull(),
 	sort_order: integer().notNull(),
 }, (table) => [
 	foreignKey({ columns: [table.organization_id, table.order_id], foreignColumns: [orders.organization_id, orders.id], name: "order_lines_order_scope_fk" }).onDelete("cascade"),

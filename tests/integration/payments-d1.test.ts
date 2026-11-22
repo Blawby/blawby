@@ -1957,10 +1957,14 @@ test('a cart becomes a paid order with its conversation, stock and ship task bef
   const declinedCheckout = await checkout('declined-order')
   declined.add(declinedCheckout.payment_id)
   statuses[declinedCheckout.payment_id] = 'requires_capture'
+  // Celadon is untracked when this order is paid, so nothing of its stock row is taken; tracking it again later must not give back what was never taken.
+  await db.prepare("UPDATE product_variants SET inventory_tracked = 0 WHERE id = 'celadon'").run()
   const declinedOutcome = await processPaymentEvent(db, getStripe(env), authorized(declinedCheckout.payment_id), env).then(() => null, (error: unknown) => error)
   const declinedOrder = await db.prepare('SELECT o.id, o.status FROM orders o JOIN payments p ON p.subject_id = o.id WHERE p.id = ?').bind(declinedCheckout.payment_id).first<{ id: string; status: string }>()
   assert.equal(declinedOrder?.status, 'paid', `the order is paid before capture is tried (${String(declinedOutcome)})`)
   assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'ruby'").first('available'), 0)
+  assert.equal(await db.prepare("SELECT available FROM inventory_levels WHERE product_variant_id = 'celadon'").first('available'), -1)
+  await db.prepare("UPDATE product_variants SET inventory_tracked = 1 WHERE id = 'celadon'").run()
   statuses[declinedCheckout.payment_id] = 'canceled'
   await processPaymentEvent(db, getStripe(env), { ...authorized(declinedCheckout.payment_id), id: `evt_canceled_${declinedCheckout.payment_id}`, type: 'payment_intent.canceled' } as unknown as Stripe.Event, env)
   assert.equal(await db.prepare('SELECT status FROM orders WHERE id = ?').bind(declinedOrder!.id).first('status'), 'cancelled')

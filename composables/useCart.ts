@@ -6,8 +6,8 @@
  */
 export interface CartLine { product_variant_id: string; quantity: number }
 
-// A browser keeps a cookie of at most 4 KB: 30 lines of UUID variants encode to about 3 KB.
-const MAX_LINES = 30
+// A browser keeps a cookie of at most 4 KB, name included; the oldest lines give way to stay under it.
+const MAX_BYTES = 3500
 
 export function useCart(organizationId: string) {
   const cookie = useCookie<CartLine[]>(`cart_${organizationId}`, { default: () => [], sameSite: 'lax', maxAge: 60 * 60 * 24 * 30, path: '/' })
@@ -15,7 +15,9 @@ export function useCart(organizationId: string) {
   const count = computed(() => lines.value.reduce((sum, line) => sum + line.quantity, 0))
   function set(productVariantId: string, quantity: number) {
     const rest = lines.value.filter(line => line.product_variant_id !== productVariantId)
-    cookie.value = quantity > 0 ? [...rest, { product_variant_id: productVariantId, quantity: Math.min(quantity, 99) }].slice(-MAX_LINES) : rest
+    const next = quantity > 0 ? [...rest, { product_variant_id: productVariantId, quantity: Math.min(quantity, 99) }] : rest
+    while (next.length > 1 && encodeURIComponent(JSON.stringify(next)).length > MAX_BYTES) next.shift()
+    cookie.value = next
   }
   function add(productVariantId: string, quantity = 1) {
     set(productVariantId, (lines.value.find(line => line.product_variant_id === productVariantId)?.quantity ?? 0) + quantity)

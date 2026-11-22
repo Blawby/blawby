@@ -113,7 +113,9 @@ async function price() {
   } catch (cause) {
     if (request !== priceRequest) return
     quote.value = null
-    const variantId = cause instanceof ApiClientError && typeof cause.data.product_variant_id === 'string' ? cause.data.product_variant_id : null
+    // The item the quote names (the error's data), else the one added last, whose arrival made the cart unsellable together.
+    const detail = cause instanceof ApiClientError && isRecord(cause.data.data) ? cause.data.data : {}
+    const variantId = typeof detail.product_variant_id === 'string' ? detail.product_variant_id : cart.lines.value.at(-1)?.product_variant_id ?? null
     quoteFailure.value = { message: getErrorMessage(cause, t('shop.cart')), product_variant_id: variantId }
   }
 }

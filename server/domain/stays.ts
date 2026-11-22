@@ -206,6 +206,8 @@ export interface StayDetail extends Stay {
   payments: StayPayment[]
   /** Each Stripe payment for the stay: its checkout, then each month of a stay paid monthly. */
   online_payments: StayOnlinePayment[]
+  /** The stay's checkout payment, under the name App Store builds through 1.8.5 decode as a required key. Retire with those builds. */
+  online_payment: StayOnlinePayment | null
   /** A stay paid monthly: each month, what it is due, what was paid toward it, and where it stands. Null for a stay paid at once. */
   installments: StayLedgerPeriod[] | null
   paid_minor: number
@@ -1372,7 +1374,7 @@ export function stayDetailFrom<A extends StayAccess>(access: A, row: unknown): S
   const paid = payments.reduce((sum, payment) => sum + payment.amount_minor, 0) + (withheld ?? 0) + onlinePayments.reduce((sum, payment) => sum + payment.captured_minor - payment.refunded_minor, 0)
   const status = isChannelManagedStay(stay) ? null
     : paid === 0 ? 'unpaid' : paid < stay.total_minor ? 'partial' : paid === stay.total_minor ? 'paid' : 'overpaid'
-  return { ...stay, guest_image_url, payments, online_payments: onlinePayments, installments: stayLedger(stay, plan ?? null, onlinePayments, payments), paid_minor: paid, payment_status: status } as StayDetailView<A>
+  return { ...stay, guest_image_url, payments, online_payments: onlinePayments, online_payment: onlinePayments[0] ?? null, installments: stayLedger(stay, plan ?? null, onlinePayments, payments), paid_minor: paid, payment_status: status } as StayDetailView<A>
 }
 
 /**

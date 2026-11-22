@@ -21,6 +21,7 @@
                 <span class="block text-sm text-muted">{{ t('shop.pickup_free', { place: quote.pickup_locations[0]!.title }) }}</span>
               </button>
             </div>
+            <p v-if="method === 'pickup' && rateError" class="text-sm text-error">{{ rateError }}</p>
           </section>
 
           <section v-if="method === 'shipping'" class="space-y-3">
@@ -35,9 +36,9 @@
             </div>
             <UFormField :label="t('shop.state')"><UInput v-model="address.state" autocomplete="address-level1" class="w-full" /></UFormField>
             <p v-if="rateError" class="text-sm text-error">{{ rateError }}</p>
-            <div v-else-if="shippingQuote" class="space-y-2">
+            <div v-else-if="deliveryQuote" class="space-y-2">
               <h3 class="text-sm font-semibold text-default">{{ t('shop.shipping_method') }}</h3>
-              <button v-for="rate in shippingQuote.shipping_rates" :key="rate.id" type="button" class="flex w-full justify-between rounded-xl p-4 text-left ring-1" :class="rateId === rate.id ? 'ring-2 ring-[var(--ui-text-highlighted)]' : 'ring-default'" :aria-pressed="rateId === rate.id" @click="rateId = rate.id">
+              <button v-for="rate in deliveryQuote.shipping_rates" :key="rate.id" type="button" class="flex w-full justify-between rounded-xl p-4 text-left ring-1" :class="rateId === rate.id ? 'ring-2 ring-[var(--ui-text-highlighted)]' : 'ring-default'" :aria-pressed="rateId === rate.id" @click="rateId = rate.id">
                 <span><span class="block font-medium text-default">{{ rate.name }}</span><span v-if="rate.delivery_days_min !== null" class="block text-sm text-muted">{{ t('shop.ships_in', { days: rate.delivery_days_max && rate.delivery_days_max !== rate.delivery_days_min ? `${rate.delivery_days_min}–${rate.delivery_days_max}` : rate.delivery_days_min }) }}</span></span>
                 <span class="font-medium text-default">{{ money(rate.amount) }}</span>
               </button>
@@ -56,7 +57,7 @@
         </form>
 
         <aside class="h-fit space-y-4 rounded-2xl bg-elevated p-6 lg:col-span-5">
-          <div v-for="line in (shippingQuote ?? quote).lines" :key="line.product_variant_id" class="flex gap-4">
+          <div v-for="line in (deliveryQuote ?? quote).lines" :key="line.product_variant_id" class="flex gap-4">
             <img v-if="line.image_url" :src="line.image_url" alt="" class="size-16 rounded-xl object-cover">
             <div class="min-w-0 flex-1">
               <p class="font-medium text-default">{{ line.title }}</p>
@@ -126,31 +127,36 @@ const countries = computed(() => {
   return (quote.value?.ship_to_countries ?? []).map(code => ({ value: code, label: names.of(code) ?? code })).sort((a, b) => a.label.localeCompare(b.label))
 })
 watch(countries, list => { if (!address.country && list.length === 1) address.country = list[0]!.value }, { immediate: true })
-const shippingQuote = ref<OrderQuote | null>(null)
+const deliveryQuote = ref<OrderQuote | null>(null)
 const rateError = ref('')
 const rateId = ref<string | null>(null)
-const chosenRate = computed(() => shippingQuote.value?.shipping_rates.find(rate => rate.id === rateId.value) ?? null)
-let shippingRequest = 0
-watch([() => address.country, () => JSON.stringify(cart.lines.value), method], async () => {
-  const request = ++shippingRequest
-  shippingQuote.value = null
+const chosenRate = computed(() => deliveryQuote.value?.shipping_rates.find(rate => rate.id === rateId.value) ?? null)
+// The cart priced for the chosen delivery: shipping at the location that ships to the buyer, pickup at the studio collected from.
+// Either may price the items differently from the first location offering them, and checkout charges this price.
+let deliveryRequest = 0
+const pickupLocationId = computed(() => quote.value?.pickup_locations[0]?.id ?? null)
+watch([() => address.country, () => JSON.stringify(cart.lines.value), method, pickupLocationId], async () => {
+  const request = ++deliveryRequest
+  deliveryQuote.value = null
   rateId.value = null
   rateError.value = ''
-  if (method.value !== 'shipping' || !address.country || !cart.lines.value.length) return
+  if (!cart.lines.value.length) return
+  const delivery = method.value === 'pickup' ? (pickupLocationId.value ? { method: 'pickup', location_id: pickupLocationId.value } : null)
+    : address.country ? { method: 'shipping', country: address.country } : null
+  if (!delivery) return
   try {
-    const next = await publicApiMutation('/api/public/orders/quote', { method: 'POST', body: { lines: cart.lines.value, delivery: { method: 'shipping', country: address.country } }, validate: isQuote })
-    if (request !== shippingRequest) return
-    shippingQuote.value = next
+    const next = await publicApiMutation('/api/public/orders/quote', { method: 'POST', body: { lines: cart.lines.value, delivery }, validate: isQuote })
+    if (request !== deliveryRequest) return
+    deliveryQuote.value = next
     rateId.value = next.shipping_rates[0]?.id ?? null
-  } catch (cause) { if (request === shippingRequest) rateError.value = getErrorMessage(cause, t('shop.no_shipping')) }
+  } catch (cause) { if (request === deliveryRequest) rateError.value = getErrorMessage(cause, t(method.value === 'pickup' ? 'shop.cart' : 'shop.no_shipping')) }
 })
-// Shipping is priced at the location that ships to the buyer, which may price the items differently from the first one offering them.
-const summary = computed(() => (method.value === 'shipping' ? shippingQuote.value : null) ?? quote.value!)
+const summary = computed(() => deliveryQuote.value ?? quote.value!)
 
 const guest = reactive({ name: '', email: '', phone: '' })
 const note = ref('')
 const ready = computed(() => Boolean(guest.name.trim() && guest.email.trim()
-  && (method.value === 'pickup' ? quote.value?.pickup_locations.length : chosenRate.value && address.line1.trim())))
+  && (method.value === 'pickup' ? deliveryQuote.value?.delivery_method === 'pickup' : chosenRate.value && address.line1.trim())))
 const submitting = ref(false)
 const submitError = ref('')
 const requestKey = ref<string | null>(null)

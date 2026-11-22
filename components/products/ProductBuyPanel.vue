@@ -54,7 +54,8 @@ function choose(index: number, value: string) {
 const available = computed(() => {
   const current = variant.value
   if (!current?.inventory_tracked) return null
-  return Math.max(0, ...current.inventory_levels.filter(level => props.locationId === null || level.location_id === props.locationId).map(level => level.available))
+  const offering = new Set(props.product.locations.filter(entry => entry.active).map(entry => entry.location_id))
+  return Math.max(0, ...current.inventory_levels.filter(level => offering.has(level.location_id) && (props.locationId === null || level.location_id === props.locationId)).map(level => level.available))
 })
 const limit = computed(() => variant.value ? purchasableQuantity({ inventory_tracked: variant.value.inventory_tracked, inventory_policy: variant.value.inventory_policy, available: available.value }) : 0)
 const soldOut = computed(() => limit.value === 0)

@@ -90,6 +90,7 @@ export function sanitizeFilename(raw: string | undefined): string {
     .replace(/\s+/g, '-')
     .replace(/[^A-Za-z0-9._-]/g, '-')
     .replace(/-+/g, '-')
+    .replace(/\.{2,}/g, '.')
     .replace(/^[-.]+|[-.]+$/g, '')
     .slice(0, 120)
   return sanitized || 'upload'

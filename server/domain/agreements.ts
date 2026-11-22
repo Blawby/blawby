@@ -3,7 +3,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import { z } from 'zod'
 import { executeBatch, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
-import { appendMessage, findMessageByDedupeKey, messageQueries, type ConversationRow, type MessageRow } from '~/server/domain/conversations'
+import { findMessageByDedupeKey, messageQueries, type ConversationRow, type MessageRow } from '~/server/domain/conversations'
 import { createConversationGuestInvite } from '~/server/domain/conversation-participants'
 import { createDeliveryReceipt, deliverGuestThreadEmail, isDeliverySent } from '~/server/domain/guest-threads/deliveries'
 import { publishConversationEvent } from '~/server/cloudflare/guest-inbox-events'
@@ -115,7 +115,7 @@ function bookingQuery(target: AgreementTarget): BatchQuery {
 function signersQuery(target: AgreementTarget): BatchQuery {
   const conversation = BOOKING_CONVERSATION(target)
   return {
-    query: `SELECT p.user_id, u.name, u.isAnonymous AS anonymous, json_extract(c.payload_json, '$.guest.name') AS booked_name, json_extract(c.payload_json, '$.guest.email') AS booked_email
+    query: `SELECT p.user_id, u.name, u.isAnonymous AS anonymous, CASE WHEN u.emailVerified = 1 THEN lower(u.email) END AS email, json_extract(c.payload_json, '$.guest.name') AS booked_name, json_extract(c.payload_json, '$.guest.email') AS booked_email
       FROM conversation_participants p JOIN user u ON u.id = p.user_id JOIN conversations c ON c.id = p.conversation_id
      WHERE p.conversation_id = ${conversation.sql} AND p.role = 'guest' ORDER BY p.created_at`,
     params: conversation.params,
@@ -133,7 +133,7 @@ export function agreementQueries(target: AgreementTarget, withSigners = false): 
   return [bookingQuery(target), recordsQuery(target), listingQuery(target), depositQuery(target), ...(withSigners ? [signersQuery(target)] : [])]
 }
 
-type SignerRow = { user_id: string; name: string | null; anonymous: number; booked_name: string | null; booked_email: string | null }
+type SignerRow = { user_id: string; name: string | null; anonymous: number; email: string | null; booked_name: string | null; booked_email: string | null }
 
 /** The batch results of `agreementQueries`, in their order. */
 export function agreementFromResults(results: { results: unknown[] }[]) {
@@ -185,9 +185,11 @@ interface AgreementState {
   fields: AgreementField[]
 }
 
-function agreementState(records: AgreementRecord[], listing: ListingDocument | null, booking: AgreementBooking, now: string): AgreementState | null {
+function agreementState(records: AgreementRecord[], listing: ListingDocument | null, booking: AgreementBooking, now: string, requestId?: string): AgreementState | null {
   const cancelled = new Set(records.filter(record => record.event_name === 'agreement.cancelled').map(record => cancelledSchema.parse(payload(record)).request_id))
-  const latestRequest = [...records].reverse().find(record => record.event_name === 'agreement.stored' || record.event_name === 'agreement.sent') ?? null
+  const requests = records.filter(record => record.event_name === 'agreement.stored' || record.event_name === 'agreement.sent')
+  // The current request is the latest; a named one is read as it stands, whatever was sent after it.
+  const latestRequest = (requestId ? requests.find(record => record.id === requestId) : requests.at(-1)) ?? null
   const request = latestRequest && !cancelled.has(latestRequest.id) ? latestRequest : null
   const signatures = records.filter(record => record.event_name === 'agreement.signed').map(record => ({ record, signed: signedSchema.parse(payload(record)) }))
   if (request) {
@@ -206,7 +208,8 @@ function agreementState(records: AgreementRecord[], listing: ListingDocument | n
     const signed = signedSchema.parse(payload(listingSignature))
     return { request: null, listing: null, listingSignature, fields: [], signers: [{ key: signed.signer_key, name: signed.typed_name, role: 'guest', signature: listingSignature }] }
   }
-  const open = (booking.status === 'pending' || booking.status === 'confirmed') && booking.endsAt > now
+  // A stay on a home with no checkout time ends on a date: it is open through that day.
+  const open = (booking.status === 'pending' || booking.status === 'confirmed') && (booking.endsAt.length === 10 ? booking.endsAt >= now.slice(0, 10) : booking.endsAt > now)
   // A booking with no guest named has no one to sign the listing's agreement.
   if (!listing || !open || !booking.bookingUserId || !booking.guestName) return null
   return { request: null, listing, listingSignature: null, fields: [], signers: [{ key: `user:${booking.bookingUserId}`, name: booking.guestName, role: 'guest', signature: null }] }
@@ -219,7 +222,8 @@ function presentAgreement(state: AgreementState, booking: AgreementBooking, view
   const own = state.signers.find(signer => viewerSigns(signer, viewer, signersRows, booking.bookingUserId)) ?? null
   const guestsSigned = signers.every(signer => signer.role === 'host' || signer.signed_at !== null)
   const document = state.request ?? state.listingSignature
-  const base = { label: agreementLabel(booking.productKind), fields: state.fields, viewer_signer_key: own?.key ?? null, can_manage: viewer?.canManage === true }
+  const base = { label: agreementLabel(booking.productKind), fields: state.fields, viewer_signer_key: own?.key ?? null, can_manage: viewer?.canManage === true,
+    document_id: document?.id ?? state.listing!.asset_id }
   if (state.request?.event_name === 'agreement.stored') {
     const url = agreementDocumentPath(booking.conversationId, state.request.id)
     return { ...base, source: 'booking', file_name: state.request.file_name ?? 'Agreement.pdf', url, signed_url: url, status: 'stored', completed_at: state.request.occurred_at, signers, can_sign: false }
@@ -318,30 +322,37 @@ export interface SendAgreementInput {
 export async function sendAgreement(env: CloudflareEnv, conversation: ConversationRow, actor: AgreementActor, input: SendAgreementInput) {
   const { booking, signerRows } = await readAgreement(env.DB, conversation, true)
   const pdf = await readUploadedPdf(input.file)
-  const signers = z.array(signerSchema).min(1).parse(input.signers)
+  // An emailed signer is keyed by the lowercase address, the form a verified account's email is compared in when it signs.
+  const signerKey = (key: string) => key.startsWith('email:') ? key.toLowerCase() : key
+  const signers = z.array(signerSchema).min(1).parse(input.signers).map(signer => ({ ...signer, key: signerKey(signer.key) }))
+  const fields = input.fields.map(field => isAgreementField(field) ? { ...field, signer_key: signerKey(field.signer_key) } : field)
   if (new Set(signers.map(signer => signer.key)).size !== signers.length) throw new HTTPError({ statusCode: 422, message: 'Each signer appears once', data: { code: 'DUPLICATE_SIGNER', field: 'signers' } })
   if (!signers.some(signer => signer.role === 'guest')) throw new HTTPError({ statusCode: 422, message: 'Add at least one guest to sign', data: { code: 'NO_GUEST_SIGNER', field: 'signers' } })
   const hosts = signers.filter(signer => signer.role === 'host')
   // The business signs last, as one signer: the member who sends it.
   if (hosts.length !== 1 || hosts[0]!.key !== `user:${actor.userId}`) throw new HTTPError({ statusCode: 422, message: 'You sign for the business, once, after your guests', data: { code: 'INVALID_HOST_SIGNER', field: 'signers' } })
   // A guest signer with an account is a guest in this conversation; anyone else is invited by email.
-  const seated = new Set(availableSigners(signerRows!, actor).map(signer => signer.key))
+  const seated = new Set(availableSigners(signerRows!, actor).filter(signer => signer.role === 'guest').map(signer => signer.key))
   if (signers.some(signer => signer.role === 'guest' && signer.key.startsWith('user:') && !seated.has(signer.key))) {
     throw new HTTPError({ statusCode: 422, message: 'A signer is not a guest on this booking', data: { code: 'SIGNER_NOT_GUEST', field: 'signers' } })
   }
-  for (const field of input.fields) {
+  // A guest with an account signs once, as that account: a second place under their email could never be signed.
+  const accountEmails = new Set(signerRows!.flatMap(row => !row.anonymous && row.email ? [`email:${row.email}`] : []))
+  const twice = signers.find(signer => signer.role === 'guest' && accountEmails.has(signer.key))
+  if (twice) throw new HTTPError({ statusCode: 422, message: `${twice.name} is already a guest on this booking. Choose them from the list.`, data: { code: 'SIGNER_HAS_ACCOUNT', field: 'signers' } })
+  for (const field of fields) {
     if (!isAgreementField(field) || field.page > pdf.pages || !signers.some(signer => signer.key === field.signer_key)) {
       throw new HTTPError({ statusCode: 422, message: 'A field is off the document or names no signer', data: { code: 'INVALID_FIELD', field: 'fields' } })
     }
   }
-  const unplaced = signers.find(signer => !input.fields.some(field => field.signer_key === signer.key && field.kind === 'signature'))
+  const unplaced = signers.find(signer => !fields.some(field => field.signer_key === signer.key && field.kind === 'signature'))
   if (unplaced) throw new HTTPError({ statusCode: 422, message: `Place a signature for ${unplaced.name}`, data: { code: 'SIGNATURE_UNPLACED', field: 'fields' } })
   const label = agreementLabel(booking.productKind).toLowerCase()
   const guests = signers.filter(signer => signer.role === 'guest')
   const writer = messageQueries({
     conversationId: conversation.id, authorKind: PLATFORM_MESSAGE_AUTHOR_KIND, authorUserId: actor.userId, eventName: 'agreement.sent',
     body: `Asked ${joinNames(guests.map(signer => signer.name))} to sign the ${label}`,
-    payload: { sha256: await sha256(pdf.bytes), signers, fields: input.fields },
+    payload: { sha256: await sha256(pdf.bytes), signers, fields },
   })
   await uploadPrivateDocument({
     db: env.DB, env, organizationId: conversation.organization_id, userId: actor.userId, buffer: pdf.bytes, filename: pdf.filename,
@@ -407,14 +418,22 @@ export async function cancelAgreement(env: CloudflareEnv, conversation: Conversa
   const state = agreementState(records, listing, booking, new Date().toISOString())
   if (!state?.request) throw new HTTPError({ statusCode: 409, message: 'This booking has no document to cancel', data: { code: 'NO_AGREEMENT_REQUEST', field: 'request_id' } })
   if (state.signers.length && state.signers.every(signer => signer.signature)) throw new HTTPError({ statusCode: 409, message: 'Everyone signed this document', data: { code: 'AGREEMENT_SIGNED', field: 'request_id' } })
-  await appendMessage(env.DB, {
+  const dedupeKey = `agreement-cancelled:${state.request.id}`
+  const writer = messageQueries({
     conversationId: conversation.id, authorKind: PLATFORM_MESSAGE_AUTHOR_KIND, authorUserId: actor.userId, eventName: 'agreement.cancelled',
-    body: `Withdrew the ${agreementLabel(booking.productKind).toLowerCase()}`, payload: { request_id: state.request.id }, dedupeKey: `agreement-cancelled:${state.request.id}`,
+    body: `Withdrew the ${agreementLabel(booking.productKind).toLowerCase()}`, payload: { request_id: state.request.id }, dedupeKey,
+    // A last signature that lands while this is being withdrawn completes the document instead.
+    ...(state.signers.length ? { guard: { sql: `(SELECT COUNT(*) FROM messages signed WHERE signed.conversation_id = c.id AND signed.event_name = 'agreement.signed'
+      AND json_extract(signed.payload_json, '$.request_id') = ?) < ?`, params: [state.request.id, state.signers.length] } } : {}),
   })
+  await executeBatch(env.DB, writer.queries, { operation: 'Withdraw agreement' })
+  if (!await findMessageByDedupeKey(env.DB, dedupeKey)) throw new HTTPError({ statusCode: 409, message: 'Everyone signed this document', data: { code: 'AGREEMENT_SIGNED', field: 'request_id' } })
   await publishConversationEvent(env, env.DB, { conversationId: conversation.id, type: 'MESSAGE_CREATE' })
 }
 
 export interface SignAgreementInput {
+  /** The document the signer reviewed: the request's message, or the listing agreement's asset. */
+  documentId: string
   typedName: string
   consent: boolean
   ip: string | null
@@ -434,6 +453,8 @@ export async function signAgreement(env: CloudflareEnv, conversation: Conversati
   if (!state || !agreement?.can_sign || !agreement.viewer_signer_key) throw new HTTPError({ statusCode: 409, message: 'There is nothing for you to sign on this booking', data: { code: 'NOTHING_TO_SIGN', field: 'conversation_id' } })
   const document = state.request ?? state.listing!
   const label = agreement.label.toLowerCase()
+  // A document sent or replaced after the signer opened theirs is not the one they read.
+  if (agreement.document_id !== input.documentId) throw new HTTPError({ statusCode: 409, message: `The ${label} changed. Open it again to read and sign the current one.`, data: { code: 'AGREEMENT_CHANGED', field: 'document_id' } })
   const fingerprint = await sha256(await documentBytes(env, document.r2_key, label))
   if (state.request && fingerprint !== sentSchema.parse(payload(state.request)).sha256) throw new Error(`The ${label} changed in storage after it was sent`)
   const requestId = state.request?.id ?? null
@@ -441,12 +462,17 @@ export async function signAgreement(env: CloudflareEnv, conversation: Conversati
     conversationId: conversation.id, authorKind: PLATFORM_MESSAGE_AUTHOR_KIND, authorUserId: viewer.userId, eventName: 'agreement.signed', body: `Signed the ${label}`,
     payload: { request_id: requestId, signer_key: agreement.viewer_signer_key, typed_name: typedName, sha256: fingerprint, ip: input.ip, user_agent: input.userAgent },
     dedupeKey: `agreement-signed:${requestId ?? `listing:${booking.bookingId}`}:${agreement.viewer_signer_key}`,
+    // The signature is written only while its request stands: not withdrawn, and nothing sent after it.
+    ...(requestId ? { guard: { sql: `NOT EXISTS (SELECT 1 FROM messages later WHERE later.conversation_id = c.id AND (
+        (later.event_name = 'agreement.cancelled' AND json_extract(later.payload_json, '$.request_id') = ?)
+        OR (later.event_name IN ('agreement.sent', 'agreement.stored') AND later.sequence > (SELECT sequence FROM messages WHERE id = ?))))`, params: [requestId, requestId] } } : {}),
   })
   await executeBatch(env.DB, [
     ...writer.queries,
     // A listing agreement may change; the signature keeps the document it signed.
     ...requestId ? [] : [buildMediaPlacementInsertQuery({ organizationId: conversation.organization_id, ownerType: 'message', ownerId: writer.id, slot: 'agreement', assetId: state.listing!.asset_id, sortOrder: 0 })],
   ], { operation: 'Sign agreement' })
+  if (!await findMessageByDedupeKey(env.DB, writer.dedupeKey)) throw new HTTPError({ statusCode: 409, message: `The ${label} changed. Open it again to read and sign the current one.`, data: { code: 'AGREEMENT_CHANGED', field: 'document_id' } })
   await publishConversationEvent(env, env.DB, { conversationId: conversation.id, type: 'MESSAGE_CREATE' })
 }
 
@@ -512,7 +538,8 @@ export async function notoFontFor(env: CloudflareEnv, text: string, loaded: Map<
 /** The document with every signature where it was placed and a closing page that records who signed, when and how. */
 export async function signedAgreementDocument(env: CloudflareEnv, conversation: ConversationRow, messageId: string, viewer: AgreementViewer): Promise<{ bytes: Uint8Array<ArrayBuffer>; fileName: string }> {
   const { booking, records, listing, signerRows } = await readAgreement(env.DB, conversation, true)
-  const state = agreementState(records, listing, booking, new Date().toISOString())
+  // The requested document's own state: a document everyone signed stays downloadable after another is sent.
+  const state = agreementState(records, listing, booking, new Date().toISOString(), records.some(record => record.id === messageId && record.event_name === 'agreement.sent') ? messageId : undefined)
   const agreement = state ? presentAgreement(state, booking, viewer, signerRows) : null
   const document = state?.request ?? state?.listingSignature
   if (!state || !agreement || !document || document.id !== messageId || agreement.status !== 'signed') {
@@ -541,12 +568,13 @@ export async function signedAgreementDocument(env: CloudflareEnv, conversation: 
   const day = (at: string) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(at))
   for (const field of state.fields) {
     const page = pdf.getPage(field.page - 1)
-    const { width, height } = page.getSize()
+    // Fields were placed on the page as a viewer shows it: its crop box, which need not start at the origin.
+    const { x: left, y: bottom, width, height } = page.getCropBox()
     const signature = signatures.find(({ signer }) => signer.key === field.signer_key)!
     const text = field.kind === 'signature' ? signature.signed.typed_name : day(signature.at)
     const defaultFont = field.kind === 'signature' ? script : regular
     const font = await resolveFont(text, defaultFont)
-    const box = { x: field.x * width, y: height - (field.y + field.height) * height, w: field.width * width, h: field.height * height }
+    const box = { x: left + field.x * width, y: bottom + height - (field.y + field.height) * height, w: field.width * width, h: field.height * height }
     // One line, shrunk to the field's width, so a long name never runs below it.
     const tallest = Math.min(box.h * (field.kind === 'signature' ? 0.8 : 0.6), field.kind === 'signature' ? 28 : 12)
     // Padding scales with the field, so even a hairline field keeps a positive width to fit the text into.
@@ -555,12 +583,15 @@ export async function signedAgreementDocument(env: CloudflareEnv, conversation: 
     page.drawText(text, { x: box.x + pad, y: box.y + (box.h - size) / 2 + size * 0.2, size, font, color: SIGNATURE_COLOR })
   }
   // The signature record: what was signed, by whom, when and from where.
-  const page = pdf.addPage([612, 792])
+  let page = pdf.addPage([612, 792])
   let y = 740
   const line = async (text: string, size = 10, defaultFont = regular) => {
     const font = await resolveFont(text, defaultFont)
-    page.drawText(text, { x: 54, y, size, font, color: SIGNATURE_COLOR, maxWidth: 504 })
-    y -= size + 8
+    // A line wraps at the record's width; the record runs onto another page before it leaves this one.
+    const rows = Math.max(1, Math.ceil(font.widthOfTextAtSize(text, size) / 504))
+    if (y - rows * (size + 2) < 54) { page = pdf.addPage([612, 792]); y = 740 }
+    page.drawText(text, { x: 54, y, size, font, color: SIGNATURE_COLOR, maxWidth: 504, lineHeight: size + 2 })
+    y -= rows * (size + 2) + 6
   }
   await line('Signature record', 16, bold)
   await line(`${agreement.label} · ${agreement.file_name}`)

@@ -8,9 +8,9 @@ import { requireFinancialBrowserOrAppRequest } from '~/server/utils/financial-br
 export default defineHandler(async event => {
   requireFinancialBrowserOrAppRequest(event)
   const { env, conversation, viewer } = await agreementRequest(event)
-  const body = await readStrictBody<{ typed_name?: string; consent?: boolean }>(event, { typed_name: 'string', consent: 'boolean' })
+  const body = await readStrictBody<{ typed_name?: string; consent?: boolean; document_id?: string }>(event, { typed_name: 'string', consent: 'boolean', document_id: 'string' })
   await signAgreement(env, conversation, viewer, {
-    typedName: body.typed_name ?? '', consent: body.consent === true,
+    documentId: body.document_id ?? '', typedName: body.typed_name ?? '', consent: body.consent === true,
     ip: event.req.headers.get('cf-connecting-ip'), userAgent: event.req.headers.get('user-agent'),
   })
   return jsonResponse({ signed: true }, { status: 201 })

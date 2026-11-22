@@ -22,6 +22,11 @@ export function requireAgreementManager(viewer: AgreementViewer) {
   if (!viewer.canManage) throw new HTTPError({ statusCode: 403, message: 'Only the business can change this booking’s documents', data: { code: 'FORBIDDEN', field: 'conversation_id' } })
 }
 
+/** A booking's documents are read by its guests and by the business that may change them, not by a member who only works the booking. */
+export function requireAgreementReader(role: 'guest' | 'member', viewer: AgreementViewer) {
+  if (role !== 'guest' && !viewer.canManage) throw new HTTPError({ statusCode: 403, message: 'You cannot open this booking’s documents', data: { code: 'FORBIDDEN', field: 'conversation_id' } })
+}
+
 export function pdfResponse(bytes: Uint8Array<ArrayBuffer>, fileName: string, download: boolean): Response {
   return new Response(bytes, {
     headers: {

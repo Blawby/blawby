@@ -403,6 +403,15 @@ watch(open, (isOpen) => {
   }
 }, { immediate: true })
 
+// Consent and adoption belong to the document they were given for: another document starts unsigned.
+watch(() => props.agreement.document_id, () => {
+  consent.value = false
+  isAdopted.value = false
+  adoptionModalOpen.value = false
+  error.value = ''
+  if (open.value) void loadAndRenderPdf()
+})
+
 async function submitSigned() {
   if (saving.value || !consent.value || name.value.trim().length < 2) {
     if (!isAdopted.value) openAdoptionModal()
@@ -413,7 +422,7 @@ async function submitSigned() {
   try {
     await applicationFetch(`/api/messages/${encodeURIComponent(props.conversationId)}/agreement/sign`, {
       method: 'POST',
-      body: { typed_name: name.value.trim(), consent: consent.value },
+      body: { typed_name: name.value.trim(), consent: consent.value, document_id: props.agreement.document_id },
       validate: isRecord,
     })
     open.value = false

@@ -50,6 +50,8 @@ export interface AgreementSigner {
 export interface BookingAgreement {
   /** The business's word for it: Rental agreement, Engagement letter, Waiver, Event contract. */
   label: string
+  /** The document as it stands now; a signer sends it back so they sign the one they read. */
+  document_id: string
   /** The listing's agreement every booking signs, or a document for this booking alone. */
   source: 'listing' | 'booking'
   file_name: string
@@ -92,7 +94,7 @@ export function isAgreementField(value: unknown): value is AgreementField {
 }
 
 export function isBookingAgreement(value: unknown): value is BookingAgreement {
-  return isRecord(value) && typeof value.label === 'string' && (value.source === 'listing' || value.source === 'booking')
+  return isRecord(value) && typeof value.label === 'string' && typeof value.document_id === 'string' && (value.source === 'listing' || value.source === 'booking')
     && typeof value.file_name === 'string' && typeof value.url === 'string' && (value.signed_url === null || typeof value.signed_url === 'string')
     && (value.status === 'stored' || value.status === 'signing' || value.status === 'signed')
     && Array.isArray(value.signers) && value.signers.every(signer => isRecord(signer) && typeof signer.key === 'string' && typeof signer.name === 'string'

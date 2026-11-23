@@ -13,7 +13,7 @@
         <span class="block truncate text-sm text-muted">{{ statusLine }}<template v-if="order.fulfilled_at">{{ ' ' }}<NuxtTime :datetime="order.fulfilled_at" locale="en" weekday="short" month="short" day="numeric" /></template></span>
       </span>
       <span class="flex shrink-0 items-center gap-2">
-        <span class="text-base font-semibold text-highlighted">{{ money(paid) }}</span>
+        <span class="text-base font-semibold text-highlighted">{{ money(total) }}</span>
         <UIcon name="i-lucide-chevron-down" class="size-5 text-muted transition-transform" :class="open ? 'rotate-180' : undefined" />
       </span>
     </button>
@@ -26,7 +26,7 @@
             <span>{{ money(line.unit_amount * line.quantity) }}</span>
           </li>
           <li v-if="order.delivery_method === 'shipping'" class="flex justify-between gap-4 text-muted"><span>Shipping · {{ order.shipping_rate_name }}</span><span>{{ money(order.shipping_amount) }}</span></li>
-          <li v-if="order.payment?.refunded_amount" class="flex justify-between gap-4 font-medium text-highlighted"><span>Refunded</span><span>{{ money(order.payment.refunded_amount) }}</span></li>
+          <li v-if="order.payment?.refunded_amount" class="flex justify-between gap-4 font-medium text-highlighted"><span>Refunded</span><span>−{{ money(order.payment.refunded_amount) }}</span></li>
         </ul>
         <p v-if="address" class="whitespace-pre-line text-sm"><span class="font-medium text-highlighted">Ship to</span>{{ '\n' + address }}</p>
         <p v-else class="text-sm"><span class="font-medium text-highlighted">Pickup at</span> {{ order.location_title }}<template v-if="order.location_address"><br><span class="text-muted">{{ order.location_address }}</span></template></p>
@@ -64,6 +64,7 @@
 
 <script setup lang="ts">
 import { formatMinorAmount } from '~/shared/prices'
+import { shippingAddressLines } from '~/shared/goods'
 import { formatCalendarDate } from '~/utils/timezone'
 import { getErrorMessage } from '~/utils/errors'
 import { ApiClientError, isRecord } from '~/utils/api-clients'
@@ -97,7 +98,8 @@ const route = useRoute()
 const paymentPath = computed(() => order.value?.payment ? `/dashboard/${encodeURIComponent(String(route.params.org_slug))}/bookings/payment/${encodeURIComponent(order.value.payment.id)}` : '')
 
 const money = (amount: number) => order.value ? formatMinorAmount(amount, order.value.currency) : ''
-const paid = computed(() => order.value?.payment ? order.value.payment.captured_amount - order.value.payment.refunded_amount : order.value?.subtotal_amount ?? 0)
+// The order's total, as the Transactions row shows it; a refund is said beneath it, never netted into it.
+const total = computed(() => order.value?.payment?.captured_amount || ((order.value?.subtotal_amount ?? 0) + (order.value?.shipping_amount ?? 0)))
 const day = (date: string) => formatCalendarDate(date, 'en', { weekday: 'short', month: 'short', day: 'numeric' })
 const statusLine = computed(() => {
   const current = order.value
@@ -109,8 +111,7 @@ const statusLine = computed(() => {
 const address = computed(() => {
   const details = order.value?.shipping_details
   if (!details) return null
-  const place = details.address
-  return [details.name, place.line1, place.line2, [place.postal_code, place.city].filter(Boolean).join(' '), place.state, place.country, details.phone].filter(Boolean).join('\n')
+  return [...shippingAddressLines(details), details.phone].filter(Boolean).join('\n')
 })
 
 const carrier = ref('')

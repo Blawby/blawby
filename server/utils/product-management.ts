@@ -28,6 +28,7 @@ import { readStripeCheckoutSetup } from '~/server/utils/stripe-connect'
 import { checkoutSellerFromRows, checkoutSellerQuery } from '~/server/utils/billing-access'
 import { isCurrencyCode, type CurrencyCode } from '~/shared/currencies'
 import {
+  AmbiguousPriceError,
   assertNoConflictingPrices,
   assertPriceShape,
   PRICE_RECURRING_INTERVALS,
@@ -38,6 +39,7 @@ import {
   type PriceInput,
   type PriceSelection,
 } from '~/shared/prices'
+import { isMembershipProduct, membershipPrice } from '~/shared/memberships'
 import { assertProductKind, patchProductDetails, validateProductDetails, validateStayAlarmDetails, ProductDetailError, PRICING_NOTE_HANDLE, PRODUCT_KINDS, type ProductDetailValue, type ProductKind } from '~/shared/product-details'
 import { hasSiteProductPage, presentationForProduct, type CatalogCounts } from '~/utils/product-presentation'
 import { preparePublicTenantOrigin } from '~/server/utils/public-base'
@@ -112,7 +114,10 @@ function paymentBasis(value: unknown, productId: string): PaymentBasis {
 
 /** Coarse publication gate; public catalogue readers also require booking readiness. */
 export const PUBLIC_PRODUCT_SQL = `pub.published = 1 AND (p.kind <> 'experience' OR NULLIF(trim(p.order_url), '') IS NOT NULL
-  OR EXISTS (SELECT 1 FROM product_booking_configs cfg WHERE cfg.product_id = p.id AND cfg.organization_id = p.organization_id AND cfg.duration_minutes > 0))`
+  OR EXISTS (SELECT 1 FROM product_booking_configs cfg WHERE cfg.product_id = p.id AND cfg.organization_id = p.organization_id AND cfg.duration_minutes > 0)
+  OR (NOT EXISTS (SELECT 1 FROM product_booking_configs cfg WHERE cfg.product_id = p.id AND cfg.organization_id = p.organization_id)
+    AND EXISTS (SELECT 1 FROM product_variants v JOIN prices pr ON pr.organization_id = v.organization_id AND pr.product_variant_id = v.id
+      WHERE v.organization_id = p.organization_id AND v.product_id = p.id AND v.active = 1 AND pr.active = 1 AND pr.type = 'recurring')))`
 
 /** Guests book a place to stay on this site and pay in full; it has no external booking link. */
 function stayOrderUrl(kind: ProductKind, orderUrl: string | null): string | null {
@@ -2512,6 +2517,22 @@ export async function productBookingReadiness(db: DbClient, organizationId: stri
   if (product.kind === 'stay') return stayBookingReadiness(db, organizationId, product, { requireActive, currency: options.currency })
   if (requireActive && !product.active) missing.push('active')
   if (product.order_url) return { ready: missing.length === 0, missing }
+  // A membership is bought for its recurring price, with no session: it needs that price where it is offered and payments set up, never a schedule.
+  if (isMembershipProduct(product)) {
+    const currency = options.currency ?? await organizationDefaultCurrency(db, organizationId)
+    const scopes = product.locations.length
+      ? locations.filter(location => location.published && (!requireActive || location.active)).map(location => location.location_id)
+      : [null]
+    const variants = product.variants.filter(variant => variant.active)
+    const priced = (variant: (typeof variants)[number], scope: string | null) => {
+      try { return (membershipPrice(variant.prices, { currency, location_id: scope })?.unit_amount ?? 0) > 0 }
+      catch (error) { if (error instanceof AmbiguousPriceError) return false; throw error }
+    }
+    if (!scopes.length || !variants.length || !scopes.every(scope => variants.every(variant => priced(variant, scope)))) missing.push('variants.prices')
+    if (!options.env) throw new Error('The organization environment is required to assess paid membership readiness')
+    missing.push(...(options.paymentSetup ? await options.paymentSetup() : await readStripeCheckoutSetup(db, organizationId, options.env)).missing)
+    return { ready: missing.length === 0, missing }
+  }
   if (!product.booking) missing.push('booking')
   else if (!product.booking.duration_minutes) missing.push('booking.duration_minutes')
   if (!options.env) throw new Error('The organization environment is required to assess booking readiness')

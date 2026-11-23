@@ -1,5 +1,6 @@
 import { isStayInstallments, stayCheckoutAmount } from '~/shared/stay-installments'
 import { recordInstallmentPayment, scheduleStayInstallments } from './installments'
+import { recordMembershipPayment } from '~/server/domain/memberships'
 import { stripeMetadataId } from './stripe-metadata'
 import { changedTaskIds, publishChangedJobs, publishEvent, type DomainEvent } from '~/server/events'
 import type Stripe from 'stripe'
@@ -473,8 +474,12 @@ export async function processPaymentEvent(db:DbClient,stripe:Stripe,event:Stripe
       return
     }
     // A long stay's later month, collected by Stripe from the guest's saved card.
+    // and a membership's renewal, each an invoice Stripe collected on the business's account.
     if (event.type === 'invoice.paid') {
-      await recordInstallmentPayment(db,stripe,env,connected.organization_id,(event.data.object as Stripe.Invoice).id!,event.account)
+      const invoice = await stripe.invoices.retrieve((event.data.object as Stripe.Invoice).id!, { expand: ['payments'] }, { stripeAccount: event.account })
+      if (invoice.metadata?.blawby_booking_id) await recordInstallmentPayment(db,stripe,env,connected.organization_id,invoice,event.account)
+      else if (invoice.parent?.subscription_details?.metadata?.blawby_product_id) await recordMembershipPayment(db,stripe,env,connected.organization_id,invoice,event.account,event.livemode)
+      // Any other invoice is the business's own on its Stripe account, not a Blawby sale.
       return
     }
     if (event.type.startsWith('payment_intent.')) {

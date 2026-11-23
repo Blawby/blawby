@@ -258,6 +258,9 @@ export interface VariantDraft {
   price_major: string
   /** The amount this box held when the product was loaded. */
   loaded_price_major: string
+  /** How the amount is charged: once, or again every period for a membership (#1907). */
+  billing: PriceBilling
+  loaded_billing: PriceBilling
   /** Every offer this variant already has, kept whole so an edit here cannot retire the others. */
   prices: Price[]
 }
@@ -442,7 +445,8 @@ import type { ProductDetailField, ProductDetailKey, ProductDetailValue, ProductK
 import { productDetailFields, PRODUCT_KINDS, PRODUCT_KIND_LABELS, PRODUCT_KIND_ICONS, assertProductKind, productDetailKey, PRICING_NOTE_HANDLE, STAY_DESCRIPTION_DETAIL_KEYS, STAY_HOUSE_RULE_DETAIL_KEYS, STAY_LOCATION_DETAIL_KEYS, isStayFocusedDetail, stayHouseRuleLines } from '~/shared/product-details'
 import { STAY_SAFETY_DETAIL_KEYS, STAY_SAFETY_SECTIONS, staySafetyLines, staySafetySectionKeys, stayAlarmLines } from '~/shared/stay-safety'
 import { isCurrencyCode } from '~/shared/currencies'
-import { majorAmountToMinor, minorAmountToMajor, scopedPriceAmountPatch, selectPrice, type Price } from '~/shared/prices'
+import { majorAmountToMinor, minorAmountToMajor, scopedPriceAmountPatch, selectPrice, type Price, type PriceBilling } from '~/shared/prices'
+import { MEMBERSHIP_KINDS, membershipPrice } from '~/shared/memberships'
 import { PRODUCT_LIMITS } from '~/shared/product-limits'
 import { formatPlanPrice } from '~/shared/billing-model'
 import { useHomesQuote } from '~/composables/usePaymentsSettings'
@@ -972,9 +976,18 @@ function priceLocationId(): string | null {
 }
 
 /** What this location and currency pays for one variant, as a major-unit string. */
+/** The offer the price box edits: the one-time price, or a membership's recurring one where a one-time price is not set. */
+function variantOffer(variant: Product['variants'][number], booked = Boolean(product.value?.booking)): Price | null {
+  const selection = { currency, location_id: priceLocationId(), at: new Date().toISOString() }
+  return selectPrice(variant.prices, selection) ?? (!booked && (MEMBERSHIP_KINDS as readonly string[]).includes(form.kind) ? membershipPrice(variant.prices, selection) : null)
+}
 function variantPriceMajor(variant: Product['variants'][number]): string {
-  const price = selectPrice(variant.prices, { currency, location_id: priceLocationId(), at: new Date().toISOString() })
+  const price = variantOffer(variant)
   return price ? minorAmountToMajor(price.unit_amount, price.currency) : ''
+}
+function variantBilling(variant: Product['variants'][number]): PriceBilling {
+  const price = variantOffer(variant)
+  return price?.type === 'recurring' ? { type: 'recurring', interval: price.recurring_interval!, interval_count: price.recurring_interval_count! } : { type: 'one_time' }
 }
 
 /** The variants and prices as loaded, so a save can tell what changed. */
@@ -1019,6 +1032,8 @@ function loadForm(row: Product) {
     sort_order: variant.sort_order,
     price_major: variantPriceMajor(variant),
     loaded_price_major: variantPriceMajor(variant),
+    billing: variantBilling(variant),
+    loaded_billing: variantBilling(variant),
     prices: variant.prices.map(price => ({ ...price })),
   }))
   form.details = { ...row.details }
@@ -1466,7 +1481,12 @@ function payload(concern?: ProductConcern) {
       const variant = form.variants.find(entry => entry.id === route.params.product_variant_id)
       if (!variant) throw new Error('Choose a saved variant before editing its price.')
       const selection = { currency, location_id: priceLocationId(), at: new Date().toISOString() }
-      const prices = scopedPriceAmountPatch(variant.prices, selection, variant.price_major.trim(), variant.loaded_price_major.trim())
+      const typed = variant.price_major.trim(), loaded = variant.loaded_price_major.trim()
+      // Changing how it is charged retires the offer it was and adds the one it becomes, in the same save.
+      const prices = JSON.stringify(variant.billing) === JSON.stringify(variant.loaded_billing)
+        ? scopedPriceAmountPatch(variant.prices, { ...selection, billing: variant.billing }, typed, loaded)
+        : [...scopedPriceAmountPatch(variant.prices, { ...selection, billing: variant.loaded_billing }, '', loaded),
+          ...scopedPriceAmountPatch(variant.prices, { ...selection, billing: variant.billing }, typed, '')]
       return { ...version, ...(prices.length ? { variants: [{ id: variant.id, prices }] } : {}),
         ...(form.variants.length === 1 ? { details_mode: 'merge', details: { [PRICING_NOTE_HANDLE]: form.details[PRICING_NOTE_HANDLE] || null } } : {}),
       }
@@ -1605,7 +1625,7 @@ const sectionUnchanged = computed(() => {
   }
   if (editorKey.value === 'price') {
     const variant = typeof route.params.product_variant_id === 'string' ? form.variants.find(entry => entry.id === route.params.product_variant_id) : stayEditor.value ? form.variants[0] : null
-    return Boolean((!stayEditor.value || !sectionValid.value || !stayPricingRulesChanged()) && variant && variant.price_major.trim() === variant.loaded_price_major.trim() && (form.details[PRICING_NOTE_HANDLE] ?? null) === (row.details[PRICING_NOTE_HANDLE] ?? null))
+    return Boolean((!stayEditor.value || !sectionValid.value || !stayPricingRulesChanged()) && variant && variant.price_major.trim() === variant.loaded_price_major.trim() && JSON.stringify(variant.billing) === JSON.stringify(variant.loaded_billing) && (form.details[PRICING_NOTE_HANDLE] ?? null) === (row.details[PRICING_NOTE_HANDLE] ?? null))
   }
   return false
 })

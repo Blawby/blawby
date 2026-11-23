@@ -1,5 +1,6 @@
 import type { Price, PriceSelection } from '~/shared/prices'
 import { formatMinorAmount, selectPrice } from '~/shared/prices'
+import { formatBillingTerms, membershipPrice } from '~/shared/memberships'
 import type { MenuPrice, ProductVariant } from '~/server/types/products'
 
 /**
@@ -8,8 +9,11 @@ import type { MenuPrice, ProductVariant } from '~/server/types/products'
  * Null means the caller omits the price element entirely. There is no
  * "Price on request" stand-in: text nobody supplied is not a price.
  */
-export function formatProductMoney<T extends Pick<Price, 'unit_amount' | 'currency'>>(price: T | null, locale?: string): string | null {
-  return price ? formatMinorAmount(price.unit_amount, price.currency, locale) : null
+export function formatProductMoney<T extends Pick<Price, 'unit_amount' | 'currency'> & Partial<Pick<Price, 'type' | 'recurring_interval' | 'recurring_interval_count'>>>(price: T | null, locale?: string): string | null {
+  if (!price) return null
+  const amount = formatMinorAmount(price.unit_amount, price.currency, locale)
+  // A membership's price is charged again each period, and says so wherever it is shown.
+  return price.type === 'recurring' ? formatBillingTerms(amount, { recurring_interval: price.recurring_interval ?? null, recurring_interval_count: price.recurring_interval_count ?? null }) : amount
 }
 
 /**
@@ -27,7 +31,8 @@ export function formatVariantPrice(variant: ProductVariant, selection: PriceSele
 /** Card prices use the same offer selection as the chosen variant at checkout. */
 export function summarizeProductPrices<T extends MenuPrice>(variants: readonly { active: boolean; prices: readonly T[] }[], selections: readonly PriceSelection[], includeInactive = false) {
   const offers = [...new Map(selections.flatMap(selection => variants.filter(variant => includeInactive || variant.active)
-    .flatMap(variant => selectPrice(variant.prices, selection) ?? [])).map(offer => [offer.id, offer])).values()]
+    // A variant with no one-time offer may be a membership's, sold for its recurring price.
+    .flatMap(variant => selectPrice(variant.prices, selection) ?? membershipPrice(variant.prices, selection) ?? [])).map(offer => [offer.id, offer])).values()]
   if (!offers.length) return { lowest: null, highest: null, count: 0 }
   if (new Set(offers.map(offer => offer.currency)).size !== 1) throw new Error('A price range requires one currency')
   offers.sort((left, right) => left.unit_amount - right.unit_amount)

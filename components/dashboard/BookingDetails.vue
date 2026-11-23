@@ -302,7 +302,10 @@
           </div>
 
           <!-- A purchase that is an order shows the order itself: its lines, where it goes and whether it has gone. -->
-          <div v-if="purchase && !personalScope && conversationId" :class="sectionClass">
+          <div v-if="purchase && !personalScope && booking?.membership_id" :class="sectionClass">
+            <MembershipPanel :membership-id="booking.membership_id" :manage="canManageMembership" />
+          </div>
+          <div v-else-if="purchase && !personalScope && conversationId" :class="sectionClass">
             <OrderPanel :conversation-id="conversationId" payment-page />
           </div>
           <div v-if="detail || (booking?.type === 'booking' && booking.payments !== null) || booking?.payments?.length" :class="sectionClass">
@@ -512,6 +515,7 @@ import { tenantOrganizationOrigin } from '~/utils/tenant-organization-origin'
 import FormAnswersCard from '~/components/forms/FormAnswersCard.vue'
 import PaymentDetails from '~/components/dashboard/PaymentDetails.vue'
 import OrderPanel from '~/components/dashboard/OrderPanel.vue'
+import MembershipPanel from '~/components/dashboard/MembershipPanel.vue'
 import ReservationItinerary, { type ReservationItineraryDetails } from '~/components/dashboard/ReservationItinerary.vue'
 import ChannelMark from '~/lib/components/workspace/messages/ChannelMark.vue'
 import { paymentMoney } from '~/shared/payment-display'
@@ -876,6 +880,8 @@ const detail = computed(() => accountStay.value?.booking ?? managedStay.value?.b
 const pendingChanges = computed(() => managedStay.value?.booking.pending_changes ?? [])
 const channelManaged = computed(() => detail.value !== null && isChannelManagedStay(detail.value))
 const manage = computed(() => managedStay.value !== null)
+// Ending a membership is a payments action; the server holds it to the same permission as a refund, as the refund row beside it is.
+const canManageMembership = computed(() => !props.personalScope)
 const recordHome = computed(() => accountStay.value?.home ?? managedStay.value?.home ?? null)
 const itinerary = computed<ReservationItineraryDetails | null>(() => {
   const value = detail.value

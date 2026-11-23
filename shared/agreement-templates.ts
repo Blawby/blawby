@@ -8,7 +8,7 @@ import type { ProductKind } from '~/shared/product-details'
  */
 export const AGREEMENT_TEMPLATE_FIELDS = [
   'business_name', 'client_name', 'client_email', 'host_name', 'offering', 'address',
-  'start_date', 'end_date', 'price', 'deposit', 'cancellation_policy', 'today',
+  'start_date', 'end_date', 'price', 'payment_schedule', 'deposit', 'cancellation_policy', 'today',
 ] as const
 export type AgreementTemplateField = typeof AGREEMENT_TEMPLATE_FIELDS[number]
 
@@ -16,11 +16,11 @@ export const MAX_AGREEMENT_TEMPLATE_LENGTH = 20_000
 
 const COMMON_LABELS: Record<AgreementTemplateField, string> = {
   business_name: 'Business name', client_name: 'Guest name', client_email: 'Guest email', host_name: 'Host',
-  offering: 'Listing', address: 'Address', start_date: 'Start date', end_date: 'End date', price: 'Price',
+  offering: 'Listing', address: 'Address', start_date: 'Start date', end_date: 'End date', price: 'Price', payment_schedule: 'Payment schedule',
   deposit: 'Security deposit', cancellation_policy: 'Cancellation policy', today: 'Today’s date',
 }
 const KIND_LABELS: Partial<Record<ProductKind, Partial<Record<AgreementTemplateField, string>>>> = {
-  stay: { client_name: 'Tenant name', client_email: 'Tenant email', host_name: 'Landlord', offering: 'Home', address: 'Property address', start_date: 'Move-in date', end_date: 'Move-out date', price: 'Rent total' },
+  stay: { client_name: 'Tenant name', client_email: 'Tenant email', host_name: 'Landlord', offering: 'Home', address: 'Property address', start_date: 'Move-in date', end_date: 'Move-out date', price: 'Rent total', payment_schedule: 'Monthly rent' },
   service: { business_name: 'Firm name', client_name: 'Client name', client_email: 'Client email', host_name: 'Attorney', offering: 'Practice area', address: 'Office address', start_date: 'Consultation date', end_date: 'Consultation ends', price: 'Fee', deposit: 'Retainer in trust' },
   experience: { client_name: 'Participant name', client_email: 'Participant email', offering: 'Experience', start_date: 'Date', end_date: 'Ends' },
   table: { client_name: 'Guest name', offering: 'Reservation', start_date: 'Date', end_date: 'Ends' },

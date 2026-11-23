@@ -16,6 +16,9 @@ import { formatMinorAmount } from '~/shared/prices'
 import type { ProductKind } from '~/shared/product-details'
 import { STAY_BOOKED_POLICIES, bookedPolicyTerms, type StayBookedPolicy } from '~/shared/stay-cancellation'
 import { formatPostalAddress, parsePostalAddress } from '~/utils/postal-address'
+import { localDateAt } from '~/utils/timezone'
+import { enteredStayInstallments, type StayInstallment } from '~/shared/stay-installments'
+import type { StayChannel } from '~/shared/bookings'
 
 /**
  * A business's own agreement template (#2038): private text on the listing's
@@ -71,10 +74,13 @@ type Facts = {
   kind: ProductKind; offering: string; business_name: string; starts_at: string; ends_at: string; timezone: string
   total_minor: number | null; currency: string | null; deposit_minor: number | null; policy_json: string
   address: string | null; client_name: string | null; client_email: string | null; template_key: string | null
+  owner: 'app' | 'channel'; channel: StayChannel; installments_json: string | null; paid_online: number
 }
 
 /** Everything a template can name, read in one statement with the template's own file. */
-const factsQuery = `SELECT p.kind, p.name AS offering, o.name AS business_name, b.starts_at, b.ends_at, b.timezone, b.total_minor, b.currency, b.deposit_minor, b.policy_json,
+const factsQuery = `SELECT p.kind, p.name AS offering, o.name AS business_name, b.starts_at, b.ends_at, b.timezone, b.total_minor, b.currency, b.deposit_minor, b.policy_json, b.owner, b.channel,
+    (SELECT json_extract(price_snapshot_json, '$.installments') FROM payments WHERE organization_id = b.organization_id AND subject_type = 'booking' AND subject_id = b.id ORDER BY created_at, id LIMIT 1) AS installments_json,
+    EXISTS (SELECT 1 FROM payments WHERE organization_id = b.organization_id AND subject_type = 'booking' AND subject_id = b.id) AS paid_online,
     l.address, COALESCE(json_extract(c.payload_json, '$.guest.name'), u.name) AS client_name, COALESCE(json_extract(c.payload_json, '$.guest.email'), u.email) AS client_email,
     (${templateQuery.replace('mp.organization_id = ?', 'mp.organization_id = b.organization_id').replace('mp.owner_id = ?', 'mp.owner_id = b.product_id')}) AS template_key
   FROM conversations c JOIN bookings b ON b.id = c.booking_id AND b.organization_id = c.organization_id
@@ -102,6 +108,17 @@ function cancellationText(facts: Facts): string {
   return item.text
 }
 
+/** A stay owed by the month: each month's first day and amount, as the stay's ledger has them. */
+function paymentSchedule(facts: Facts, money: (minor: number | null) => string | undefined): string | undefined {
+  if (facts.kind !== 'stay') return undefined
+  const localDay = (at: string) => at.length === 10 ? at : localDateAt(new Date(at), facts.timezone)
+  const months = facts.installments_json ? JSON.parse(facts.installments_json) as StayInstallment[]
+    : facts.total_minor === null ? null
+    : enteredStayInstallments({ owner: facts.owner, channel: facts.channel, check_in_date: localDay(facts.starts_at), check_out_date: localDay(facts.ends_at), total_minor: facts.total_minor }, facts.paid_online === 1)
+  if (!months) return undefined
+  return months.map(month => `${day(month.period_start, facts.timezone)}: ${money(month.amount_minor)}`).join('; ')
+}
+
 /** What each field reads from this booking; a field the booking cannot fill has no entry. */
 function fieldValues(facts: Facts, hostName: string): Partial<Record<AgreementTemplateField, string>> {
   const money = (minor: number | null) => minor !== null && isCurrencyCode(facts.currency) ? formatMinorAmount(minor, facts.currency) : undefined
@@ -110,7 +127,7 @@ function fieldValues(facts: Facts, hostName: string): Partial<Record<AgreementTe
     business_name: facts.business_name, client_name: facts.client_name?.trim() || undefined, client_email: facts.client_email?.trim() || undefined,
     host_name: hostName.trim() || undefined, offering: facts.offering, address: address || undefined,
     start_date: day(facts.starts_at, facts.timezone), end_date: day(facts.ends_at, facts.timezone),
-    price: money(facts.total_minor), deposit: money(facts.deposit_minor), cancellation_policy: cancellationText(facts),
+    price: money(facts.total_minor), payment_schedule: paymentSchedule(facts, money), deposit: money(facts.deposit_minor), cancellation_policy: cancellationText(facts),
     today: new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: facts.timezone }).format(new Date()),
   }
   return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)) as Partial<Record<AgreementTemplateField, string>>

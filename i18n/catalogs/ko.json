@@ -802,5 +802,17 @@
   "shop.partly_made_to_order": "재고 {stock}개, 주문 제작 {made}개",
   "shop.free": "무료",
   "order.ready_by": "수령 가능일",
-  "order.number": "주문 #{number}"
+  "order.number": "주문 #{number}",
+  "membership.option": "옵션",
+  "membership.join": "가입하기",
+  "membership.recurring_terms": "해지할 때까지 {terms}이(가) 청구됩니다. 계정에서 언제든지 해지할 수 있습니다.",
+  "membership.processing": "결제가 완료되었습니다. 멤버십을 확인하는 중…",
+  "membership.welcome": "환영합니다",
+  "membership.joined": "{title}에 가입했습니다",
+  "membership.manage": "멤버십 관리",
+  "membership.not_completed": "이 멤버십은 완료되지 않았습니다",
+  "membership.status": "상태",
+  "membership.price": "가격",
+  "membership.access_until": "이용 기한",
+  "membership.next_payment": "다음 결제"
 }

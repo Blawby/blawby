@@ -802,5 +802,17 @@
   "shop.partly_made_to_order": "現貨 {stock} 件，訂製 {made} 件",
   "shop.free": "免費",
   "order.ready_by": "可取貨日期",
-  "order.number": "訂單 #{number}"
+  "order.number": "訂單 #{number}",
+  "membership.option": "選項",
+  "membership.join": "加入",
+  "membership.recurring_terms": "在您取消之前，將按 {terms} 收費。可隨時在您的帳戶中取消。",
+  "membership.processing": "付款成功。正在確認您的會員資格…",
+  "membership.welcome": "歡迎",
+  "membership.joined": "您已加入 {title}",
+  "membership.manage": "管理會員資格",
+  "membership.not_completed": "此會員資格未完成",
+  "membership.status": "狀態",
+  "membership.price": "價格",
+  "membership.access_until": "有效期至",
+  "membership.next_payment": "下次付款"
 }

@@ -23,8 +23,8 @@ import { liveHomeSql } from '~/server/utils/billing'
 import { parsePostalAddress, type PostalAddress } from '~/utils/postal-address'
 import { calculateMapUrl, coordinatesFailure } from '~/utils/location-map'
 import { visitRefundPaymentQuery, visitRefundQueries } from '~/server/domain/payments/visit-refund'
-import { cancelStayInstallments } from '~/server/domain/payments/installments'
-import type { StayInstallment } from '~/shared/stay-installments'
+import { cancelStayInstallments, settleInstallmentOutside } from '~/server/domain/payments/installments'
+import { enteredStayInstallments, type StayInstallment } from '~/shared/stay-installments'
 import { bookedPolicyFor, LONG_TERM_STAY_NIGHTS, stayCancellationRefund, type StayBookedPolicy, type StayCancellationInput } from '~/shared/stay-cancellation'
 import { executeRefund, requirePayment, type Payment } from '~/server/domain/payments'
 import { paymentsStripe } from '~/server/utils/stripe-connect'
@@ -1384,8 +1384,8 @@ export function stayDetailFrom<A extends StayAccess>(access: A, row: unknown): S
  * first day has passed in the home's clock without being paid.
  */
 function stayLedger(stay: Stay, plan: string | null, online: StayOnlinePayment[], offline: StayPayment[]): StayLedgerPeriod[] | null {
-  if (!plan) return null
-  const periods = JSON.parse(plan) as StayInstallment[]
+  const periods = plan ? JSON.parse(plan) as StayInstallment[] : enteredStayInstallments(stay, online.length > 0)
+  if (!periods) return null
   const today = localDateAt(new Date(), stay.timezone)
   // A payment naming no month is the checkout's, which paid the first.
   const monthOf = (payment: StayOnlinePayment) => payment.period_start ?? periods[0]!.period_start
@@ -2001,8 +2001,10 @@ export async function createStay(db: DbClient, env: StayMutationEnv & Cloudflare
   const window = stayWindow(fields, home)
   // A payment the guest already made is written with the stay, so a stay never exists without it.
   const payment = input.payment === undefined || input.payment === null ? null : stayPaymentFields(input.payment, 'payment.', false)
-  // A stay the host enters is paid as a whole; only a stay paid monthly online has months.
-  if (payment?.period_start) fail(422, 'INVALID_STAY_FIELD', 'payment.period_start applies only to a stay paid monthly', 'payment.period_start')
+  // A long stay the host enters is owed by the month; a receipt taken with it names one of its months.
+  if (payment?.period_start && !enteredStayInstallments({ owner: 'app', channel, check_in_date: fields.check_in_date, check_out_date: fields.check_out_date, total_minor: fields.total_minor }, false)?.some(period => period.period_start === payment.period_start)) {
+    fail(422, 'INVALID_STAY_FIELD', 'payment.period_start is not a month of this stay', 'payment.period_start')
+  }
   // The guest's answers to the home's questions, as the host took them; a retry with other answers is another stay.
   const answered = JSON.stringify(formAnswersFingerprint(input.answers))
   const replay = async () => {
@@ -2720,7 +2722,7 @@ function stayPaymentInsert(access: StayAccess, stay: { id: string; currency: str
   ]
 }
 
-export async function recordStayPayment(db: DbClient, env: GuestInboxPublicationEnv, access: StayAccess, stayId: string, input: Record<string, unknown>): Promise<{ stay: StayDetail; payment: StayPayment }> {
+export async function recordStayPayment(db: DbClient, env: CloudflareEnv, access: StayAccess, stayId: string, input: Record<string, unknown>): Promise<{ stay: StayDetail; payment: StayPayment }> {
   requireManager(access)
   const stay = await getStay(db, access, stayId)
   if (isChannelManagedStay(stay)) channelOwned(stay, 'is paid through')
@@ -2745,20 +2747,30 @@ export async function recordStayPayment(db: DbClient, env: GuestInboxPublication
     if (!recorded) fail(409, 'PAYMENT_CHANGED', 'The payment was recorded but removed before readback. Reload the stay before another change.', 'payment_id', { committed: true, booking_id: stayId })
     return { stay: updated, payment: recorded }
   }
+  // Money paid outside Stripe toward a later month Stripe would charge leaves Stripe only the rest to collect; a retry finishes it.
+  const settle = async (result: { stay: StayDetail; payment: StayPayment }) => {
+    const months = result.stay.installments
+    const month = result.payment.period_start ? months?.find(period => period.period_start === result.payment.period_start) : undefined
+    const checkout = result.stay.online_payments[0]
+    if (month && checkout && month.period_start !== months![0]!.period_start) {
+      await settleInstallmentOutside(env, await requirePayment(db, access.organizationId, checkout.payment_id), stayId, month.period_start, month.amount_minor - month.paid_minor)
+    }
+    return result
+  }
   const earlier = await replay()
-  if (earlier) return earlier
+  if (earlier) return settle(earlier)
   try {
     await executeBatch(db, stayPaymentInsert(access, stay, payment, key, new Date().toISOString()), { operation: 'Record stay payment' })
   } catch (error) {
     if (/UNIQUE constraint failed: offline_payments\.organization_id, offline_payments\.idempotency_key/.test(error instanceof Error ? error.message : String(error))) {
       const concurrent = await replay()
-      if (concurrent) return concurrent
+      if (concurrent) return settle(concurrent)
     }
     throw error
   }
   const recorded = await replay()
   if (!recorded) fail(409, 'PAYMENT_CHANGED', 'The payment was recorded but removed before readback. Reload the stay before another change.', 'payment_id', { committed: true, booking_id: stayId })
-  return recorded
+  return settle(recorded)
 }
 
 export async function deleteStayPayment(db: DbClient, env: GuestInboxPublicationEnv, access: StayAccess, stayId: string, paymentId: string): Promise<StayDetail> {

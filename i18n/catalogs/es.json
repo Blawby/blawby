@@ -802,5 +802,17 @@
   "shop.partly_made_to_order": "{stock} en stock, {made} por encargo",
   "shop.free": "Gratis",
   "order.ready_by": "Listo para recoger el",
-  "order.number": "Pedido #{number}"
+  "order.number": "Pedido #{number}",
+  "membership.option": "Opción",
+  "membership.join": "Unirme",
+  "membership.recurring_terms": "Se te cobrará {terms} hasta que canceles. Cancela cuando quieras desde tu cuenta.",
+  "membership.processing": "Tu pago se completó. Estamos confirmando tu membresía…",
+  "membership.welcome": "Te damos la bienvenida",
+  "membership.joined": "Te uniste a {title}",
+  "membership.manage": "Gestionar membresía",
+  "membership.not_completed": "Esta membresía no se completó",
+  "membership.status": "Estado",
+  "membership.price": "Precio",
+  "membership.access_until": "Acceso hasta",
+  "membership.next_payment": "Próximo pago"
 }

@@ -802,5 +802,17 @@
   "shop.partly_made_to_order": "{stock} có sẵn, {made} làm theo đơn",
   "shop.free": "Miễn phí",
   "order.ready_by": "Sẵn sàng nhận trước",
-  "order.number": "Đơn hàng #{number}"
+  "order.number": "Đơn hàng #{number}",
+  "membership.option": "Tùy chọn",
+  "membership.join": "Tham gia",
+  "membership.recurring_terms": "Bạn sẽ bị tính phí {terms} cho đến khi hủy. Hủy bất cứ lúc nào từ tài khoản của bạn.",
+  "membership.processing": "Thanh toán của bạn đã thành công. Đang xác nhận tư cách thành viên…",
+  "membership.welcome": "Chào mừng",
+  "membership.joined": "Bạn đã tham gia {title}",
+  "membership.manage": "Quản lý thành viên",
+  "membership.not_completed": "Tư cách thành viên này chưa hoàn tất",
+  "membership.status": "Trạng thái",
+  "membership.price": "Giá",
+  "membership.access_until": "Truy cập đến",
+  "membership.next_payment": "Thanh toán tiếp theo"
 }

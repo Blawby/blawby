@@ -43,6 +43,7 @@
 <script setup lang="ts">
 import EditorNavigationList, { type EditorNavigationGroup } from '~/components/dashboard/EditorNavigationList.vue'
 import { STAY_DIRECT_DISCOUNTS } from '~/shared/bookings'
+import { billingCadence } from '~/shared/memberships'
 import { productEditorKey } from '~/components/dashboard/ProductEditorPage.vue'
 
 definePageMeta({ layout: 'dashboard' })
@@ -67,7 +68,7 @@ const groups = computed<EditorNavigationGroup[]>(() => [{
     ...(pricedByLocation.value ? [] : p.form.variants.map(variant => ({
       id: `price-${variant.id}`,
       label: p.form.variants.length > 1 ? variant.name : p.locationId.value ? 'Amount' : 'Price',
-      summary: variant.price_major ? `${variant.price_major} ${p.currency}` : p.form.variants.length === 1 && typeof p.product.value?.details.pricing_note === 'string' ? p.product.value.details.pricing_note : 'No price set',
+      summary: variant.price_major ? `${variant.price_major} ${p.currency}${variant.billing.type === 'recurring' ? ` every ${billingCadence({ recurring_interval: variant.billing.interval, recurring_interval_count: variant.billing.interval_count })}` : ''}` : p.form.variants.length === 1 && typeof p.product.value?.details.pricing_note === 'string' ? p.product.value.details.pricing_note : 'No price set',
       to: p.sectionPath(`price/amounts/${encodeURIComponent(variant.id)}`),
     }))),
     ...priceLocations.value.map(location => ({

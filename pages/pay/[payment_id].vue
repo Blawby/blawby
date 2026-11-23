@@ -134,7 +134,8 @@
             :actions="[{ label: t('payment.check_status'), color: 'neutral', variant: 'outline', loading: completing, onClick: complete }]"
           />
           <UAlert v-else-if="checkoutState === 'expired'" color="warning" :title="t('payment.expired')" :description="t('payment.expired_help')" />
-          <UAlert v-else-if="!completing && (paid || checkoutState === 'paid')" color="success" :title="t('payment.already_paid')" />
+          <UAlert v-else-if="!completing && (paid || checkoutState === 'paid')" color="success" :title="t('payment.already_paid')" :description="receiptElsewhere ? t('payment.receipt_elsewhere') : undefined"
+            :actions="receiptElsewhere ? [{ label: t('guest_account.sign_in'), color: 'neutral', variant: 'outline', to: guestAccountUrl(platformDomain, '/login'), external: true }] : undefined" />
           <UAlert v-else-if="checkoutState !== 'open'" color="warning" :title="t('payment.expired')" :description="t('payment.expired_help')" />
           <template v-else>
             <!-- No frame around Stripe's form: its fields are the only boxes, as on Airbnb's page. -->
@@ -187,6 +188,7 @@ import { stayNightlyGroups } from '~/shared/stay-listing'
 import { bookedPolicyTerms } from '~/shared/stay-cancellation'
 import { isRecord, normalizeApiError, publicApiMutation, publicApiRequest } from '~/utils/api-clients'
 import { usePaidBookingReceipt } from '~/composables/useBookingHandoff'
+import { guestAccountUrl } from '~/shared/guest-account'
 import type { paymentHandoff, reviewPayment, confirmPayment, PaymentReturn } from '~/server/domain/payments/intent'
 
 definePageMeta({ layout: 'standalone' })
@@ -225,6 +227,9 @@ const mount = ref<HTMLElement | null>(null)
 const ready = ref(false)
 const working = ref(false)
 const actionError = ref('')
+// Paid, but its receipt is another account's (paid from a browser signed in as someone else) or its return window closed: the confirmation email and the booking account hold it.
+const receiptElsewhere = ref(false)
+const platformDomain = useRuntimeConfig().public.platformDomain
 const review = ref<Review | null>(null)
 const completing = ref(false)
 const paid = ref(false)
@@ -467,8 +472,10 @@ async function complete(): Promise<true | undefined> {
     }
     return true
   } catch (cause) {
-    stale = Boolean(context && normalizeApiError(cause).code === 'PAYMENT_RETURN_DOCUMENT_STALE')
-    if (!stale) actionError.value = getErrorMessage(cause, t('payment.unavailable'))
+    const code = normalizeApiError(cause).code
+    stale = Boolean(context && code === 'PAYMENT_RETURN_DOCUMENT_STALE')
+    if (code === 'PURCHASE_RETURN_UNAVAILABLE' && (paid.value || checkoutState.value === 'paid')) receiptElsewhere.value = true
+    else if (!stale) actionError.value = getErrorMessage(cause, t('payment.unavailable'))
   } finally {
     completing.value = false
   }

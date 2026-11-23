@@ -817,5 +817,6 @@
   "membership.next_payment": "다음 결제",
   "booking.refundable_deposit": "환불 가능한 보증금 {amount}, 호스트에게 별도 지불",
   "booking.retainer_in_trust": "신탁 보관 선임료 {amount}, 법률사무소에 별도 지불",
-  "membership.processing_later": "Stripe가 아직 첫 결제를 확인하지 않았습니다. 확인되면 계정에 멤버십이 표시됩니다."
+  "membership.processing_later": "Stripe가 아직 첫 결제를 확인하지 않았습니다. 확인되면 계정에 멤버십이 표시됩니다.",
+  "payment.receipt_elsewhere": "확인 메일은 예약에 사용한 이메일 주소로 발송되었습니다. 해당 이메일로 로그인하면 계정에서 확인할 수 있습니다."
 }

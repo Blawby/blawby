@@ -27,7 +27,8 @@
       <template #title>{{ t('membership.joined', { title: membership.title }) }}</template>
       <template #subtitle>{{ membership.terms }}</template>
       <template #actions>
-        <TenantButton variant="outline" :loading="opening" data-testid="membership-manage" @click="manage">{{ t('membership.manage') }}</TenantButton>
+        <TenantButton v-if="owned" variant="outline" :loading="opening" data-testid="membership-manage" @click="manage">{{ t('membership.manage') }}</TenantButton>
+        <p v-else class="w-full text-sm text-muted">{{ t('payment.receipt_elsewhere') }}</p>
         <p v-if="manageError" role="alert" class="w-full text-sm text-error">{{ manageError }}</p>
         <TenantButton v-if="membership.payments[0]?.receipt_url" :href="membership.payments[0]!.receipt_url!" variant="outline" target="_blank" rel="noopener noreferrer">{{ t('shop.receipt') }}</TenantButton>
       </template>
@@ -53,13 +54,15 @@ import { getErrorMessage } from '~/utils/errors'
 definePageMeta({ layout: false })
 useResponseHeader('cache-control').value = 'private, no-store'
 
-type Return = { state: 'open' | 'processing' | 'paid'; membership: Membership | null }
+type Return = { state: 'open' | 'processing' | 'paid'; membership: Membership | null; owned: boolean }
 const { locale, localePath, t } = useI18n()
 const route = useRoute()
 const { organization } = useTenantOrganization()
 const { site } = organization
 const membership = ref<Membership | null>(null)
 const state = ref<Return['state'] | null>(null)
+// Paid from a browser signed in as someone else, the payer sees the confirmation; managing it is for the account that joined.
+const owned = ref(false)
 const pending = ref(true)
 const loadError = ref<string | null>(null)
 const sessionId = String(route.params.checkout_session_id ?? '')
@@ -70,6 +73,7 @@ async function load() {
   })
   state.value = result.state
   membership.value = result.membership
+  owned.value = result.owned
   return result.state
 }
 onMounted(async () => {

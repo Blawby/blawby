@@ -817,5 +817,6 @@
   "membership.next_payment": "下次付款",
   "booking.refundable_deposit": "可退还押金 {amount}，另行支付给房东",
   "booking.retainer_in_trust": "预付聘用金 {amount}（托管保存），另行支付给律所",
-  "membership.processing_later": "Stripe 尚未确认首笔付款。确认后，会员资格将显示在您的账户中。"
+  "membership.processing_later": "Stripe 尚未确认首笔付款。确认后，会员资格将显示在您的账户中。",
+  "payment.receipt_elsewhere": "确认信息已发送至预订时使用的邮箱。使用该邮箱登录即可在您的账户中查看。"
 }

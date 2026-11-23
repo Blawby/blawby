@@ -182,18 +182,29 @@ export async function settleInstallmentOutside(env: CloudflareEnv, payment: Paym
     if (remaining > 0) await createFor(remaining, `${bookingId}:${periodStart}:${change}`, periodStart <= localDateAt(new Date(), plan.timezone))
     return
   }
+  // A month is collected through exactly one invoice: a draft not yet due if there is one, otherwise the newest
+  // open one (a replacement made on an earlier attempt). Every other one is removed before the keeper is set.
+  const drafts = scheduled.filter(invoice => invoice.status === 'draft').sort((left, right) => right.created - left.created)
+  const opens = scheduled.filter(invoice => invoice.status === 'open').sort((left, right) => right.created - left.created)
+  const keeper = drafts[0] ?? opens[0]!
   for (const invoice of scheduled) {
-    if (invoice.status === 'draft') {
-      if (remaining <= 0) { await stripe.invoices.del(invoice.id!, account); continue }
-      const line = invoice.lines.data[0]
-      const item = typeof line?.parent?.invoice_item_details?.invoice_item === 'string' ? line.parent.invoice_item_details.invoice_item : null
-      if (!item || invoice.lines.data.length !== 1) throw new Error(`Monthly stay invoice ${invoice.id} has no single month to change`)
-      if (line!.amount !== remaining) await stripe.invoiceItems.update(item, { amount: remaining }, account)
-      continue
-    }
-    if (remaining > 0) await createFor(remaining, `${invoice.id}:${change}`, true)
-    await stripe.invoices.voidInvoice(invoice.id!, {}, account)
+    if (invoice.id === keeper.id) continue
+    if (invoice.status === 'draft') await stripe.invoices.del(invoice.id!, account)
+    else await stripe.invoices.voidInvoice(invoice.id!, {}, account)
   }
+  if (keeper.status === 'draft') {
+    if (remaining <= 0) { await stripe.invoices.del(keeper.id!, account); return }
+    const line = keeper.lines.data[0]
+    const item = typeof line?.parent?.invoice_item_details?.invoice_item === 'string' ? line.parent.invoice_item_details.invoice_item : null
+    if (!item || keeper.lines.data.length !== 1) throw new Error(`Monthly stay invoice ${keeper.id} has no single month to change`)
+    if (line!.amount !== remaining) await stripe.invoiceItems.update(item, { amount: remaining }, account)
+    return
+  }
+  // An open invoice is already finalized: one owing exactly the rest stays; otherwise its replacement is made, then it is voided.
+  // Compared on its one line, before any tax Stripe adds, as the month's amount is.
+  if (remaining > 0 && keeper.lines.data.length === 1 && keeper.lines.data[0]!.amount === remaining) return
+  if (remaining > 0) await createFor(remaining, `${keeper.id}:${change}`, true)
+  await stripe.invoices.voidInvoice(keeper.id!, {}, account)
 }
 
 /** A cancelled stay's months Stripe has not collected: drafts are deleted, finalized ones voided. */

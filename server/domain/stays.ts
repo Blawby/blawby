@@ -2778,17 +2778,21 @@ export async function recordStayPayment(db: DbClient, env: CloudflareEnv, access
 
 export async function deleteStayPayment(db: DbClient, env: CloudflareEnv, access: StayAccess, stayId: string, paymentId: string): Promise<StayDetail> {
   requireManager(access)
-  const stay = await getStay(db, access, stayId)
-  if (!stay.payments.some(payment => payment.id === paymentId)) fail(404, 'PAYMENT_NOT_FOUND', 'That payment is not on this stay')
+  const { query, params } = stayDetailQuery(access, stayId)
+  const row = await queryFirst<Record<string, unknown> & { offline_payments_json?: string }>(db, query, params)
+  const stay = stayDetailFrom(access, row)
+  const removed = stay.payments.find(payment => payment.id === paymentId)
+  if (!removed) fail(404, 'PAYMENT_NOT_FOUND', 'That payment is not on this stay')
+  // Stripe is told first, from the ledger as it will be without this receipt, so a failure leaves the receipt
+  // in place and the same delete retries the same Stripe writes; the delete commits only once Stripe holds the month.
+  const without = stayDetailFrom(access, { ...row!, offline_payments_json: JSON.stringify((JSON.parse(row!.offline_payments_json!) as StayPayment[]).filter(payment => payment.id !== paymentId)) })
+  await settleMonthsOutside(db, env, access, without, removed, `delete:${paymentId}`)
   await executeBatch(db, [
     { query: 'DELETE FROM offline_payments WHERE organization_id = ? AND booking_id = ? AND id = ?', params: [access.organizationId, stayId, paymentId] },
     organizationEventQuery({ organizationId: access.organizationId, locationId: stay.location_id, actorId: access.actorId, eventType: 'stay.payment_deleted', entityType: 'stay', entityId: stayId, metadata: { payment_id: paymentId }, onlyIfPreviousChangedOneRow: true }),
   ], { operation: 'Delete stay payment' })
   await publishStayInvalidation(env, { type: 'stay.changed', organization_id: access.organizationId, location_id: stay.location_id, product_id: stay.product_id, booking_id: stayId }, { version: stay.version })
-  const updated = await getStay(db, access, stayId)
-  // A receipt removed from a later month Stripe collects gives Stripe that month's amount back to collect.
-  await settleMonthsOutside(db, env, access, updated, stay.payments.find(payment => payment.id === paymentId)!, `delete:${paymentId}`)
-  return updated
+  return getStay(db, access, stayId)
 }
 
 /**

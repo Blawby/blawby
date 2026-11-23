@@ -314,9 +314,9 @@ export class ChannexConnection {
   async start(callback = AIRBNB_CALLBACK): Promise<{ authorization_url: string }> {
     await requireStays(this.db, this.organizationId)
     const row = await this.pending()
-    if (row.authorization_url) {
+    // A sign-in link still in its lifetime belongs to the admin who started it. One that ran out is replaced by a new link for whoever asks.
+    if (row.authorization_url && row.authorization_expires_at && row.authorization_expires_at > now()) {
       if (row.authorization_user_id !== this.userId) fail(409, 'SIGN_IN_OWNED_ELSEWHERE', 'Another admin started this Airbnb sign-in. They need to finish it.')
-      if (!row.authorization_expires_at || row.authorization_expires_at <= now()) fail(409, 'SIGN_IN_EXPIRED', 'The Airbnb sign-in link expired. Contact support to review the unfinished connection.')
       return { authorization_url: row.authorization_url }
     }
     row.group_id = await this.ensureGroup()
@@ -341,8 +341,9 @@ export class ChannexConnection {
     if (url.protocol !== 'https:' || url.hostname !== 'www.airbnb.com' || url.pathname !== '/oauth2/auth') fail(502, 'INVALID_PROVIDER_RESPONSE', 'Channex returned an unexpected Airbnb sign-in link')
     // A concurrent start that saved its link first wins; this link is never shown.
     const saved = await execute(this.db, `UPDATE channex_connections SET state_hash = ?, authorization_user_id = ?, authorization_title = ?, authorization_expires_at = ?,
-        authorization_url = ?, status = 'authorizing', updated_at = ? WHERE organization_id = ? AND id = ? AND authorization_url IS NULL AND channel_id IS NULL`,
-    [await digest(state), this.userId, title, new Date(Date.now() + SIGN_IN_LIFETIME_MS).toISOString(), url.toString(), now(), this.organizationId, row.id])
+        authorization_url = ?, status = 'authorizing', updated_at = ? WHERE organization_id = ? AND id = ? AND channel_id IS NULL
+        AND (authorization_url IS NULL OR authorization_expires_at IS NULL OR authorization_expires_at <= ?)`,
+    [await digest(state), this.userId, title, new Date(Date.now() + SIGN_IN_LIFETIME_MS).toISOString(), url.toString(), now(), this.organizationId, row.id, now()])
     if (saved.meta.changes) return { authorization_url: url.toString() }
     const winner = (await this.rows()).find(account => account.id === row.id)
     if (!winner?.authorization_url || winner.authorization_user_id !== this.userId) fail(409, 'SIGN_IN_OWNED_ELSEWHERE', 'Another admin started this Airbnb sign-in. They need to finish it.')

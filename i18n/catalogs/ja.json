@@ -802,5 +802,20 @@
   "shop.partly_made_to_order": "在庫{stock}点、受注制作{made}点",
   "shop.free": "無料",
   "order.ready_by": "受け取り可能日",
-  "order.number": "ご注文 #{number}"
+  "order.number": "ご注文 #{number}",
+  "membership.option": "オプション",
+  "membership.join": "参加する",
+  "membership.recurring_terms": "解約するまで {terms} が請求されます。アカウントからいつでも解約できます。",
+  "membership.processing": "メンバーシップを確認しています…",
+  "membership.welcome": "ようこそ",
+  "membership.joined": "{title} に参加しました",
+  "membership.manage": "メンバーシップを管理",
+  "membership.not_completed": "このメンバーシップは完了していません",
+  "membership.status": "ステータス",
+  "membership.price": "料金",
+  "membership.access_until": "利用期限",
+  "membership.next_payment": "次回のお支払い",
+  "booking.refundable_deposit": "返金可能なデポジット {amount}（ホストに別途お支払い）",
+  "booking.retainer_in_trust": "預り金 {amount}（信託口座で保管、事務所に別途お支払い）",
+  "membership.processing_later": "Stripe はまだ初回のお支払いを確認していません。確認されるとアカウントにメンバーシップが表示されます。"
 }

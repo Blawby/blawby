@@ -28,6 +28,7 @@ import { readStripeCheckoutSetup } from '~/server/utils/stripe-connect'
 import { checkoutSellerFromRows, checkoutSellerQuery } from '~/server/utils/billing-access'
 import { isCurrencyCode, type CurrencyCode } from '~/shared/currencies'
 import {
+  AmbiguousPriceError,
   assertNoConflictingPrices,
   assertPriceShape,
   PRICE_RECURRING_INTERVALS,
@@ -38,6 +39,7 @@ import {
   type PriceInput,
   type PriceSelection,
 } from '~/shared/prices'
+import { isMembershipProduct, membershipPrice } from '~/shared/memberships'
 import { assertProductKind, patchProductDetails, validateProductDetails, validateStayAlarmDetails, ProductDetailError, PRICING_NOTE_HANDLE, PRODUCT_KINDS, type ProductDetailValue, type ProductKind } from '~/shared/product-details'
 import { hasSiteProductPage, presentationForProduct, type CatalogCounts } from '~/utils/product-presentation'
 import { preparePublicTenantOrigin } from '~/server/utils/public-base'
@@ -112,7 +114,10 @@ function paymentBasis(value: unknown, productId: string): PaymentBasis {
 
 /** Coarse publication gate; public catalogue readers also require booking readiness. */
 export const PUBLIC_PRODUCT_SQL = `pub.published = 1 AND (p.kind <> 'experience' OR NULLIF(trim(p.order_url), '') IS NOT NULL
-  OR EXISTS (SELECT 1 FROM product_booking_configs cfg WHERE cfg.product_id = p.id AND cfg.organization_id = p.organization_id AND cfg.duration_minutes > 0))`
+  OR EXISTS (SELECT 1 FROM product_booking_configs cfg WHERE cfg.product_id = p.id AND cfg.organization_id = p.organization_id AND cfg.duration_minutes > 0)
+  OR (NOT EXISTS (SELECT 1 FROM product_booking_configs cfg WHERE cfg.product_id = p.id AND cfg.organization_id = p.organization_id)
+    AND EXISTS (SELECT 1 FROM product_variants v JOIN prices pr ON pr.organization_id = v.organization_id AND pr.product_variant_id = v.id
+      WHERE v.organization_id = p.organization_id AND v.product_id = p.id AND v.active = 1 AND pr.active = 1 AND pr.type = 'recurring')))`
 
 /** Guests book a place to stay on this site and pay in full; it has no external booking link. */
 function stayOrderUrl(kind: ProductKind, orderUrl: string | null): string | null {
@@ -289,7 +294,7 @@ function productHydrationQueries(organizationId: string | { sql: string }, selec
       WHERE organization_id = ${org} AND product_id IN (${selection.query}) ORDER BY collection_id`, params },
     // A session offering's booking; a home's is presented with its stay settings below.
     { query: `SELECT product_id, duration_minutes, seating_interval_minutes, default_capacity, confirmation_mode, online_payment_required, held_online, scheduling_mode, assigned_member_id, advance_notice_minutes, questions,
-        party_size_min, party_size_max, minimum_guest_age, accessibility_contact_required, payment_basis, payment_min_party_size FROM product_booking_configs
+        party_size_min, party_size_max, minimum_guest_age, accessibility_contact_required, payment_basis, payment_min_party_size, deposit_minor FROM product_booking_configs
       WHERE organization_id = ${org} AND unit = 'slot' AND product_id IN (${selection.query})`, params },
     // The page each product owns: the source row that carries its product_id.
     { query: `SELECT product_id, id, path, title FROM content_documents
@@ -297,7 +302,7 @@ function productHydrationQueries(organizationId: string | { sql: string }, selec
     // How a home is booked is its booking configuration, presented here with what the home is.
     { query: `SELECT c.product_id, c.internal_name, c.location_id, b.check_in_time, b.check_in_end_time, b.check_out_time, b.default_capacity AS max_guests, b.min_nights, b.calendar_rules, ${stayWeekendPriceSql('c')} AS weekend_price_minor, c.property_type_group, c.property_type,
         c.listing_type, c.total_floors, c.listing_floor, c.year_built, c.property_size, c.property_size_unit, c.bedrooms, c.beds, c.bathrooms, c.amenities,
-        b.cancellation_policy, b.long_term_cancellation_policy, b.assigned_member_id, b.questions, ${liveHomeSql('p')} AS live
+        b.cancellation_policy, b.long_term_cancellation_policy, b.assigned_member_id, b.questions, b.deposit_minor, ${liveHomeSql('p')} AS live
       FROM product_stay_configs c JOIN products p ON p.organization_id = c.organization_id AND p.id = c.product_id
       JOIN product_booking_configs b ON b.organization_id = c.organization_id AND b.product_id = c.product_id AND b.unit = 'nights'
       WHERE c.organization_id = ${org} AND c.product_id IN (${selection.query})`, params },
@@ -357,6 +362,7 @@ function hydrateProductRows(
       location_id: String(row.location_id), check_in_time: row.check_in_time === null ? null : String(row.check_in_time),
       check_in_end_time: row.check_in_end_time === null ? null : String(row.check_in_end_time), check_out_time: row.check_out_time === null ? null : String(row.check_out_time),
       max_guests: Number(row.max_guests), min_nights: Number(row.min_nights), calendar_rules: readStayCalendarRules(row.calendar_rules, row.weekend_price_minor),
+      deposit_minor: row.deposit_minor === null ? null : Number(row.deposit_minor),
       ...storedStayListing(row),
       assigned_member_id: row.assigned_member_id === null ? null : String(row.assigned_member_id),
       live: Number(row.live) === 1,
@@ -388,6 +394,7 @@ function hydrateProductRows(
       accessibility_contact_required: Number(row.accessibility_contact_required) === 1,
       payment_basis: paymentBasis(row.payment_basis, String(row.product_id)),
       payment_min_party_size: row.payment_min_party_size === null ? null : Number(row.payment_min_party_size),
+      deposit_minor: row.deposit_minor === null ? null : Number(row.deposit_minor),
       ...storedQuestions(row.questions),
     }
   }
@@ -1001,6 +1008,8 @@ async function planStayConfig(db: DbClient, organizationId: string, kind: Produc
   if (typeof maxGuests !== 'number' || !Number.isInteger(maxGuests) || maxGuests < 1 || maxGuests > 99) invalid('stay.max_guests must be a whole number from 1 to 99')
   const minNights = stay.min_nights
   if (typeof minNights !== 'number' || !Number.isInteger(minNights) || minNights < 1 || minNights > MAX_STAY_NIGHTS) invalid(`stay.min_nights must be a whole number from 1 to ${MAX_STAY_NIGHTS}`)
+  const depositMinor = stay.deposit_minor ?? null
+  if (depositMinor !== null && (!Number.isSafeInteger(depositMinor) || (depositMinor as number) <= 0)) invalidStayField('deposit_minor', 'stay.deposit_minor must be a positive whole amount in the smallest currency unit, or null for none')
   let calendarRules: ProductStayConfig['calendar_rules']
   try { calendarRules = parseStayCalendarRules(stay.calendar_rules ?? null) }
   catch (error) {
@@ -1018,7 +1027,7 @@ async function planStayConfig(db: DbClient, organizationId: string, kind: Produc
     if (!(error instanceof FormQuestionDefinitionError)) throw error
     invalidStayField('questions', error.message)
   }
-  return { internal_name: requireTrimmedProductString(stay.internal_name, 'stay.internal_name', PRODUCT_LIMITS.name), location_id: locationId, check_in_time: stay.check_in_time as string | null, check_in_end_time: checkInEnd as string | null, check_out_time: stay.check_out_time as string | null, max_guests: maxGuests, min_nights: minNights, calendar_rules: calendarRules,
+  return { internal_name: requireTrimmedProductString(stay.internal_name, 'stay.internal_name', PRODUCT_LIMITS.name), location_id: locationId, check_in_time: stay.check_in_time as string | null, check_in_end_time: checkInEnd as string | null, check_out_time: stay.check_out_time as string | null, max_guests: maxGuests, min_nights: minNights, calendar_rules: calendarRules, deposit_minor: depositMinor as number | null,
     ...planStayListing(stay), assigned_member_id: assignedMember, questions, questions_revision: formQuestionsRevision(questions) }
 }
 
@@ -1278,7 +1287,7 @@ async function planProduct(
 }
 
 /** A home's stay settings that are how it is booked: its booking configuration's, unit nights. */
-const STAY_BOOKING_FIELDS = ['check_in_time', 'check_in_end_time', 'check_out_time', 'max_guests', 'min_nights', 'calendar_rules', 'cancellation_policy', 'long_term_cancellation_policy', 'assigned_member_id', 'questions'] as const
+const STAY_BOOKING_FIELDS = ['check_in_time', 'check_in_end_time', 'check_out_time', 'max_guests', 'min_nights', 'calendar_rules', 'cancellation_policy', 'long_term_cancellation_policy', 'assigned_member_id', 'questions', 'deposit_minor'] as const
 
 /**
  * A home's booking settings, through the one booking-configuration writer, in
@@ -1303,6 +1312,7 @@ async function stayBookingWrites(db: DbClient, input: {
   }
   if (named('max_guests')) patch.default_capacity = stay.max_guests
   if (named('assigned_member_id')) patch.assigned_member_id = stay.assigned_member_id
+  if (named('deposit_minor')) patch.deposit_minor = stay.deposit_minor
   if (input.edit?.fields.includes('questions')) Object.assign(patch, { questions: input.edit.questions, expected_questions_revision: input.edit.expectedQuestionsRevision })
   else if (!input.edit && stay.questions.length) Object.assign(patch, { questions: stay.questions, expected_questions_revision: formQuestionsRevision([]) })
   const { queries } = await prepareProductBookingConfig(db, { organizationId: input.organizationId, productId: input.planned.id, actorId: input.actorId, env: input.env, productInSameBatch: !input.edit, productKind: 'stay', patch })
@@ -1480,6 +1490,15 @@ function assertVariantPricesConsistent(planned: PlannedProduct): void {
   }
   for (const variant of planned.variants) {
     if (variant.prices.length < 2) continue
+    // A variant sells one recurring term at a time, as one membership: monthly and yearly together are two options, so two variants.
+    const recurring = variant.prices.filter(price => price.active && price.type === 'recurring')
+    for (const [index, price] of recurring.entries()) {
+      const clash = recurring.slice(index + 1).find(other => other.currency === price.currency && (other.location_id ?? null) === (price.location_id ?? null)
+        && (other.recurring_interval !== price.recurring_interval || other.recurring_interval_count !== price.recurring_interval_count)
+        && (other.valid_until_at === null || price.valid_from_at === null || price.valid_from_at < other.valid_until_at)
+        && (price.valid_until_at === null || other.valid_from_at === null || other.valid_from_at < price.valid_until_at))
+      if (clash) invalid('A variant sells one recurring term at a time; offer another term as its own variant')
+    }
     // Refuse two simultaneously-valid offers of the same scope at write time,
     // so the person creating them sees the conflict instead of a customer
     // hitting an ambiguous selection at checkout.
@@ -2512,6 +2531,22 @@ export async function productBookingReadiness(db: DbClient, organizationId: stri
   if (product.kind === 'stay') return stayBookingReadiness(db, organizationId, product, { requireActive, currency: options.currency })
   if (requireActive && !product.active) missing.push('active')
   if (product.order_url) return { ready: missing.length === 0, missing }
+  // A membership is bought for its recurring price, with no session: it needs that price where it is offered and payments set up, never a schedule.
+  if (isMembershipProduct(product)) {
+    const currency = options.currency ?? await organizationDefaultCurrency(db, organizationId)
+    const scopes = product.locations.length
+      ? locations.filter(location => location.published && (!requireActive || location.active)).map(location => location.location_id)
+      : [null]
+    const variants = product.variants.filter(variant => variant.active)
+    const priced = (variant: (typeof variants)[number], scope: string | null) => {
+      try { return (membershipPrice(variant.prices, { currency, location_id: scope })?.unit_amount ?? 0) > 0 }
+      catch (error) { if (error instanceof AmbiguousPriceError) return false; throw error }
+    }
+    if (!scopes.length || !variants.length || !scopes.every(scope => variants.every(variant => priced(variant, scope)))) missing.push('variants.prices')
+    if (!options.env) throw new Error('The organization environment is required to assess paid membership readiness')
+    missing.push(...(options.paymentSetup ? await options.paymentSetup() : await readStripeCheckoutSetup(db, organizationId, options.env)).missing)
+    return { ready: missing.length === 0, missing }
+  }
   if (!product.booking) missing.push('booking')
   else if (!product.booking.duration_minutes) missing.push('booking.duration_minutes')
   if (!options.env) throw new Error('The organization environment is required to assess booking readiness')

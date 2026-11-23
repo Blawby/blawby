@@ -757,6 +757,8 @@ export const EXPECTED_TOOL_ANNOTATIONS = {
   get_payment: R,
   get_payment_payouts: R,
   get_payments_dashboard_link: R,
+  list_memberships: R,
+  cancel_membership: { ...D, openWorldHint: true, idempotentHint: true },
   set_product_booking_config: { ...D, openWorldHint: true },
   delete_product_booking_config: { ...D, openWorldHint: true },
   replace_product_weekly_schedule: { ...D, openWorldHint: true },

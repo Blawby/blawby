@@ -5,6 +5,8 @@ import { paymentPayouts, paymentTransactions } from '~/server/domain/payments/ea
 import { dashboardOrigin } from '~/server/utils/dashboard-notification-links'
 import { isRecord } from '~/server/utils/type-guards'
 import { organizationTool, type McpToolDefinition } from './shared'
+import { cancelMembership, organizationMemberships } from '~/server/domain/memberships'
+import { MEMBERSHIP_STATES } from '~/shared/memberships'
 
 const string = { type: 'string' } as const
 const period = {
@@ -32,11 +34,26 @@ const payoutsResult = { type: 'object', properties: { ...readInfo, configured: {
   payouts: { type: 'array', items: { type: 'object', properties: { id: string, amount: integer, currency: string, status: string, arrival_date: integer, created: integer, automatic: { type: 'boolean' }, dashboard_url: string }, required: ['id', 'amount', 'currency', 'status', 'dashboard_url'] } },
 }, required: ['organization_id', 'configured', 'source', 'next_cursor', 'payouts', 'dashboard_url'], additionalProperties: false }
 
+const membership = { type: 'object', properties: {
+  id: { ...string, description: 'Stripe subscription ID: the membership on the business\'s Stripe account.' }, product_id: nullableString, title: string,
+  member_name: nullableString, member_email: nullableString, state: { type: 'string', enum: [...MEMBERSHIP_STATES] },
+  currency: string, unit_amount: integer, terms: { ...string, description: 'The price as Stripe charges it, such as "THB 5,000.00 per month".' },
+  started_at: string, current_period_end: { ...nullableString, description: 'The next payment, or the last day of access when cancelling; null once ended.' }, ended_at: nullableString,
+  payments: { type: 'array', items: { type: 'object', properties: { id: string, amount: integer, created_at: string, period_start: nullableString, period_end: nullableString, receipt_url: nullableString, refunded_amount: integer }, required: ['id', 'amount', 'created_at'] } },
+  dashboard_url: string,
+}, required: ['id', 'title', 'state', 'currency', 'unit_amount', 'terms', 'started_at', 'payments', 'dashboard_url'] }
+
 export const PAYMENTS_TOOLS: McpToolDefinition[] = [
   organizationTool({ name: 'get_payment_summary', outputSchema: summaryResult, description: 'Read totals for the selected business’s customer payments in a UTC period: captured volume, refunds and disputes, separately by currency. Use list_payments for individual transactions. Trust receipts are distinct from earned revenue. Does not change payments or move money.', domain: 'payments', minimumRole: 'admin', inputSchema: period, required: ['from', 'to'] }),
   organizationTool({ name: 'list_payments', outputSchema: paymentPageResult, description: 'List the selected business’s customer payment records in a UTC period, with purchase links and amounts in each currency’s minor units. Use the returned cursor as after for another page and get_payment for one transaction’s details. These are customer payments, separate from the business’s platform subscription bill. Does not change payments.', domain: 'payments', minimumRole: 'admin', inputSchema: { ...period, after: { ...string, description: 'The cursor returned by the previous payment page.' }, location_id: string, earnings_type: { type: 'string', enum: ['paid', 'refunded'], description: 'Only payments still paid, or only payments with a refund.' } }, required: ['from', 'to'] }),
   organizationTool({ name: 'get_payment', outputSchema: paymentResult, description: 'Read one customer payment belonging to the selected business, including its original purchase details, current refund records, disputes and authenticated dashboard URL. Requires payment_id from list_payments. Does not issue a refund, prepare an approval or change payment state; use the authenticated dashboard for financial actions.', domain: 'payments', minimumRole: 'admin', inputSchema: { payment_id: string }, required: ['payment_id'] }),
   organizationTool({ name: 'get_payment_payouts', outputSchema: payoutsResult, description: 'Read the selected business’s connected Stripe balance and payout history, with source and retrieval time. Continue with next_cursor as after for another page. Use get_payment_summary for customer payment totals. This is a read of the business’s own connected account; it does not create a payout or transfer funds.', domain: 'payments', minimumRole: 'admin', inputSchema: { after: { ...string, description: 'next_cursor from the previous payout page.' } } }),
+  organizationTool({ name: 'list_memberships', domain: 'payments', minimumRole: 'admin', outputSchema: { type: 'object', properties: { organization_id: string, memberships: { type: 'array', items: membership } }, required: ['organization_id', 'memberships'] },
+    description: 'List the selected business’s memberships: offerings bought for a recurring price with no session to book, such as a monthly open-studio membership, a dining club or a monthly legal plan. Each has its member, Stripe’s current state (active, cancels at the end of the period, payment failed, ended), the price as Stripe charges it, the next payment or last day of access, and the payments Stripe collected. product_id narrows to one offering. A membership is sold by giving the offering’s variant a recurring price (update_product variants[].prices with type recurring, recurring_interval month, recurring_interval_count 1) and publishing it; members join on its public page. Read from Stripe; changes nothing.',
+    inputSchema: { product_id: { ...string, description: 'Only this offering’s members.' } } }),
+  organizationTool({ name: 'cancel_membership', domain: 'payments', minimumRole: 'admin', outputSchema: { type: 'object', properties: { organization_id: string, membership }, required: ['organization_id', 'membership'] },
+    description: 'End a member’s membership on Stripe. when at_period_end stops future payments and keeps access until the end of what was paid; now ends access today. Neither refunds anything: refund a payment separately. Requires the membership id from list_memberships.',
+    inputSchema: { membership_id: string, when: { type: 'string', enum: ['at_period_end', 'now'] } }, required: ['membership_id', 'when'] }),
   organizationTool({ name: 'get_payments_dashboard_link', description: 'Get the selected business’s authenticated Payments setup and dashboard URL when the owner wants to manage its Stripe integration. Returns a link for the person to open; it does not open a page, create an account, start onboarding, prepare a refund or change the integration. Identity and bank details are entered only in the dashboard’s Stripe-hosted flow.', domain: 'payments', minimumRole: 'owner', outputSchema: { type: 'object', properties: { organization_id: string, dashboard_url: string, source: string }, required: ['organization_id', 'dashboard_url', 'source'] } }),
 ]
 
@@ -85,6 +102,16 @@ export async function handlePaymentsTools(ctx: McpExecutorContext): Promise<unkn
         balance: result.balance ? { available: result.balance.available.map(row => ({ currency: row.currency.toUpperCase(), amount: row.amount })), pending: result.balance.pending.map(row => ({ currency: row.currency.toUpperCase(), amount: row.amount })) } : null,
         payouts: result.payouts.map(payout => ({ id: payout.id, amount: payout.amount, currency: payout.currency.toUpperCase(), status: payout.status, arrival_date: payout.arrival_date, created: payout.created, automatic: payout.automatic, dashboard_url: dashboard(`/earnings/payouts/${encodeURIComponent(payout.id)}`) })),
       }
+    }
+    case 'list_memberships': {
+      await authorizePayments(principal, 'read')
+      const memberships = await organizationMemberships(db, env, organizationId, typeof args.product_id === 'string' && args.product_id ? args.product_id : null)
+      return { organization_id: organizationId, memberships: memberships.map(entry => ({ ...entry, dashboard_url: dashboard(`/bookings/payment/${encodeURIComponent(entry.payments[0]!.id)}`) })) }
+    }
+    case 'cancel_membership': {
+      await authorizePayments(principal, 'refund')
+      const entry = await cancelMembership(db, env, organizationId, String(args.membership_id), args.when)
+      return { organization_id: organizationId, membership: { ...entry, dashboard_url: dashboard(`/bookings/payment/${encodeURIComponent(entry.payments[0]!.id)}`) } }
     }
     case 'get_payments_dashboard_link': {
       await authorizePayments(principal, 'integration')

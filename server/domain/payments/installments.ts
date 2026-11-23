@@ -1,10 +1,10 @@
 import type Stripe from 'stripe'
-import { executeBatch, queryFirst, type DbClient } from '~/server/db'
+import { executeBatch, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import { publishEvent } from '~/server/events'
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { paymentsStripe, platformLivemode } from '~/server/utils/stripe-connect'
 import { isStayInstallments, type StayInstallment } from '~/shared/stay-installments'
-import { localDateTimeToInstant } from '~/utils/timezone'
+import { localDateAt, localDateTimeToInstant } from '~/utils/timezone'
 import { quotePaymentsBillingFx, paymentsBillingBasis } from './fx'
 import type { Payment } from './index'
 import { paymentUsageEventQuery } from './usage'
@@ -76,12 +76,28 @@ export async function scheduleStayInstallments(env: CloudflareEnv, payment: Paym
 }
 
 /** A month Stripe collected: the stay's payment for that period, counted once as captured volume, as a checkout capture is. */
-export async function recordInstallmentPayment(db: DbClient, stripe: Stripe, env: CloudflareEnv, organizationId: string, invoiceId: string, stripeAccount: string): Promise<void> {
-  const invoice = await stripe.invoices.retrieve(invoiceId, { expand: ['payments'] }, { stripeAccount })
+export async function recordInstallmentPayment(db: DbClient, stripe: Stripe, env: CloudflareEnv, organizationId: string, invoice: Stripe.Invoice, stripeAccount: string): Promise<void> {
   const bookingId = invoice.metadata?.[BOOKING_KEY]
-  if (!bookingId) return
+  if (!bookingId) throw new Error(`Invoice ${invoice.id} names no stay`)
   const first = await queryFirst<Payment>(db, "SELECT * FROM payments WHERE id = ? AND organization_id = ? AND subject_type = 'booking' AND subject_id = ?", [invoice.metadata?.blawby_payment_id, organizationId, bookingId])
   if (!first || first.stripe_account_id !== stripeAccount || Boolean(first.livemode) !== invoice.livemode) throw new Error(`Invoice ${invoice.id} names no payment of its stay`)
+  await recordPaidInvoice(db, stripe, env, invoice, {
+    organizationId, stripeAccount, livemode: first.livemode, subjectType: 'booking', subjectId: bookingId, buyerUserId: first.buyer_user_id, locationId: first.location_id, currency: first.currency,
+    snapshot: { title: invoice.description, checkout_payment_id: first.id, installment: { period_start: invoice.metadata?.blawby_period_start, period_end: invoice.metadata?.blawby_period_end } },
+  })
+}
+
+/**
+ * An invoice Stripe collected on the business's account, recorded as one
+ * payment of its subject and counted once as captured volume, as a checkout
+ * capture is. A redelivered event finds the row it saved and publishes again.
+ * `following` joins the insert's batch and runs only when the row is new.
+ */
+export async function recordPaidInvoice(db: DbClient, stripe: Stripe, env: CloudflareEnv, invoice: Stripe.Invoice, subject: {
+  organizationId: string; stripeAccount: string; livemode: number; subjectType: 'booking' | 'membership'; subjectId: string
+  buyerUserId: string | null; locationId: string | null; currency: string; snapshot: Record<string, unknown>
+}, following: (paymentId: string) => BatchQuery[] = () => []): Promise<string> {
+  const { organizationId, stripeAccount } = subject
   const paid = invoice.payments?.data.find(entry => entry.status === 'paid')
   const intentId = typeof paid?.payment.payment_intent === 'string' ? paid.payment.payment_intent : paid?.payment.payment_intent?.id
   if (!intentId) throw new Error(`Paid invoice ${invoice.id} has no PaymentIntent`)
@@ -89,33 +105,106 @@ export async function recordInstallmentPayment(db: DbClient, stripe: Stripe, env
   const intent = await stripe.paymentIntents.retrieve(intentId, { expand: ['latest_charge'] }, { stripeAccount })
   const charge = intent.latest_charge
   if (!charge || typeof charge === 'string' || charge.amount !== invoice.amount_paid) throw new Error(`Paid invoice ${invoice.id} has no matching charge`)
+  if (invoice.currency.toUpperCase() !== subject.currency) throw new Error(`Paid invoice ${invoice.id} is in another currency than its ${subject.subjectType}`)
   const now = new Date().toISOString()
   const paidAt = new Date((invoice.status_transitions.paid_at ?? charge.created) * 1000).toISOString()
-  const billingFx = await quotePaymentsBillingFx(stripe, first.currency as Parameters<typeof quotePaymentsBillingFx>[1])
+  const billingFx = await quotePaymentsBillingFx(stripe, subject.currency as Parameters<typeof quotePaymentsBillingFx>[1])
   const id = crypto.randomUUID()
   const tax = (invoice.total_taxes ?? []).reduce((sum, entry) => sum + entry.amount, 0)
-  const snapshot = { title: invoice.description, invoice_id: invoice.id, checkout_payment_id: first.id, billing_fx: billingFx,
-    installment: { period_start: invoice.metadata?.blawby_period_start, period_end: invoice.metadata?.blawby_period_end } }
+  const snapshot = { ...subject.snapshot, invoice_id: invoice.id, billing_fx: billingFx }
   const insert = { query: `INSERT INTO payments (id, organization_id, buyer_user_id, stripe_account_id, livemode, subject_type, subject_id, location_id, currency, amount, price_snapshot_json,
       tax_amount, captured_amount, stripe_payment_intent_id, stripe_charge_id, receipt_url, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, 'booking', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (stripe_account_id, livemode, stripe_payment_intent_id) DO NOTHING`,
-    params: [id, organizationId, first.buyer_user_id, stripeAccount, first.livemode, bookingId, first.location_id, first.currency, invoice.amount_paid, JSON.stringify(snapshot),
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (stripe_account_id, livemode, stripe_payment_intent_id) DO NOTHING`,
+    params: [id, organizationId, subject.buyerUserId, stripeAccount, subject.livemode, subject.subjectType, subject.subjectId, subject.locationId, subject.currency, invoice.amount_paid, JSON.stringify(snapshot),
       tax, invoice.amount_paid, intent.id, charge.id, charge.receipt_url, paidAt, now] }
+  const inserted: BatchQuery = { query: 'SELECT 1 FROM payments WHERE id = ?', params: [id] }
   // Usage is billed in the platform's mode only, and only with the payment it counts.
-  const usage = Boolean(first.livemode) === platformLivemode(env) ? [paymentUsageEventQuery({
-    organizationId, paymentId: id, kind: 'captured_volume', currency: first.currency, amount: invoice.amount_paid,
-    billingBasis: paymentsBillingBasis(invoice.amount_paid, first.currency, billingFx), sourceId: `capture:${stripeAccount}:${first.livemode}:${intent.id}`,
+  const usage = Boolean(subject.livemode) === platformLivemode(env) ? [paymentUsageEventQuery({
+    organizationId, paymentId: id, kind: 'captured_volume', currency: subject.currency, amount: invoice.amount_paid,
+    billingBasis: paymentsBillingBasis(invoice.amount_paid, subject.currency, billingFx), sourceId: `capture:${stripeAccount}:${subject.livemode}:${intent.id}`,
     occurredAt: paidAt, createdAt: now,
-  }, { query: 'SELECT 1 WHERE changes()=1', params: [] })] : []
-  const [inserted] = await executeBatch(db, [insert, ...usage], { operation: 'Record monthly stay payment' })
-  // A redelivered event whose earlier attempt saved the row but failed to publish publishes it now.
-  const recorded = (inserted?.meta.changes ?? 0) === 1 ? id
-    : (await queryFirst<{ id: string }>(db, 'SELECT id FROM payments WHERE stripe_account_id = ? AND livemode = ? AND stripe_payment_intent_id = ?', [stripeAccount, first.livemode, intent.id]))?.id
-  if (!recorded) throw new Error(`Monthly payment for invoice ${invoice.id} was not recorded`)
+  }, inserted)] : []
+  const [written] = await executeBatch(db, [insert, ...usage, ...following(id)], { operation: `Record paid ${subject.subjectType} invoice` })
+  const recorded = (written?.meta.changes ?? 0) === 1 ? id
+    : (await queryFirst<{ id: string }>(db, 'SELECT id FROM payments WHERE stripe_account_id = ? AND livemode = ? AND stripe_payment_intent_id = ?', [stripeAccount, subject.livemode, intent.id]))?.id
+  if (!recorded) throw new Error(`Payment for invoice ${invoice.id} was not recorded`)
   await publishEvent(env, {
     type: 'payment.captured', organization_id: organizationId, payment_id: recorded, intent_created: intent.created, saved_method_id: null, booking: null,
     notice: { kind: 'payment_captured', nativeId: intent.id, status: intent.status, amount: invoice.amount_paid, email: charge.billing_details.email ?? null },
   })
+  return recorded
+}
+
+/**
+ * A later month of a stay paid monthly, after money for it was recorded
+ * outside Stripe or such a record was removed: Stripe is left to collect
+ * exactly what the month still owes, on the card saved at checkout. A month
+ * not yet due has its draft invoice set to that amount, deleted when nothing
+ * is owed, or created when one is owed and none is scheduled. A month Stripe
+ * already tried (open, its card failing) gets its replacement first, charged
+ * now, and is then voided, so a retry finds the replacement by its key.
+ */
+export async function settleInstallmentOutside(env: CloudflareEnv, payment: Payment, bookingId: string, periodStart: string, remaining: number, change: string): Promise<void> {
+  const plan = checkoutPlan(payment)
+  if (!plan) return
+  const period = plan.installments.find(entry => entry.period_start === periodStart)
+  if (!period || period === plan.installments[0]) return
+  const stripe = paymentsStripe(env, Boolean(payment.livemode))
+  const account = { stripeAccount: payment.stripe_account_id }
+  const customer = await buyerCustomer(env.DB, payment)
+  const currency = payment.currency.toLowerCase()
+  const description = `${plan.title}, ${period.period_start} to ${period.period_end}`
+  const metadata = { [BOOKING_KEY]: bookingId, blawby_payment_id: payment.id, blawby_period_start: period.period_start, blawby_period_end: period.period_end }
+  const tax = { ...(plan.tax_behavior === 'unspecified' ? {} : { tax_behavior: plan.tax_behavior as 'inclusive' | 'exclusive' }), ...(plan.tax_code ? { tax_code: plan.tax_code } : {}) }
+  const scheduled: Stripe.Invoice[] = []
+  for (const status of ['draft', 'open'] as const) {
+    for await (const invoice of stripe.invoices.list({ customer, status, limit: 100, expand: ['data.lines'] }, account)) {
+      if (invoice.metadata?.[BOOKING_KEY] === bookingId && invoice.metadata?.blawby_period_start === periodStart) scheduled.push(invoice)
+    }
+  }
+  const card = async () => {
+    if (!payment.stripe_payment_intent_id) throw new Error(`Monthly stay payment ${payment.id} has no PaymentIntent`)
+    const intent = await stripe.paymentIntents.retrieve(payment.stripe_payment_intent_id, {}, account)
+    const method = typeof intent.payment_method === 'string' ? intent.payment_method : intent.payment_method?.id
+    if (!method) throw new Error(`Monthly stay payment ${payment.id} saved no card`)
+    return method
+  }
+  const createFor = async (amount: number, key: string, now: boolean) => {
+    const invoice = await stripe.invoices.create({
+      customer, currency, collection_method: 'charge_automatically', auto_advance: true, default_payment_method: await card(),
+      ...(now ? {} : { automatically_finalizes_at: Math.floor(localDateTimeToInstant(period.period_start, '09:00', plan.timezone, 'compatible').getTime() / 1000) }),
+      pending_invoice_items_behavior: 'exclude', automatic_tax: { enabled: plan.automatic_tax }, description, metadata,
+    }, { ...account, idempotencyKey: `stay-installment:${key}` })
+    await stripe.invoiceItems.create({ customer, invoice: invoice.id, amount, currency, description, metadata, ...tax }, { ...account, idempotencyKey: `stay-installment-item:${key}` })
+    if (now && invoice.status === 'draft') await stripe.invoices.finalizeInvoice(invoice.id!, { auto_advance: true }, account)
+  }
+  if (!scheduled.length) {
+    if (remaining > 0) await createFor(remaining, `${bookingId}:${periodStart}:${change}`, periodStart <= localDateAt(new Date(), plan.timezone))
+    return
+  }
+  // A month is collected through exactly one invoice: a draft not yet due if there is one, otherwise the newest
+  // open one (a replacement made on an earlier attempt). Every other one is removed before the keeper is set.
+  const drafts = scheduled.filter(invoice => invoice.status === 'draft').sort((left, right) => right.created - left.created)
+  const opens = scheduled.filter(invoice => invoice.status === 'open').sort((left, right) => right.created - left.created)
+  const keeper = drafts[0] ?? opens[0]!
+  for (const invoice of scheduled) {
+    if (invoice.id === keeper.id) continue
+    if (invoice.status === 'draft') await stripe.invoices.del(invoice.id!, account)
+    else await stripe.invoices.voidInvoice(invoice.id!, {}, account)
+  }
+  if (keeper.status === 'draft') {
+    if (remaining <= 0) { await stripe.invoices.del(keeper.id!, account); return }
+    const line = keeper.lines.data[0]
+    const item = typeof line?.parent?.invoice_item_details?.invoice_item === 'string' ? line.parent.invoice_item_details.invoice_item : null
+    if (!item || keeper.lines.data.length !== 1) throw new Error(`Monthly stay invoice ${keeper.id} has no single month to change`)
+    if (line!.amount !== remaining) await stripe.invoiceItems.update(item, { amount: remaining }, account)
+    return
+  }
+  // An open invoice is already finalized: one owing exactly the rest stays; otherwise its replacement is made, then it is voided.
+  // Compared on its one line, before any tax Stripe adds, as the month's amount is.
+  if (remaining > 0 && keeper.lines.data.length === 1 && keeper.lines.data[0]!.amount === remaining) return
+  if (remaining > 0) await createFor(remaining, `${keeper.id}:${change}`, true)
+  await stripe.invoices.voidInvoice(keeper.id!, {}, account)
 }
 
 /** A cancelled stay's months Stripe has not collected: drafts are deleted, finalized ones voided. */

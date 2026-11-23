@@ -802,5 +802,20 @@
   "shop.partly_made_to_order": "{stock} auf Lager, {made} auf Bestellung gefertigt",
   "shop.free": "Kostenlos",
   "order.ready_by": "Abholbereit ab",
-  "order.number": "Bestellung #{number}"
+  "order.number": "Bestellung #{number}",
+  "membership.option": "Option",
+  "membership.join": "Beitreten",
+  "membership.recurring_terms": "Dir werden {terms} berechnet, bis du kündigst. Du kannst jederzeit in deinem Konto kündigen.",
+  "membership.processing": "Deine Mitgliedschaft wird bestätigt …",
+  "membership.welcome": "Willkommen",
+  "membership.joined": "Du bist {title} beigetreten",
+  "membership.manage": "Mitgliedschaft verwalten",
+  "membership.not_completed": "Diese Mitgliedschaft wurde nicht abgeschlossen",
+  "membership.status": "Status",
+  "membership.price": "Preis",
+  "membership.access_until": "Zugang bis",
+  "membership.next_payment": "Nächste Zahlung",
+  "booking.refundable_deposit": "Rückzahlbare Kaution von {amount}, separat an den Gastgeber zu zahlen",
+  "booking.retainer_in_trust": "Vorschuss von {amount} auf einem Treuhandkonto, separat an die Kanzlei zu zahlen",
+  "membership.processing_later": "Stripe hat die erste Zahlung noch nicht bestätigt. Deine Mitgliedschaft erscheint in deinem Konto, sobald das geschieht."
 }

@@ -7,7 +7,8 @@ import { BATCH_VIEWER, isOrganizationWideRole, memberAccessPrincipal, roleAllows
 import { MEMBER_NAME_SQL } from '~/shared/member-scheduling'
 import { PRODUCT_KIND_LABELS, productDetailFields } from '~/shared/product-details'
 import { isCurrencyCode } from '~/shared/currencies'
-import { formatMinorAmount, selectPrice } from '~/shared/prices'
+import { isMembershipProduct, offeredPrice } from '~/shared/memberships'
+import { formatProductMoney } from '~/utils/product-money'
 import { mediaStillUrl } from '~/shared/media-placement-contract'
 import { agreementLabel } from '~/shared/agreements'
 import { getVerticalCopy } from '~/utils/vertical-copy'
@@ -77,11 +78,12 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
     const detail = (key: string) => product.details[key as keyof typeof product.details]
     const text = (value: unknown) => Array.isArray(value) ? value.join('\n') : typeof value === 'string' ? value : ''
     const selection = { currency, location_id: location?.id ?? null }
-    const chosenPrice = (variant: typeof product.variants[number]) => selectPrice(variant.prices, selection)
+    // A membership's variant sells its recurring price; anything booked is priced once.
+    const chosenPrice = (variant: typeof product.variants[number]) => offeredPrice(variant.prices, selection, isMembershipProduct(product))
     const locationsUsed = locations.filter(entry => product.locations.some(binding => binding.location_id === entry.id))
     const prices = product.variants.map(variant => {
       const price = chosenPrice(variant)
-      const amount = price ? formatMinorAmount(price.unit_amount, currency) : text(detail('pricing_note')) || 'No price set'
+      const amount = price ? formatProductMoney(price) : text(detail('pricing_note')) || 'No price set'
       return product.variants.length === 1 ? amount : `${variant.name}: ${amount}`
     }).join('\n') || 'No price set'
     const photo = leaf('photo', 'Media', product.gallery.length || product.image ? 'View media' : 'Add media', { readonly: !wide })
@@ -96,6 +98,8 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
         ...(product.page ? { native: 'page', query: { page_id: product.page.id } } : { native: 'create-page', query: params }),
       } : {}) }] : []),
       { ...leaf('price', priceLabel, prices), optional_detail: service && !booking && prices === 'No price set' },
+      // A membership's members, read from Stripe on their own screen; the iPhone app opens a screen it does not draw on the web dashboard.
+      ...(isMembershipProduct(product) ? [leaf('members', 'Members', 'Who has joined, and their payments')] : []),
       ...(item ? [
         leaf('options', 'Options and stock', [product.options.length ? `${product.options.map(option => option.name).join(', ')} · ${product.variants.length} variants` : null,
           product.variants.some(variant => variant.active && variant.inventory_tracked) ? `${stocked} in stock${product.variants.some(variant => variant.active && variant.inventory_tracked && variant.inventory_policy === 'continue') ? ', then made to order' : ''}` : 'Stock not tracked'].filter(Boolean).join(' · ')),

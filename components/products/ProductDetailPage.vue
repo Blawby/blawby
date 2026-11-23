@@ -360,6 +360,7 @@
               </TenantButton>
             </div>
 
+            <p v-if="depositLabel && (canBook || canEnquire)" class="text-center text-xs text-muted" data-testid="product-deposit">{{ t(vertical === 'service' ? 'booking.retainer_in_trust' : 'booking.refundable_deposit', { amount: depositLabel }) }}</p>
             <p v-if="isStay && canBook" class="text-center text-xs text-muted">{{ stayBooking.needsApproval.value ? t('stay.pay_after_approval') : stayCheckoutAvailable ? 'You won\'t be charged yet' : t('stay.enquiry_note') }}</p>
 
             <!-- Airbnb's dates under the price: the next sessions, each one press from booking. -->
@@ -404,6 +405,7 @@
             <p v-if="product.description" class="mt-6 text-base sm:text-lg leading-relaxed text-muted">{{ product.description }}</p>
             <p v-if="!isAvailable" class="mt-6 font-semibold text-muted">{{ t('site.common.temporarily_unavailable') }}</p>
             <ProductBuyPanel v-if="product.kind === 'item' && isAvailable && !product.order_url" :product="product" :location-id="location?.id ?? null" class="mt-8" @variant="value => chosenVariantId = value" />
+            <MembershipJoinPanel v-if="isMembership && isAvailable && !scopeRequired && (location || !product.locations.length)" :product="product" :location-id="location?.id ?? null" :currency="currency" class="mt-8 max-w-md" />
             <div v-if="product.kind !== 'item' || product.order_url" class="mt-8 flex flex-wrap items-center gap-5">
               <TenantButton v-if="canEnquire" :to="enquiryPath">{{ t('site.experience_detail.enquire') }}</TenantButton>
               <TenantButton
@@ -553,6 +555,8 @@ import { fetchSessionAvailability, useSessionBooking } from '~/composables/useSe
 import MediaGallery from '~/components/MediaGallery.vue'
 import StayFeatureList from '~/components/products/StayFeatureList.vue'
 import ProductVariantPrices from '~/components/products/ProductVariantPrices.vue'
+import MembershipJoinPanel from '~/components/products/MembershipJoinPanel.vue'
+import { isMembershipProduct } from '~/shared/memberships'
 import { mediaStillUrl, uniqueMediaAssets } from '~/shared/media-placement-contract'
 import { getVerticalCopy } from '~/utils/vertical-copy'
 
@@ -593,6 +597,13 @@ const privateExperiencePreview = computed(() => previewAuthorized && props.produ
 ))
 /** A place to stay is booked by its nights, paid in full; its booking is not a session's. */
 const isStay = computed(() => props.product.kind === 'stay')
+// The refundable deposit each booking asks for (#1908), stated before booking as Vrbo states a damage deposit; it is paid to the business, not here.
+const depositLabel = computed(() => {
+  const minor = isStay.value ? props.product.stay?.deposit_minor : props.booking?.deposit_minor
+  return minor ? formatProductMoney({ unit_amount: minor, currency: props.currency }) : null
+})
+// Bought for a recurring price with no session to book (#1907).
+const isMembership = computed(() => isMembershipProduct({ ...props.product, booking: props.booking ?? null }))
 const bookingInteractive = useMounted()
 const stayBooking = useStayBooking(() => ({ product: props.product, location: props.location, checkout: props.stayCheckoutAvailable, confirmationMode: props.stayConfirmationMode }))
 const bookingLabel = computed(() => isStay.value
@@ -726,7 +737,10 @@ const isAvailable = computed(() =>
   props.product.active
   && (props.location ? props.product.locations.some(entry => entry.location_id === props.location?.id && entry.active)
     // A physical item ships or is collected from whichever location offers it.
-    : props.product.kind === 'item' ? props.product.locations.some(entry => entry.active) : Boolean(props.product.order_url || props.booking?.held_online))
+    : props.product.kind === 'item' ? props.product.locations.some(entry => entry.active)
+    // A membership is joined wherever it is offered, or anywhere when it is offered at no location.
+    : isMembership.value ? !props.product.locations.length || props.product.locations.some(entry => entry.active)
+    : Boolean(props.product.order_url || props.booking?.held_online))
   // Every option retired is the merchant having nothing left to sell here. The
   // booking form otherwise asked for an option it had none to offer.
   && (Boolean(props.product.order_url) || sellableVariants.value.length > 0))

@@ -802,5 +802,20 @@
   "shop.partly_made_to_order": "{stock} en stock, {made} fabriqué(s) sur commande",
   "shop.free": "Gratuit",
   "order.ready_by": "Prêt à retirer le",
-  "order.number": "Commande n° {number}"
+  "order.number": "Commande n° {number}",
+  "membership.option": "Option",
+  "membership.join": "Adhérer",
+  "membership.recurring_terms": "Vous serez débité de {terms} jusqu’à votre résiliation. Résiliez à tout moment depuis votre compte.",
+  "membership.processing": "Confirmation de votre adhésion…",
+  "membership.welcome": "Bienvenue",
+  "membership.joined": "Vous avez rejoint {title}",
+  "membership.manage": "Gérer l’adhésion",
+  "membership.not_completed": "Cette adhésion n’a pas été finalisée",
+  "membership.status": "Statut",
+  "membership.price": "Prix",
+  "membership.access_until": "Accès jusqu’au",
+  "membership.next_payment": "Prochain paiement",
+  "booking.refundable_deposit": "Dépôt de garantie remboursable de {amount}, versé séparément à l’hôte",
+  "booking.retainer_in_trust": "Provision de {amount} en compte séquestre, versée séparément au cabinet",
+  "membership.processing_later": "Stripe n’a pas encore confirmé le premier paiement. Votre adhésion apparaîtra dans votre compte dès qu’il le sera."
 }

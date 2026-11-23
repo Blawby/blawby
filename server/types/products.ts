@@ -69,7 +69,7 @@ export interface Collection {
 }
 
 /** What generating a session offering's occurrences starts from (unit `slot`). Sessions keep their own. */
-export type ProductBookingConfig = Pick<import('~/server/utils/availability').ProductBookingConfigRecord, 'duration_minutes' | 'seating_interval_minutes' | 'default_capacity' | 'confirmation_mode' | 'online_payment_required' | 'held_online' | 'scheduling_mode' | 'assigned_member_id' | 'advance_notice_minutes' | 'questions' | 'questions_revision' | 'party_size_min' | 'party_size_max' | 'minimum_guest_age' | 'accessibility_contact_required' | 'payment_basis' | 'payment_min_party_size'>
+export type ProductBookingConfig = Pick<import('~/server/utils/availability').ProductBookingConfigRecord, 'duration_minutes' | 'seating_interval_minutes' | 'default_capacity' | 'confirmation_mode' | 'online_payment_required' | 'held_online' | 'scheduling_mode' | 'assigned_member_id' | 'advance_notice_minutes' | 'questions' | 'questions_revision' | 'party_size_min' | 'party_size_max' | 'minimum_guest_age' | 'accessibility_contact_required' | 'payment_basis' | 'payment_min_party_size' | 'deposit_minor'>
 
 /**
  * A place to stay: the one location it is at and its stay settings. Times are
@@ -93,6 +93,8 @@ export interface ProductStayConfig {
   max_guests: number
   /** The listing’s required default minimum; dated arrival rules may override it. */
   min_nights: number
+  /** The refundable security deposit each new stay at this home asks for (#1908); null asks for none. */
+  deposit_minor: number | null
   /** Actual optional weekday minimums and weekend price; null means no such rules. */
   calendar_rules: import('~/shared/bookings').StayCalendarRules | null
   /** What the home is: Airbnb's property group and a type in it, both or neither; null when the host has not said. */
@@ -130,7 +132,7 @@ export interface ProductStayConfig {
 
 /** What a home is and offers; unsaid when a home is created without them. */
 export type StayListingField = 'property_type_group' | 'property_type' | 'listing_type' | 'total_floors' | 'listing_floor' | 'year_built' | 'property_size' | 'property_size_unit' | 'bedrooms' | 'beds' | 'bathrooms' | 'amenities' | 'amenity_answers' | 'cancellation_policy' | 'long_term_cancellation_policy'
-export type ProductStayConfigInput = Omit<ProductStayConfig, StayListingField | 'internal_name' | 'photo_rooms' | 'accessibility' | 'check_in_end_time' | 'calendar_rules' | 'live' | 'questions' | 'questions_revision'> & Partial<Pick<ProductStayConfig, Exclude<StayListingField, 'amenity_answers'> | 'internal_name' | 'check_in_end_time' | 'calendar_rules'>> & { amenity_answers?: import('~/shared/stay-listing').StayAmenityAnswerPatch[] }
+export type ProductStayConfigInput = Omit<ProductStayConfig, StayListingField | 'internal_name' | 'photo_rooms' | 'accessibility' | 'check_in_end_time' | 'calendar_rules' | 'live' | 'questions' | 'questions_revision' | 'deposit_minor'> & Partial<Pick<ProductStayConfig, Exclude<StayListingField, 'amenity_answers'> | 'internal_name' | 'check_in_end_time' | 'calendar_rules' | 'deposit_minor'>> & { amenity_answers?: import('~/shared/stay-listing').StayAmenityAnswerPatch[] }
 
 /** Who looks after a product: workspace state the public site never carries. */
 export type StaffAssignment = 'assigned_member_id'

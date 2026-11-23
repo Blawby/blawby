@@ -35,8 +35,8 @@ function paymentSnapshot(payment: Pick<Payment, 'id' | 'price_snapshot_json'>) {
 async function paymentPictures(db: DbClient, organizationId: string, payments: readonly Pick<Payment, 'id' | 'location_id' | 'price_snapshot_json'>[], includeBuyer = false): Promise<Map<string, PaymentPicture>> {
   if (!payments.length) return new Map()
   const subjects = await queryAll<PaymentSubject>(db, `
-    SELECT p.id, b.id AS booking_id, b.product_id, pr.name, b.starts_at, b.ends_at, b.timezone,
-      ${includeBuyer ? `COALESCE(json_extract(r.payload_json, '$.guest.name'), json_extract(bc.payload_json, '$.guest.name'), json_extract(oc.payload_json, '$.guest.name'), CASE WHEN COALESCE(u."isAnonymous", 0) = 0 THEN u.name END)` : 'NULL'} AS buyer_name
+    SELECT p.id, b.id AS booking_id, COALESCE(b.product_id, CASE WHEN p.subject_type = 'membership' THEN json_extract(p.price_snapshot_json, '$.product_id') END) AS product_id, pr.name, b.starts_at, b.ends_at, b.timezone,
+      ${includeBuyer ? `COALESCE(json_extract(r.payload_json, '$.guest.name'), json_extract(bc.payload_json, '$.guest.name'), json_extract(oc.payload_json, '$.guest.name'), json_extract(p.price_snapshot_json, '$.membership.member_name'), CASE WHEN COALESCE(u."isAnonymous", 0) = 0 THEN u.name END)` : 'NULL'} AS buyer_name
       FROM payments p
       ${paymentBookingJoin}
       LEFT JOIN products pr ON pr.id = b.product_id AND pr.organization_id = b.organization_id

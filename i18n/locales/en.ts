@@ -35,6 +35,21 @@ export default {
     "cancelled_unpaid": "Your payment was not completed, so your order was cancelled. You were not charged.",
     "cancelled_refunded": "Your order was cancelled and refunded in full. The refund comes in a separate email."
   },
+  "membership": {
+    "option": "Option",
+    "join": "Join",
+    "recurring_terms": "You will be charged {terms} until you cancel. Cancel anytime from your account.",
+    "processing": "Confirming your membership\u2026",
+    "processing_later": "Stripe has not confirmed the first payment yet. Your membership appears in your account once it does.",
+    "welcome": "Welcome",
+    "joined": "You joined {title}",
+    "manage": "Manage membership",
+    "not_completed": "This membership was not completed",
+    "status": "Status",
+    "price": "Price",
+    "access_until": "Access until",
+    "next_payment": "Next payment"
+  },
   "shop": {
     "add_to_cart": "Add to cart",
     "cart": "Cart",
@@ -393,6 +408,8 @@ export default {
     "time_unavailable": "Time unavailable"
   },
   "booking": {
+    "refundable_deposit": "Refundable deposit of {amount}, paid to the host separately",
+    "retainer_in_trust": "Retainer of {amount} held in trust, paid to the firm separately",
     "confirmed": "Booking confirmed",
     "request_received": "Request received",
     "request_declined": "Booking request declined",

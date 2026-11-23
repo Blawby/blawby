@@ -802,5 +802,20 @@
   "shop.partly_made_to_order": "{stock} disponibili, {made} su ordinazione",
   "shop.free": "Gratis",
   "order.ready_by": "Pronto per il ritiro il",
-  "order.number": "Ordine n. {number}"
+  "order.number": "Ordine n. {number}",
+  "membership.option": "Opzione",
+  "membership.join": "Iscriviti",
+  "membership.recurring_terms": "Ti verranno addebitati {terms} fino alla disdetta. Puoi disdire in qualsiasi momento dal tuo account.",
+  "membership.processing": "Stiamo confermando la tua iscrizione…",
+  "membership.welcome": "Benvenuto",
+  "membership.joined": "Ti sei iscritto a {title}",
+  "membership.manage": "Gestisci iscrizione",
+  "membership.not_completed": "Questa iscrizione non è stata completata",
+  "membership.status": "Stato",
+  "membership.price": "Prezzo",
+  "membership.access_until": "Accesso fino al",
+  "membership.next_payment": "Prossimo pagamento",
+  "booking.refundable_deposit": "Deposito cauzionale rimborsabile di {amount}, pagato separatamente all’host",
+  "booking.retainer_in_trust": "Anticipo di {amount} in deposito fiduciario, pagato separatamente allo studio",
+  "membership.processing_later": "Stripe non ha ancora confermato il primo pagamento. La tua iscrizione apparirà nel tuo account non appena lo farà."
 }

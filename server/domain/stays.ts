@@ -1389,10 +1389,16 @@ function stayLedger(stay: Stay, plan: string | null, online: StayOnlinePayment[]
   const today = localDateAt(new Date(), stay.timezone)
   // A payment naming no month is the checkout's, which paid the first.
   const monthOf = (payment: StayOnlinePayment) => payment.period_start ?? periods[0]!.period_start
-  return periods.map(period => {
-    const paid = online.filter(payment => monthOf(payment) === period.period_start)
-      .reduce((sum, payment) => sum + payment.captured_minor - payment.refunded_minor, 0)
-      + offline.filter(payment => payment.period_start === period.period_start).reduce((sum, payment) => sum + payment.amount_minor, 0)
+  const starts = new Set(periods.map(period => period.period_start))
+  const named = periods.map(period => online.filter(payment => monthOf(payment) === period.period_start)
+    .reduce((sum, payment) => sum + payment.captured_minor - payment.refunded_minor, 0)
+    + offline.filter(payment => payment.period_start === period.period_start).reduce((sum, payment) => sum + payment.amount_minor, 0))
+  // A receipt recorded for the stay as a whole, or for a month its dates no longer have, pays the oldest months first; what is left over (or refunded) is the last month's.
+  let unassigned = offline.filter(payment => payment.period_start === null || !starts.has(payment.period_start)).reduce((sum, payment) => sum + payment.amount_minor, 0)
+  return periods.map((period, index) => {
+    const applied = Math.max(0, Math.min(unassigned, period.amount_minor - named[index]!))
+    unassigned -= applied
+    const paid = named[index]! + applied + (index === periods.length - 1 ? unassigned : 0)
     const status = paid >= period.amount_minor ? 'paid' : paid > 0 ? 'partial' : period.period_start < today ? 'overdue' : period.period_start === today ? 'due' : 'upcoming'
     return { ...period, paid_minor: paid, status }
   })
@@ -2754,7 +2760,7 @@ export async function recordStayPayment(db: DbClient, env: CloudflareEnv, access
     const months = result.stay.installments
     const month = result.payment.period_start ? months?.find(period => period.period_start === result.payment.period_start) : undefined
     const checkout = result.stay.online_payments[0]
-    if (month && checkout && month.period_start !== months![0]!.period_start) {
+    if (month && checkout) {
       await settleInstallmentOutside(env, await requirePayment(db, access.organizationId, checkout.payment_id), stayId, month.period_start, month.amount_minor - month.paid_minor)
     }
     return result
@@ -2775,7 +2781,7 @@ export async function recordStayPayment(db: DbClient, env: CloudflareEnv, access
   return settle(recorded)
 }
 
-export async function deleteStayPayment(db: DbClient, env: GuestInboxPublicationEnv, access: StayAccess, stayId: string, paymentId: string): Promise<StayDetail> {
+export async function deleteStayPayment(db: DbClient, env: CloudflareEnv, access: StayAccess, stayId: string, paymentId: string): Promise<StayDetail> {
   requireManager(access)
   const stay = await getStay(db, access, stayId)
   if (!stay.payments.some(payment => payment.id === paymentId)) fail(404, 'PAYMENT_NOT_FOUND', 'That payment is not on this stay')
@@ -2784,7 +2790,13 @@ export async function deleteStayPayment(db: DbClient, env: GuestInboxPublication
     organizationEventQuery({ organizationId: access.organizationId, locationId: stay.location_id, actorId: access.actorId, eventType: 'stay.payment_deleted', entityType: 'stay', entityId: stayId, metadata: { payment_id: paymentId }, onlyIfPreviousChangedOneRow: true }),
   ], { operation: 'Delete stay payment' })
   await publishStayInvalidation(env, { type: 'stay.changed', organization_id: access.organizationId, location_id: stay.location_id, product_id: stay.product_id, booking_id: stayId }, { version: stay.version })
-  return getStay(db, access, stayId)
+  const updated = await getStay(db, access, stayId)
+  // A receipt removed from a later month Stripe collects gives Stripe that month's amount back to collect.
+  const removed = stay.payments.find(payment => payment.id === paymentId)!
+  const month = removed.period_start ? updated.installments?.find(period => period.period_start === removed.period_start) : undefined
+  const checkout = updated.online_payments[0]
+  if (month && checkout) await settleInstallmentOutside(env, await requirePayment(db, access.organizationId, checkout.payment_id), stayId, month.period_start, month.amount_minor - month.paid_minor)
+  return updated
 }
 
 /**

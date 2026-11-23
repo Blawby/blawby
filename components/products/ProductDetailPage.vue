@@ -405,7 +405,7 @@
             <p v-if="product.description" class="mt-6 text-base sm:text-lg leading-relaxed text-muted">{{ product.description }}</p>
             <p v-if="!isAvailable" class="mt-6 font-semibold text-muted">{{ t('site.common.temporarily_unavailable') }}</p>
             <ProductBuyPanel v-if="product.kind === 'item' && isAvailable && !product.order_url" :product="product" :location-id="location?.id ?? null" class="mt-8" @variant="value => chosenVariantId = value" />
-            <MembershipJoinPanel v-if="isMembership && isAvailable && !scopeRequired" :product="product" :location-id="location?.id ?? null" :currency="currency" class="mt-8 max-w-md" />
+            <MembershipJoinPanel v-if="isMembership && isAvailable && !scopeRequired && (location || !product.locations.length)" :product="product" :location-id="location?.id ?? null" :currency="currency" class="mt-8 max-w-md" />
             <div v-if="product.kind !== 'item' || product.order_url" class="mt-8 flex flex-wrap items-center gap-5">
               <TenantButton v-if="canEnquire" :to="enquiryPath">{{ t('site.experience_detail.enquire') }}</TenantButton>
               <TenantButton

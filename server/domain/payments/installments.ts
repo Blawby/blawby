@@ -4,7 +4,7 @@ import { publishEvent } from '~/server/events'
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { paymentsStripe, platformLivemode } from '~/server/utils/stripe-connect'
 import { isStayInstallments, type StayInstallment } from '~/shared/stay-installments'
-import { localDateTimeToInstant } from '~/utils/timezone'
+import { localDateAt, localDateTimeToInstant } from '~/utils/timezone'
 import { quotePaymentsBillingFx, paymentsBillingBasis } from './fx'
 import type { Payment } from './index'
 import { paymentUsageEventQuery } from './usage'
@@ -136,41 +136,63 @@ export async function recordPaidInvoice(db: DbClient, stripe: Stripe, env: Cloud
 }
 
 /**
- * Money a stay's guest paid outside Stripe toward a month Stripe would charge:
- * Stripe is left to collect only what is still owed. A month not yet due has
- * its draft invoice lowered to the rest, or deleted when nothing is left; a
- * month Stripe already tried (open, its card failing) is voided, and the rest,
- * if any, is a new invoice charged now to the same card. A month Stripe
- * collected keeps its payment.
+ * A later month of a stay paid monthly, after money for it was recorded
+ * outside Stripe or such a record was removed: Stripe is left to collect
+ * exactly what the month still owes, on the card saved at checkout. A month
+ * not yet due has its draft invoice set to that amount, deleted when nothing
+ * is owed, or created when one is owed and none is scheduled. A month Stripe
+ * already tried (open, its card failing) gets its replacement first, charged
+ * now, and is then voided, so a retry finds the replacement by its key.
  */
 export async function settleInstallmentOutside(env: CloudflareEnv, payment: Payment, bookingId: string, periodStart: string, remaining: number): Promise<void> {
-  if (!checkoutPlan(payment)) return
+  const plan = checkoutPlan(payment)
+  if (!plan) return
+  const period = plan.installments.find(entry => entry.period_start === periodStart)
+  if (!period || period === plan.installments[0]) return
   const stripe = paymentsStripe(env, Boolean(payment.livemode))
   const account = { stripeAccount: payment.stripe_account_id }
   const customer = await buyerCustomer(env.DB, payment)
+  const currency = payment.currency.toLowerCase()
+  const description = `${plan.title}, ${period.period_start} to ${period.period_end}`
+  const metadata = { [BOOKING_KEY]: bookingId, blawby_payment_id: payment.id, blawby_period_start: period.period_start, blawby_period_end: period.period_end }
+  const tax = { ...(plan.tax_behavior === 'unspecified' ? {} : { tax_behavior: plan.tax_behavior as 'inclusive' | 'exclusive' }), ...(plan.tax_code ? { tax_code: plan.tax_code } : {}) }
+  const scheduled: Stripe.Invoice[] = []
   for (const status of ['draft', 'open'] as const) {
     for await (const invoice of stripe.invoices.list({ customer, status, limit: 100, expand: ['data.lines'] }, account)) {
-      if (invoice.metadata?.[BOOKING_KEY] !== bookingId || invoice.metadata?.blawby_period_start !== periodStart) continue
-      if (status === 'draft') {
-        if (remaining <= 0) { await stripe.invoices.del(invoice.id!, account); continue }
-        const line = invoice.lines.data[0]
-        const item = typeof line?.parent?.invoice_item_details?.invoice_item === 'string' ? line.parent.invoice_item_details.invoice_item : null
-        if (!item || invoice.lines.data.length !== 1) throw new Error(`Monthly stay invoice ${invoice.id} has no single month to lower`)
-        if (line!.amount !== remaining) await stripe.invoiceItems.update(item, { amount: remaining }, account)
-        continue
-      }
-      await stripe.invoices.voidInvoice(invoice.id!, {}, account)
-      if (remaining <= 0) continue
-      const metadata = { ...invoice.metadata, blawby_replaces_invoice: invoice.id! }
-      const rest = await stripe.invoices.create({
-        customer, currency: payment.currency.toLowerCase(), collection_method: 'charge_automatically', auto_advance: true,
-        default_payment_method: typeof invoice.default_payment_method === 'string' ? invoice.default_payment_method : invoice.default_payment_method?.id,
-        pending_invoice_items_behavior: 'exclude', automatic_tax: { enabled: invoice.automatic_tax.enabled }, description: invoice.description ?? undefined, metadata,
-      }, { ...account, idempotencyKey: `stay-installment-rest:${invoice.id}:${remaining}` })
-      await stripe.invoiceItems.create({ customer, invoice: rest.id, amount: remaining, currency: payment.currency.toLowerCase(), description: invoice.description ?? undefined, metadata },
-        { ...account, idempotencyKey: `stay-installment-rest-item:${invoice.id}:${remaining}` })
-      await stripe.invoices.finalizeInvoice(rest.id!, { auto_advance: true }, account)
+      if (invoice.metadata?.[BOOKING_KEY] === bookingId && invoice.metadata?.blawby_period_start === periodStart) scheduled.push(invoice)
     }
+  }
+  const card = async () => {
+    if (!payment.stripe_payment_intent_id) throw new Error(`Monthly stay payment ${payment.id} has no PaymentIntent`)
+    const intent = await stripe.paymentIntents.retrieve(payment.stripe_payment_intent_id, {}, account)
+    const method = typeof intent.payment_method === 'string' ? intent.payment_method : intent.payment_method?.id
+    if (!method) throw new Error(`Monthly stay payment ${payment.id} saved no card`)
+    return method
+  }
+  const createFor = async (amount: number, key: string, now: boolean) => {
+    const invoice = await stripe.invoices.create({
+      customer, currency, collection_method: 'charge_automatically', auto_advance: true, default_payment_method: await card(),
+      ...(now ? {} : { automatically_finalizes_at: Math.floor(localDateTimeToInstant(period.period_start, '09:00', plan.timezone, 'compatible').getTime() / 1000) }),
+      pending_invoice_items_behavior: 'exclude', automatic_tax: { enabled: plan.automatic_tax }, description, metadata,
+    }, { ...account, idempotencyKey: `stay-installment:${key}` })
+    await stripe.invoiceItems.create({ customer, invoice: invoice.id, amount, currency, description, metadata, ...tax }, { ...account, idempotencyKey: `stay-installment-item:${key}` })
+    if (now && invoice.status === 'draft') await stripe.invoices.finalizeInvoice(invoice.id!, { auto_advance: true }, account)
+  }
+  if (!scheduled.length) {
+    if (remaining > 0) await createFor(remaining, `${bookingId}:${periodStart}:${remaining}`, periodStart <= localDateAt(new Date(), plan.timezone))
+    return
+  }
+  for (const invoice of scheduled) {
+    if (invoice.status === 'draft') {
+      if (remaining <= 0) { await stripe.invoices.del(invoice.id!, account); continue }
+      const line = invoice.lines.data[0]
+      const item = typeof line?.parent?.invoice_item_details?.invoice_item === 'string' ? line.parent.invoice_item_details.invoice_item : null
+      if (!item || invoice.lines.data.length !== 1) throw new Error(`Monthly stay invoice ${invoice.id} has no single month to change`)
+      if (line!.amount !== remaining) await stripe.invoiceItems.update(item, { amount: remaining }, account)
+      continue
+    }
+    if (remaining > 0) await createFor(remaining, `${invoice.id}:${remaining}`, true)
+    await stripe.invoices.voidInvoice(invoice.id!, {}, account)
   }
 }
 

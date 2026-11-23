@@ -16,8 +16,11 @@ type Recurring = Pick<Price, 'id' | 'active' | 'currency' | 'location_id' | 'typ
 /** The one recurring offer a variant sells in this scope, or null when it sells none. Two terms at once are refused, never chosen between. */
 export function membershipPrice<T extends Recurring>(prices: readonly T[], selection: Omit<PriceSelection, 'billing'>): T | null {
   const terms = new Map<string, { interval: PriceRecurringInterval; interval_count: number }>()
+  const at = selection.at ?? new Date().toISOString()
   for (const price of prices) {
     if (!price.active || price.type !== 'recurring' || price.currency !== selection.currency) continue
+    // Only offers in force at that moment compete: a monthly price that ended yesterday and a yearly one starting today are not two terms at once.
+    if ((price.valid_from_at && price.valid_from_at > at) || (price.valid_until_at && at >= price.valid_until_at)) continue
     if (price.location_id !== null && price.location_id !== selection.location_id) continue
     terms.set(`${price.recurring_interval}:${price.recurring_interval_count}`, { interval: price.recurring_interval!, interval_count: price.recurring_interval_count! })
   }

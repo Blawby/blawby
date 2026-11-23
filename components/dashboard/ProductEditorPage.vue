@@ -993,6 +993,12 @@ function depositMinor(): number | null | undefined {
     return minor > 0 ? minor : undefined
   } catch { return undefined }
 }
+/** The deposit a save sends; an amount that is not one never reaches it as "none". */
+function requiredDeposit(): number | null {
+  const minor = depositMinor()
+  if (minor === undefined) throw new Error('Enter the deposit as an amount, or leave it empty for none.')
+  return minor
+}
 function variantPriceMajor(variant: Product['variants'][number]): string {
   const price = variantOffer(variant)
   return price ? minorAmountToMajor(price.unit_amount, price.currency) : ''
@@ -1898,7 +1904,7 @@ async function saveBooking(concern: BookingConcern) {
     : concern === 'assignment' ? { scheduling_mode: form.scheduling_mode, assigned_member_id: form.assigned_member_id }
     : concern === 'payment' ? { online_payment_required: form.online_payment_required, payment_basis: form.payment_basis, payment_min_party_size: optionalCount(form.payment_min_party_size) }
     : concern === 'party' ? { party_size_min: optionalCount(form.party_size_min), party_size_max: optionalCount(form.party_size_max) }
-    : concern === 'guest-terms' ? { minimum_guest_age: optionalCount(form.minimum_guest_age), accessibility_contact_required: form.accessibility_contact_required, deposit_minor: depositMinor() ?? null }
+    : concern === 'guest-terms' ? { minimum_guest_age: optionalCount(form.minimum_guest_age), accessibility_contact_required: form.accessibility_contact_required, deposit_minor: requiredDeposit() }
     : concern === 'location' ? { held_online: form.held_online }
     : {}
   await dashboardApi(url, { method: 'PUT', body, validate: isRecord })

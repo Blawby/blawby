@@ -1490,6 +1490,15 @@ function assertVariantPricesConsistent(planned: PlannedProduct): void {
   }
   for (const variant of planned.variants) {
     if (variant.prices.length < 2) continue
+    // A variant sells one recurring term at a time, as one membership: monthly and yearly together are two options, so two variants.
+    const recurring = variant.prices.filter(price => price.active && price.type === 'recurring')
+    for (const [index, price] of recurring.entries()) {
+      const clash = recurring.slice(index + 1).find(other => other.currency === price.currency && (other.location_id ?? null) === (price.location_id ?? null)
+        && (other.recurring_interval !== price.recurring_interval || other.recurring_interval_count !== price.recurring_interval_count)
+        && (other.valid_until_at === null || price.valid_from_at === null || price.valid_from_at < other.valid_until_at)
+        && (price.valid_until_at === null || other.valid_from_at === null || other.valid_from_at < price.valid_until_at))
+      if (clash) invalid('A variant sells one recurring term at a time; offer another term as its own variant')
+    }
     // Refuse two simultaneously-valid offers of the same scope at write time,
     // so the person creating them sees the conflict instead of a customer
     // hitting an ambiguous selection at checkout.

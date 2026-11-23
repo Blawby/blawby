@@ -9,6 +9,10 @@
   <!-- White, as Airbnb's checkout is: Stripe's fields are white and sit on the page, not in a panel. -->
   <main class="platform-theme min-h-screen bg-white px-5 py-10 lg:py-14 text-default dark:bg-default">
     <div class="mx-auto max-w-5xl">
+      <!-- Anything but the open form is the whole screen: loading, confirming, paid, stopped. -->
+      <CheckoutState v-if="screen" v-bind="screen" :business="organization?.name ?? null" />
+      <!-- Hidden, not removed, while a state shows: Stripe's form keeps the method the buyer entered for Try again. -->
+      <div v-show="!screen">
       <div class="mb-8 flex items-center gap-4 lg:-ml-14">
         <button
           type="button"
@@ -22,10 +26,8 @@
         <h1 class="text-2xl sm:text-[32px] font-semibold tracking-tight text-highlighted">{{ t('payment.title') }}</h1>
       </div>
 
-      <USkeleton v-if="status === 'pending' || (status === 'idle' && !(mounted && !claim))" class="h-64 w-full rounded-2xl" />
-      <UAlert v-else-if="loadError" color="error" :title="t('payment.unavailable')" :description="loadError" />
       <!-- Airbnb's Confirm and pay: the method and the one button on the left, what is being bought on the right. -->
-      <div v-else-if="handoff" class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-16 items-start">
+      <div v-if="handoff" class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-16 items-start">
         <aside class="lg:sticky lg:top-8 lg:order-2 min-w-0 rounded-2xl border border-default bg-white p-6 space-y-5 dark:bg-default" data-payment-summary>
           <div class="flex gap-4 items-center">
             <img v-if="handoff.image_url" :src="handoff.image_url" alt="" class="size-24 shrink-0 rounded-xl object-cover">
@@ -117,59 +119,37 @@
         </aside>
 
         <div class="lg:order-1 min-w-0 space-y-6">
-          <p v-if="completing" class="text-sm text-muted">{{ t('payment.verifying') }}</p>
-          <UAlert v-if="verificationUrl" color="info" :title="t('payment.bank_verification')" :description="t('payment.bank_verification_help')" :actions="[{ label: t('payment.bank_verification_action'), to: verificationUrl, target: '_blank', color: 'neutral', variant: 'outline' }]" data-bank-verification />
-          <UAlert
-            v-else-if="checkoutState === 'taken'"
-            color="warning"
-            :title="t('payment.taken')"
-            :description="t('payment.taken_help')"
-            :actions="[{ label: t('payment.choose_again'), color: 'neutral', variant: 'outline', onClick: chooseAgain }]"
-          />
-          <UAlert
-            v-else-if="checkoutState === 'processing'"
-            color="info"
-            :title="t('payment.processing')"
-            :description="t('payment.processing_help')"
-            :actions="[{ label: t('payment.check_status'), color: 'neutral', variant: 'outline', loading: completing, onClick: complete }]"
-          />
-          <UAlert v-else-if="checkoutState === 'expired'" color="warning" :title="t('payment.expired')" :description="t('payment.expired_help')" />
-          <UAlert v-else-if="!completing && (paid || checkoutState === 'paid')" color="success" :title="t('payment.already_paid')" :description="receiptElsewhere ? t('payment.receipt_elsewhere') : undefined"
-            :actions="receiptElsewhere ? [{ label: t('guest_account.sign_in'), color: 'neutral', variant: 'outline', to: guestAccountUrl(platformDomain, '/login'), external: true }] : undefined" />
-          <UAlert v-else-if="checkoutState !== 'open'" color="warning" :title="t('payment.expired')" :description="t('payment.expired_help')" />
-          <template v-else>
-            <!-- No frame around Stripe's form: its fields are the only boxes, as on Airbnb's page. -->
-            <section class="space-y-4">
-              <h2 class="text-lg font-semibold text-highlighted">{{ t('payment.pay_with') }}</h2>
-              <!-- Stripe's form stays mounted; a method that carries a surcharge is shown read-only until the buyer pays or changes it. -->
-              <div v-show="!review" ref="mount" class="min-h-40" />
-              <div v-if="review" class="flex items-center justify-between gap-4">
-                <div class="space-y-1" data-payment-method>
-                  <p class="font-medium text-sm text-highlighted">{{ methodLabel }}</p>
-                  <p v-if="review.surcharge > 0" class="text-xs text-muted">{{ t('payment.surcharge_applies') }}</p>
-                </div>
-                <UButton color="neutral" variant="soft" size="sm" :label="t('payment.change')" :disabled="working" @click="changeMethod" />
+          <!-- No frame around Stripe's form: its fields are the only boxes, as on Airbnb's page. -->
+          <section class="space-y-4">
+            <h2 class="text-lg font-semibold text-highlighted">{{ t('payment.pay_with') }}</h2>
+            <!-- Stripe's form stays mounted; a method that carries a surcharge is shown read-only until the buyer pays or changes it. -->
+            <div v-show="!review" ref="mount" class="min-h-40" />
+            <div v-if="review" class="flex items-center justify-between gap-4">
+              <div class="space-y-1" data-payment-method>
+                <p class="font-medium text-sm text-highlighted">{{ methodLabel }}</p>
+                <p v-if="review.surcharge > 0" class="text-xs text-muted">{{ t('payment.surcharge_applies') }}</p>
               </div>
-            </section>
+              <UButton color="neutral" variant="soft" size="sm" :label="t('payment.change')" :disabled="working" @click="changeMethod" />
+            </div>
+          </section>
 
-            <i18n-t :keypath="laterPayments.length ? 'payment.monthly_agreement' : 'payment.agreement'" tag="p" scope="global" class="text-xs text-muted leading-relaxed">
-              <template #terms>
-                <NuxtLink v-if="termsPath" :to="termsPath" class="font-semibold text-default underline">{{ termsLabel }}</NuxtLink>
-                <template v-else>{{ termsLabel }}</template>
-              </template>
-            </i18n-t>
-            <UButton
-              size="xl"
-              block
-              :label="handoff.stay ? t('payment.pay_to_reserve', { amount: paymentMoney(review ? review.total : handoff.subtotal, handoff.currency) }) : review ? t('payment.pay', { amount: paymentMoney(review.total, review.currency) }) : t('payment.confirm')"
-              :loading="working || completing"
-              :disabled="!review && !ready"
-              class="font-semibold py-3.5 text-base"
-              @click="review ? pay() : confirmAndPay()"
-            />
-          </template>
-          <UAlert v-if="actionError" color="error" :description="actionError" />
+          <i18n-t :keypath="laterPayments.length ? 'payment.monthly_agreement' : 'payment.agreement'" tag="p" scope="global" class="text-xs text-muted leading-relaxed">
+            <template #terms>
+              <NuxtLink v-if="termsPath" :to="termsPath" class="font-semibold text-default underline">{{ termsLabel }}</NuxtLink>
+              <template v-else>{{ termsLabel }}</template>
+            </template>
+          </i18n-t>
+          <UButton
+            size="xl"
+            block
+            :label="handoff.stay ? t('payment.pay_to_reserve', { amount: paymentMoney(review ? review.total : handoff.subtotal, handoff.currency) }) : review ? t('payment.pay', { amount: paymentMoney(review.total, review.currency) }) : t('payment.confirm')"
+            :loading="working || completing"
+            :disabled="!review && !ready"
+            class="font-semibold py-3.5 text-base"
+            @click="review ? pay() : confirmAndPay()"
+          />
         </div>
+      </div>
       </div>
     </div>
   </main>
@@ -189,6 +169,7 @@ import { bookedPolicyTerms } from '~/shared/stay-cancellation'
 import { isRecord, normalizeApiError, publicApiMutation, publicApiRequest } from '~/utils/api-clients'
 import { usePaidBookingReceipt } from '~/composables/useBookingHandoff'
 import { guestAccountUrl } from '~/shared/guest-account'
+import CheckoutState from '~/components/booking/CheckoutState.vue'
 import type { paymentHandoff, reviewPayment, confirmPayment, PaymentReturn } from '~/server/domain/payments/intent'
 
 definePageMeta({ layout: 'standalone' })
@@ -230,6 +211,36 @@ const actionError = ref('')
 // Paid, but its receipt is another account's (paid from a browser signed in as someone else) or its return window closed: the confirmation email and the booking account hold it.
 const receiptElsewhere = ref(false)
 const platformDomain = useRuntimeConfig().public.platformDomain
+// The return succeeded and the receipt page is opening: what was booked, and when.
+const confirmed = ref(false)
+
+/** The one screen this checkout is on when it is not its open form. */
+const screen = computed<InstanceType<typeof CheckoutState>['$props'] | null>(() => {
+  const value = handoff.value
+  if (status.value === 'pending' || (status.value === 'idle' && !(mounted.value && !claim.value)) || (completing.value && !confirmed.value)) {
+    return { state: 'reviewing', live: true, title: t('checkout_state.reviewing'), help: t('checkout_state.keep_open') }
+  }
+  if (loadError.value) return { state: 'unavailable', title: t('payment.unavailable'), help: t('checkout_state.unavailable_help'), action: { label: t('checkout_state.back_to', { business: organization?.name ?? '' }), to: localePath('/'), quiet: true } }
+  if (!value) return null
+  const again = offeringPath.value ? { label: t('checkout_state.start_again'), to: offeringPath.value } : null
+  if (confirmed.value) {
+    return value.order ? { state: 'order_confirmed', title: t('checkout_state.order_confirmed', { number: value.order.number }) }
+      : { state: 'confirmed', title: t(value.stay ? 'checkout_state.stay_confirmed' : 'checkout_state.booking_confirmed'), help: value.title, where: value.stay ? stayRange.value : bookedWhen.value }
+  }
+  if (verificationUrl.value) return { state: 'bank_verification', title: t('payment.bank_verification'), help: t('payment.bank_verification_help'), action: { label: t('payment.bank_verification_action'), href: verificationUrl.value } }
+  if (checkoutState.value === 'taken') return { state: 'taken', title: t('payment.taken'), help: t('payment.taken_help'), action: { label: t('payment.choose_again'), onClick: chooseAgain } }
+  if (checkoutState.value === 'processing') return { state: 'processing', title: t('payment.processing'), help: t('payment.processing_help'), action: { label: t('payment.check_status'), quiet: true, loading: completing.value, onClick: complete } }
+  if (paid.value || checkoutState.value === 'paid') {
+    return { state: 'already_paid', title: t('payment.already_paid'), help: receiptElsewhere.value ? t('payment.receipt_elsewhere') : null,
+      action: receiptElsewhere.value ? { label: t('guest_account.sign_in'), href: guestAccountUrl(platformDomain, '/login'), quiet: true } : null }
+  }
+  // Stripe reports this payment failed or was cancelled: nothing was taken.
+  if (checkoutState.value === 'failed') return { state: 'not_completed', title: t('checkout_state.not_completed'), help: t('checkout_state.not_charged'), action: again && { ...again, label: t('checkout_state.try_again') } }
+  if (checkoutState.value !== 'open') return { state: 'expired', title: t('payment.expired'), help: t('payment.expired_help'), action: again }
+  // Confirming failed with Stripe's reason (a declined card); trying again returns to the form.
+  if (actionError.value) return { state: 'not_completed', title: t('checkout_state.not_completed'), help: actionError.value, action: { label: t('checkout_state.try_again'), onClick: () => { actionError.value = '' } } }
+  return null
+})
 const review = ref<Review | null>(null)
 const completing = ref(false)
 const paid = ref(false)
@@ -257,6 +268,11 @@ const guestsLabel = (count: number) => `${count} ${t(count === 1 ? 'site.experie
 /** The months after today's, from the plan the checkout froze. */
 const laterPayments = computed(() => handoff.value?.stay?.installments?.slice(1) ?? [])
 const stayTotal = computed(() => handoff.value?.stay?.nightly.reduce((sum, price) => sum + price, 0) ?? 0)
+// When a timed booking was made for, in its own clock.
+const bookedWhen = computed(() => {
+  const value = handoff.value
+  return value?.starts_at && value.timezone ? formatTimestamp(value.starts_at, locale.value, value.timezone, { dateStyle: 'medium', timeStyle: 'short' }) : ''
+})
 const stayRange = computed(() => {
   const stay = handoff.value?.stay
   return stay ? `${formatCalendarDate(stay.check_in_date, locale.value, { month: 'short', day: 'numeric' })} – ${formatCalendarDate(stay.check_out_date, locale.value, { month: 'short', day: 'numeric', year: 'numeric' })}` : ''
@@ -457,6 +473,7 @@ async function complete(): Promise<true | undefined> {
       outcome.value = done.state
       return
     }
+    confirmed.value = true
     if (done.kind === 'stay') await navigateTo({ path: localePath('/bookings/stay'), query: { id: done.activity_id }, hash: `#${done.receipt_token}` }, { replace: true })
     else if (done.kind === 'order') await navigateTo({ path: localePath('/orders/confirmed'), query: { id: done.activity_id }, hash: `#${done.receipt_token}` }, { replace: true })
     else {
@@ -472,6 +489,7 @@ async function complete(): Promise<true | undefined> {
     }
     return true
   } catch (cause) {
+    confirmed.value = false
     const code = normalizeApiError(cause).code
     stale = Boolean(context && code === 'PAYMENT_RETURN_DOCUMENT_STALE')
     if (code === 'PURCHASE_RETURN_UNAVAILABLE' && (paid.value || checkoutState.value === 'paid')) receiptElsewhere.value = true

@@ -50,14 +50,21 @@ const currency = computed(() => {
 const months = computed(() => {
   const periods = b.stayPayment.months.value
   if (!periods || !currency.value) return null
-  return periods.map(period => ({
+  return [...periods.map(period => ({
     value: period.period_start,
     label: `${formatCalendarDate(period.period_start, 'en')} · ${formatMinorAmount(Math.max(period.amount_minor - period.paid_minor, 0), currency.value!)} left`,
-  }))
+  })),
+  // One transfer covering several months, as Baselane and Zillow's rent ledgers take it: it pays the oldest months first.
+  { value: WHOLE_STAY, label: `Whole stay, oldest months first · ${formatMinorAmount(outstanding(periods), currency.value)} left` }]
 })
+const WHOLE_STAY = 'whole-stay'
+const outstanding = (periods: NonNullable<typeof b.stayPayment.months.value>) => periods.reduce((sum, period) => sum + Math.max(period.amount_minor - period.paid_minor, 0), 0)
 function fillOutstanding(start: string) {
-  const period = b.stayPayment.months.value?.find(entry => entry.period_start === start)
-  if (period && currency.value) draft.amount = minorAmountToMajor(Math.max(period.amount_minor - period.paid_minor, 0), currency.value)
+  const periods = b.stayPayment.months.value
+  if (!periods || !currency.value) return
+  if (start === WHOLE_STAY) { draft.amount = minorAmountToMajor(outstanding(periods), currency.value); return }
+  const period = periods.find(entry => entry.period_start === start)
+  if (period) draft.amount = minorAmountToMajor(Math.max(period.amount_minor - period.paid_minor, 0), currency.value)
 }
 const firstOpen = b.stayPayment.months.value?.find(period => period.status !== 'paid')
 if (firstOpen) {
@@ -72,7 +79,8 @@ async function record() {
   saving.value = true
   failure.value = ''
   try {
-    await b.stayPayment.record(draft)
+    // A receipt for the whole stay names no month; the ledger applies it to the oldest months first.
+    await b.stayPayment.record({ ...draft, period_start: draft.period_start === WHOLE_STAY ? '' : draft.period_start })
     await navigateTo(level.to.value ?? level.path.value)
   } catch (cause) {
     failure.value = getErrorMessage(cause, 'The payment could not be recorded')

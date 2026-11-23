@@ -164,7 +164,8 @@ export async function claimCheckoutReturn(db:DbClient,userId:string,token:string
  receipt?: { queries: BatchQuery[]; read: (rows: D1Result[]) => Promise<void> }, guard?: BatchQuery) {
  if(!/^[a-f0-9-]{72}$/u.test(token)) throw new HTTPError({statusCode:400,statusMessage:'Invalid Checkout return proof'})
  const hash=await tokenHash(token),now=new Date().toISOString()
- const unavailable=()=>new HTTPError({statusCode:404,statusMessage:'Purchase return proof expired or already used'})
+ // The purchase was paid but this browser's identity cannot hold its receipt: it is another account's, or the return window closed.
+ const unavailable=()=>new HTTPError({statusCode:404,statusMessage:'Purchase return proof expired or already used',data:{code:'PURCHASE_RETURN_UNAVAILABLE'}})
  const available=`SELECT p.id AS payment_id,p.claimed_at,p.buyer_user_id FROM payments p WHERE p.return_token_hash=? AND p.return_expires_at>? AND p.captured_amount>0 AND ((p.claimed_at IS NOT NULL AND p.buyer_user_id=?) OR (p.claimed_at IS NULL AND (p.buyer_user_id IS NULL OR p.buyer_user_id=? OR EXISTS(SELECT 1 FROM user u WHERE u.id=p.buyer_user_id AND u.isAnonymous=1))))`
  const params=[hash,now,userId,userId]
  const claim=payment?.return_token_hash===hash && payment.return_expires_at && payment.return_expires_at>now && payment.captured_amount>0 && payment.buyer_user_id===userId

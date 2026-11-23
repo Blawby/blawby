@@ -1,43 +1,13 @@
 <template>
   <NuxtLayout :name="site.layout">
-  <div class="min-h-screen bg-default text-default">
-    <div v-if="pending" class="flex min-h-screen items-center justify-center">
-      <TenantIcon name="arrow-path" class="size-12 animate-spin text-muted" />
-    </div>
-    <BookingConfirmation
-      v-else-if="order"
-      :kicker="order.fulfilled_at ? t(order.delivery_method === 'pickup' ? 'shop.order_collected' : 'shop.order_shipped') : t('reservations.confirmed')"
-      :cancelled="order.status === 'cancelled'"
-      :item-title="order.lines[0]?.title ?? organization.name"
-      :item-subtitle="organization.name"
-      :image-url="null"
-      :receipt-rows="receiptRows"
-      :next-steps="[]"
-      next-steps-kicker=""
-      :guest-email="order.guest?.email ?? null"
-    >
-      <template #title>{{ order.status === 'cancelled' ? t('email.subject.order_cancelled', { number: order.number }) : t('shop.order_confirmed', { number: order.number }) }}</template>
-      <template #subtitle>{{ order.status !== 'cancelled' && order.ship_by ? `${t(order.delivery_method === 'pickup' ? 'order.ready_by' : 'order.ships_by')} ${day(order.ship_by)}` : '' }}</template>
-      <template #actions>
-        <TenantButton v-if="order.tracking_url" :href="order.tracking_url" variant="outline" target="_blank" rel="noopener noreferrer">{{ t('order.track') }}</TenantButton>
-        <TenantButton v-if="order.receipt_url" :href="order.receipt_url" variant="outline" target="_blank" rel="noopener noreferrer">{{ t('shop.receipt') }}</TenantButton>
-      </template>
-    </BookingConfirmation>
-    <div v-else class="mx-auto max-w-xl px-4 pt-24 pb-24 text-center sm:px-6 lg:px-8">
-      <TenantIcon name="exclamation-triangle" class="mx-auto size-12 text-error" />
-      <h2 class="mt-6 text-xl font-bold">{{ t(loadError ? 'booking.receipt_failed' : 'booking.receipt_missing') }}</h2>
-      <p v-if="loadError" class="mt-2 text-muted">{{ loadError }}</p>
-      <TenantButton :to="localePath('/')" variant="soft" class="mt-10">{{ t('site_pages.home') }}</TenantButton>
-    </div>
-  </div>
+    <!-- The buyer's own order, opened by the confirmation link that names and signs it: one screen, as every checkout moment is. -->
+    <CheckoutState v-bind="screen" :business="organization.name" />
   </NuxtLayout>
 </template>
 
 <script setup lang="ts">
-import { shippingAddressLines } from '~/shared/goods'
 // The buyer's own order, opened by the confirmation link that names and signs it.
-import BookingConfirmation from '~/components/booking/BookingConfirmation.vue'
-import { formatMinorAmount } from '~/shared/prices'
+import CheckoutState from '~/components/booking/CheckoutState.vue'
 import { formatCalendarDate } from '~/utils/timezone'
 import { publicApiRequest, isRecord } from '~/utils/api-clients'
 import { getErrorMessage } from '~/utils/errors'
@@ -73,18 +43,16 @@ onMounted(async () => {
   }
 })
 const day = (date: string) => formatCalendarDate(date, locale.value, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
-const money = (amount: number) => formatMinorAmount(amount, order.value!.currency, locale.value)
-const receiptRows = computed(() => {
+const screen = computed<InstanceType<typeof CheckoutState>['$props']>(() => {
   const value = order.value
-  if (!value) return []
-  const address = value.shipping_details ? shippingAddressLines(value.shipping_details).join(', ') : null
-  return [
-    ...value.lines.map(line => ({ label: `${line.title}${line.variant_title ? ` · ${line.variant_title}` : ''} × ${line.quantity}`, value: money(line.unit_amount * line.quantity) })),
-    ...(value.delivery_method === 'shipping' ? [{ label: `${t('shop.shipping')} · ${value.shipping_rate_name}`, value: money(value.shipping_amount) }] : []),
-    ...(value.total !== null ? [{ label: t('payment.paid'), value: money(value.total) }] : []),
-    ...(address ? [{ label: t('order.ship_to'), value: address, wide: true }] : [{ label: t('order.pickup_at'), value: [value.location_title, value.location_address].filter(Boolean).join(', ') }]),
-    ...(value.carrier ? [{ label: t('order.carrier'), value: [value.carrier, value.tracking_number].filter(Boolean).join(' · ') }] : []),
-  ]
+  if (pending.value) return { state: 'reviewing', live: true, title: t('checkout_state.reviewing'), help: t('checkout_state.keep_open') }
+  if (!value) return { state: 'unavailable', title: t('payment.unavailable'), help: t('checkout_state.unavailable_help'), action: { label: t('checkout_state.back_to', { business: organization.name }), to: localePath('/'), quiet: true } }
+  // A cancelled order says whether money was taken: a paid one was refunded in full, an unpaid one was never charged.
+  if (value.status === 'cancelled') return { state: 'not_completed', title: t('email.subject.order_cancelled', { number: value.number }), help: t(value.receipt_url ? 'order.cancelled_refunded' : 'order.cancelled_unpaid') }
+  const sent = value.fulfilled_at ? t(value.delivery_method === 'pickup' ? 'shop.order_collected' : 'shop.order_shipped')
+    : value.ship_by ? `${t(value.delivery_method === 'pickup' ? 'order.ready_by' : 'order.ships_by')} ${day(value.ship_by)}` : null
+  return { state: 'order_confirmed', title: t('checkout_state.order_confirmed', { number: value.number }), help: sent,
+    action: value.tracking_url ? { label: t('order.track'), href: value.tracking_url } : value.receipt_url ? { label: t('checkout_state.view_order'), href: value.receipt_url, quiet: true } : null }
 })
 useSocialMetadata(() => ({ path: localePath('/orders/confirmed'), title: t('shop.checkout'), description: t('shop.checkout'), socialImage: null, discoverability: 'private' }))
 </script>

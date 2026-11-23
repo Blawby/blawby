@@ -1,4 +1,5 @@
 import { LONG_TERM_STAY_NIGHTS } from './stay-cancellation.ts'
+import { isChannelManagedStay, type StayChannel } from './bookings.ts'
 
 /**
  * How a long stay is paid (#1907): as Airbnb bills stays of 28 nights or more,
@@ -41,6 +42,29 @@ export function stayInstallments(stay: { check_in_date: string; check_out_date: 
   // A stay that fits in one month, or has a month with nothing to charge, is paid at once.
   if (periods.length < 2 || periods.some(period => period.amount_minor === 0)) return null
   return periods
+}
+
+/**
+ * A stay the host entered has its agreed total and no nightly prices: its
+ * nights share the total evenly, the odd minor units on the earliest nights,
+ * so its months add up exactly to what the guest agreed to pay.
+ */
+export function nightsFromTotal(stay: { check_in_date: string; check_out_date: string; total_minor: number }): Array<{ date: string; price_minor: number }> {
+  const dates: string[] = []
+  for (let day = new Date(`${stay.check_in_date}T00:00:00Z`); day.toISOString().slice(0, 10) < stay.check_out_date; day.setUTCDate(day.getUTCDate() + 1)) dates.push(day.toISOString().slice(0, 10))
+  if (!dates.length || !Number.isSafeInteger(stay.total_minor) || stay.total_minor < 0) throw new Error('A stay needs nights and a whole-unit total to be split by month')
+  const base = Math.floor(stay.total_minor / dates.length), extra = stay.total_minor - base * dates.length
+  return dates.map((date, index) => ({ date, price_minor: base + (index < extra ? 1 : 0) }))
+}
+
+/**
+ * A long stay the host entered (a lease paid by bank transfer, Baselane or
+ * cash) is owed by the month as one paid online is, from its agreed total.
+ * A stay its guest paid online at once, or one its channel collects, has none.
+ */
+export function enteredStayInstallments(stay: { owner: 'app' | 'channel'; channel: StayChannel; check_in_date: string; check_out_date: string; total_minor: number }, paidOnline: boolean): StayInstallment[] | null {
+  if (isChannelManagedStay(stay) || paidOnline) return null
+  return stayInstallments({ check_in_date: stay.check_in_date, check_out_date: stay.check_out_date, nightly: nightsFromTotal(stay) })
 }
 
 /** A checkout's frozen plan: its periods, or null (or, from before monthly stays, absent) for a stay paid at once. */

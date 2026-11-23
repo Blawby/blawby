@@ -34,6 +34,7 @@ import { isCurrencyCode, type CurrencyCode } from '~/shared/currencies'
 import { preparePublishedOfferingGrid, publicProduct } from '~/server/utils/product-management'
 import { PRICING_NOTE_HANDLE } from '~/shared/product-details'
 import { summarizeProductPrices } from '~/utils/product-money'
+import { isMembershipProduct } from '~/shared/memberships'
 import type { PublicLocaleRepresentation } from '~/utils/public-resource-contracts'
 import { addressPlaceName, formatPostalAddress, parsePostalAddress } from '~/utils/postal-address'
 import { getVerticalCopy } from '~/utils/vertical-copy'
@@ -211,7 +212,8 @@ function tenantPageProductRows(
   return selected.flatMap(product => {
     const offered = product.locations.filter(location => location.published && locations.has(location.location_id))
     if (collection?.location_id && !offered.some(location => location.location_id === collection.location_id)) return []
-    const online = Boolean(product.booking?.held_online || product.order_url)
+    // A membership offered at no location is joined from anywhere, as an online offering is booked.
+    const online = Boolean(product.booking?.held_online || product.order_url) || (isMembershipProduct(product) && !product.locations.length)
     if (!offered.length && !online) return []
     const locationId = collection?.location_id ?? (offered.length === 1 && !online ? offered[0]!.location_id : null)
     const scopes = locationId ? [locationId] : [...offered.map(location => location.location_id), ...(online ? [null] : [])]

@@ -1,4 +1,5 @@
 import { HTTPError } from 'nitro'
+import { isMembershipProduct } from '~/shared/memberships'
 import { getSourceLocale } from '~/server/utils/organization-locales'
 import type { GoogleReviewMetadata } from '~/shared/google-review'
 import type { PublicLocationDisclosure } from '~/types/public-location'
@@ -221,7 +222,8 @@ async function loadPublicProductCollection(
   // that one catalog rather than hydrating and checking it again per branch.
   const perLocation = locationSlug || previewAuthorized ? [catalogProducts] : locations.map(location =>
     catalogProducts.filter(product => product.locations.some(entry => entry.location_id === location.id && entry.published)))
-  const onlineProducts = locationSlug ? [] : catalogProducts.filter(product => Boolean(product.booking?.held_online || product.order_url))
+  // Offered with no place: held online, booked elsewhere, or a membership joined from anywhere.
+  const onlineProducts = locationSlug ? [] : catalogProducts.filter(product => Boolean(product.booking?.held_online || product.order_url) || (isMembershipProduct(product) && !product.locations.length))
   const seen = new Set<string>()
   // Collections and detail routes use the same explicit product kind.
   const products = (await hydrateProductMedia(db, organizationId, [...perLocation.flat(), ...onlineProducts].filter((product) => {

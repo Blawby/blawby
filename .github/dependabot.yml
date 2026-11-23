@@ -21,6 +21,13 @@ updates:
       # way to supply it. Social cards render on 0.32 until satori can take the wasm.
       - dependency-name: "satori"
         versions: [">=0.33.0"]
+      # vue-tsc requires typescript/lib/tsc, which TypeScript 7.0 no longer exports.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # @better-auth/kysely-adapter imports DEFAULT_MIGRATION_TABLE from top-level kysely,
+      # which was removed in kysely 0.29.x and breaks Nitro/Rollup bundling.
+      - dependency-name: "kysely"
+        versions: [">=0.29.0"]
 
     groups:
       better-auth:
@@ -30,6 +37,9 @@ updates:
       routine-dependencies:
         patterns: ["*"]
         exclude-patterns: ["better-auth", "@better-auth/*", "typescript"]
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
 
   - package-ecosystem: github-actions
     directory: /

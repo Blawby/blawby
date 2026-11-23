@@ -23,8 +23,8 @@ import { liveHomeSql } from '~/server/utils/billing'
 import { parsePostalAddress, type PostalAddress } from '~/utils/postal-address'
 import { calculateMapUrl, coordinatesFailure } from '~/utils/location-map'
 import { visitRefundPaymentQuery, visitRefundQueries } from '~/server/domain/payments/visit-refund'
-import { cancelStayInstallments } from '~/server/domain/payments/installments'
-import type { StayInstallment } from '~/shared/stay-installments'
+import { cancelStayInstallments, settleInstallmentOutside } from '~/server/domain/payments/installments'
+import { enteredStayInstallments, type StayInstallment } from '~/shared/stay-installments'
 import { bookedPolicyFor, LONG_TERM_STAY_NIGHTS, stayCancellationRefund, type StayBookedPolicy, type StayCancellationInput } from '~/shared/stay-cancellation'
 import { executeRefund, requirePayment, type Payment } from '~/server/domain/payments'
 import { paymentsStripe } from '~/server/utils/stripe-connect'
@@ -1384,15 +1384,21 @@ export function stayDetailFrom<A extends StayAccess>(access: A, row: unknown): S
  * first day has passed in the home's clock without being paid.
  */
 function stayLedger(stay: Stay, plan: string | null, online: StayOnlinePayment[], offline: StayPayment[]): StayLedgerPeriod[] | null {
-  if (!plan) return null
-  const periods = JSON.parse(plan) as StayInstallment[]
+  const periods = plan ? JSON.parse(plan) as StayInstallment[] : enteredStayInstallments(stay, online.length > 0)
+  if (!periods) return null
   const today = localDateAt(new Date(), stay.timezone)
   // A payment naming no month is the checkout's, which paid the first.
   const monthOf = (payment: StayOnlinePayment) => payment.period_start ?? periods[0]!.period_start
-  return periods.map(period => {
-    const paid = online.filter(payment => monthOf(payment) === period.period_start)
-      .reduce((sum, payment) => sum + payment.captured_minor - payment.refunded_minor, 0)
-      + offline.filter(payment => payment.period_start === period.period_start).reduce((sum, payment) => sum + payment.amount_minor, 0)
+  const starts = new Set(periods.map(period => period.period_start))
+  const named = periods.map(period => online.filter(payment => monthOf(payment) === period.period_start)
+    .reduce((sum, payment) => sum + payment.captured_minor - payment.refunded_minor, 0)
+    + offline.filter(payment => payment.period_start === period.period_start).reduce((sum, payment) => sum + payment.amount_minor, 0))
+  // A receipt recorded for the stay as a whole, or for a month its dates no longer have, pays the oldest months first; what is left over (or refunded) is the last month's.
+  let unassigned = offline.filter(payment => payment.period_start === null || !starts.has(payment.period_start)).reduce((sum, payment) => sum + payment.amount_minor, 0)
+  return periods.map((period, index) => {
+    const applied = Math.max(0, Math.min(unassigned, period.amount_minor - named[index]!))
+    unassigned -= applied
+    const paid = named[index]! + applied + (index === periods.length - 1 ? unassigned : 0)
     const status = paid >= period.amount_minor ? 'paid' : paid > 0 ? 'partial' : period.period_start < today ? 'overdue' : period.period_start === today ? 'due' : 'upcoming'
     return { ...period, paid_minor: paid, status }
   })
@@ -2001,8 +2007,10 @@ export async function createStay(db: DbClient, env: StayMutationEnv & Cloudflare
   const window = stayWindow(fields, home)
   // A payment the guest already made is written with the stay, so a stay never exists without it.
   const payment = input.payment === undefined || input.payment === null ? null : stayPaymentFields(input.payment, 'payment.', false)
-  // A stay the host enters is paid as a whole; only a stay paid monthly online has months.
-  if (payment?.period_start) fail(422, 'INVALID_STAY_FIELD', 'payment.period_start applies only to a stay paid monthly', 'payment.period_start')
+  // A long stay the host enters is owed by the month; a receipt taken with it names one of its months.
+  if (payment?.period_start && !enteredStayInstallments({ owner: 'app', channel, check_in_date: fields.check_in_date, check_out_date: fields.check_out_date, total_minor: fields.total_minor }, false)?.some(period => period.period_start === payment.period_start)) {
+    fail(422, 'INVALID_STAY_FIELD', 'payment.period_start is not a month of this stay', 'payment.period_start')
+  }
   // The guest's answers to the home's questions, as the host took them; a retry with other answers is another stay.
   const answered = JSON.stringify(formAnswersFingerprint(input.answers))
   const replay = async () => {
@@ -2047,10 +2055,12 @@ export async function createStay(db: DbClient, env: StayMutationEnv & Cloudflare
     writes = await executeBatch(db, [
       {
         query: `INSERT INTO bookings (id, organization_id, user_id, product_id, product_variant_id, location_id, starts_at, ends_at, timezone, party_size, adults, children, infants,
-                  status, answers, private_notes, policy_json, total_minor, currency, idempotency_key, version, channel, owner, channel_booking_id, received_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, 1, ?, 'app', ?, ?, ?, ?)`,
+                  status, answers, private_notes, policy_json, total_minor, currency, idempotency_key, version, channel, owner, channel_booking_id, received_at, created_at, updated_at, deposit_minor)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, 1, ?, 'app', ?, ?, ?, ?, (SELECT deposit_minor FROM product_booking_configs WHERE organization_id = ? AND product_id = ?))`,
+        // A direct stay asks for the home's deposit; a channel's guest pays any deposit through the channel.
         params: [id, access.organizationId, null, home.product_id, variants[0]!, home.location_id, window.starts_at, window.ends_at, home.timezone, partySize, fields.adults, fields.children, fields.infants,
-          JSON.stringify(answers), fields.private_notes, JSON.stringify(policy), fields.total_minor, home.currency, key, channel, channelBookingId, imported ? null : now, now, now],
+          JSON.stringify(answers), fields.private_notes, JSON.stringify(policy), fields.total_minor, home.currency, key, channel, channelBookingId, imported ? null : now, now, now,
+          channel === 'direct' ? access.organizationId : null, home.product_id],
       },
       ...reconcileNightsQueries(access.organizationId, id, { updated_at: now, version: 1, product_id: home.product_id, ...window, check_in_date: fields.check_in_date, check_out_date: fields.check_out_date }),
       ...bookingConversationQueries({ organizationId: access.organizationId, bookingId: id, requestId: conversationId, locationId: home.location_id, userId: null, now,
@@ -2720,7 +2730,7 @@ function stayPaymentInsert(access: StayAccess, stay: { id: string; currency: str
   ]
 }
 
-export async function recordStayPayment(db: DbClient, env: GuestInboxPublicationEnv, access: StayAccess, stayId: string, input: Record<string, unknown>): Promise<{ stay: StayDetail; payment: StayPayment }> {
+export async function recordStayPayment(db: DbClient, env: CloudflareEnv, access: StayAccess, stayId: string, input: Record<string, unknown>): Promise<{ stay: StayDetail; payment: StayPayment }> {
   requireManager(access)
   const stay = await getStay(db, access, stayId)
   if (isChannelManagedStay(stay)) channelOwned(stay, 'is paid through')
@@ -2745,32 +2755,60 @@ export async function recordStayPayment(db: DbClient, env: GuestInboxPublication
     if (!recorded) fail(409, 'PAYMENT_CHANGED', 'The payment was recorded but removed before readback. Reload the stay before another change.', 'payment_id', { committed: true, booking_id: stayId })
     return { stay: updated, payment: recorded }
   }
+  // Money paid outside Stripe toward later months Stripe would charge leaves Stripe only the rest to collect; a retry finishes it.
+  const settle = async (result: { stay: StayDetail; payment: StayPayment }) => {
+    await settleMonthsOutside(db, env, access, result.stay, result.payment, `record:${result.payment.id}`)
+    return result
+  }
   const earlier = await replay()
-  if (earlier) return earlier
+  if (earlier) return settle(earlier)
   try {
     await executeBatch(db, stayPaymentInsert(access, stay, payment, key, new Date().toISOString()), { operation: 'Record stay payment' })
   } catch (error) {
     if (/UNIQUE constraint failed: offline_payments\.organization_id, offline_payments\.idempotency_key/.test(error instanceof Error ? error.message : String(error))) {
       const concurrent = await replay()
-      if (concurrent) return concurrent
+      if (concurrent) return settle(concurrent)
     }
     throw error
   }
   const recorded = await replay()
   if (!recorded) fail(409, 'PAYMENT_CHANGED', 'The payment was recorded but removed before readback. Reload the stay before another change.', 'payment_id', { committed: true, booking_id: stayId })
-  return recorded
+  return settle(recorded)
 }
 
-export async function deleteStayPayment(db: DbClient, env: GuestInboxPublicationEnv, access: StayAccess, stayId: string, paymentId: string): Promise<StayDetail> {
+export async function deleteStayPayment(db: DbClient, env: CloudflareEnv, access: StayAccess, stayId: string, paymentId: string): Promise<StayDetail> {
   requireManager(access)
-  const stay = await getStay(db, access, stayId)
-  if (!stay.payments.some(payment => payment.id === paymentId)) fail(404, 'PAYMENT_NOT_FOUND', 'That payment is not on this stay')
+  const { query, params } = stayDetailQuery(access, stayId)
+  const row = await queryFirst<Record<string, unknown> & { offline_payments_json?: string }>(db, query, params)
+  const stay = stayDetailFrom(access, row)
+  const removed = stay.payments.find(payment => payment.id === paymentId)
+  if (!removed) fail(404, 'PAYMENT_NOT_FOUND', 'That payment is not on this stay')
+  // Stripe is told first, from the ledger as it will be without this receipt, so a failure leaves the receipt
+  // in place and the same delete retries the same Stripe writes; the delete commits only once Stripe holds the month.
+  const without = stayDetailFrom(access, { ...row!, offline_payments_json: JSON.stringify((JSON.parse(row!.offline_payments_json!) as StayPayment[]).filter(payment => payment.id !== paymentId)) })
+  await settleMonthsOutside(db, env, access, without, removed, `delete:${paymentId}`)
   await executeBatch(db, [
     { query: 'DELETE FROM offline_payments WHERE organization_id = ? AND booking_id = ? AND id = ?', params: [access.organizationId, stayId, paymentId] },
     organizationEventQuery({ organizationId: access.organizationId, locationId: stay.location_id, actorId: access.actorId, eventType: 'stay.payment_deleted', entityType: 'stay', entityId: stayId, metadata: { payment_id: paymentId }, onlyIfPreviousChangedOneRow: true }),
   ], { operation: 'Delete stay payment' })
   await publishStayInvalidation(env, { type: 'stay.changed', organization_id: access.organizationId, location_id: stay.location_id, product_id: stay.product_id, booking_id: stayId }, { version: stay.version })
   return getStay(db, access, stayId)
+}
+
+/**
+ * After an outside receipt is recorded or removed, each later month it bears
+ * on (the one it names, or every later month for one recorded for the whole
+ * stay) has Stripe collect exactly what the month still owes. A cancelled stay
+ * collects nothing more. `change` names the receipt change, so a retry of it
+ * repeats Stripe's own idempotent writes and a later change makes new ones.
+ */
+async function settleMonthsOutside(db: DbClient, env: CloudflareEnv, access: StayAccess, stay: StayDetail, receipt: Pick<StayPayment, 'period_start'>, change: string) {
+  const checkout = stay.online_payments[0]
+  if (!checkout || !stay.installments || stay.status === 'cancelled') return
+  const months = stay.installments.slice(1).filter(period => receipt.period_start === null || period.period_start === receipt.period_start)
+  if (!months.length) return
+  const payment = await requirePayment(db, access.organizationId, checkout.payment_id)
+  for (const month of months) await settleInstallmentOutside(env, payment, stay.id, month.period_start, month.amount_minor - month.paid_minor, change)
 }
 
 /**
@@ -3606,12 +3644,12 @@ export async function createStayRequest(db: DbClient, env: StayMutationEnv, inpu
   try {
     await executeBatch(db, [{
       query: `INSERT INTO bookings (id, organization_id, user_id, product_id, product_variant_id, location_id, starts_at, ends_at, timezone,
-                  party_size, adults, children, infants, status, answers, policy_json, total_minor, currency, idempotency_key, website_source, received_at, created_at, updated_at)
-              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${publicNights.query}
+                  party_size, adults, children, infants, status, answers, policy_json, total_minor, currency, idempotency_key, website_source, received_at, created_at, updated_at, deposit_minor)
+              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT deposit_minor FROM product_booking_configs WHERE organization_id = ? AND product_id = ?) WHERE ${publicNights.query}
               ON CONFLICT(organization_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`,
       params: [bookingId, organizationId, buyerUserId, home.product_id, home.variant_id, home.location_id, window.starts_at, window.ends_at, quote.timezone,
         quote.adults + quote.children, quote.adults, quote.children, quote.infants, JSON.stringify(guest.answers ?? []), JSON.stringify({ ...policy, stay_request: stayRequest }),
-        quote.total_minor, quote.currency, key, input.websiteSource, now, now, now, ...publicNights.params!],
+        quote.total_minor, quote.currency, key, input.websiteSource, now, now, now, organizationId, home.product_id, ...publicNights.params!],
     }, assertBookingBatchWrite({ query: 'EXISTS (SELECT 1 FROM bookings WHERE organization_id=? AND id=?)', params: [organizationId, bookingId] }),
     ...reconcileNightsQueries(organizationId, bookingId, { ...window, updated_at: now, version: 1, product_id: home.product_id,
       check_in_date: quote.check_in_date, check_out_date: quote.check_out_date }),
@@ -3766,12 +3804,12 @@ export function stayFromCheckoutQueries(input: { organizationId: string; stayId:
   return [
     {
       query: `INSERT INTO bookings (id, organization_id, user_id, product_id, product_variant_id, location_id, starts_at, ends_at, timezone, party_size, adults, children, infants,
-                status, answers, policy_json, total_minor, currency, idempotency_key, version, channel, owner, website_source, received_at, created_at, updated_at)
-              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, 1, 'direct', 'app', ?, ?, ?, ?
+                status, answers, policy_json, total_minor, currency, idempotency_key, version, channel, owner, website_source, received_at, created_at, updated_at, deposit_minor)
+              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, 1, 'direct', 'app', ?, ?, ?, ?, (SELECT deposit_minor FROM product_booking_configs WHERE organization_id = ? AND product_id = ?)
                WHERE EXISTS (SELECT 1 FROM payments WHERE id = ? AND organization_id = ? AND refunded_amount = 0) AND (${input.availability.query}) AND (${bookable.query})`,
       params: [input.stayId, input.organizationId, input.buyerUserId, quote.product_id, input.home.variant_id, input.home.location_id, window.starts_at, window.ends_at, input.home.timezone,
         quote.adults + quote.children, quote.adults, quote.children, quote.infants, JSON.stringify(guest.answers ?? []), input.policy, quote.total_minor, quote.currency, `checkout:${input.paymentId}`,
-        input.websiteSource, input.now, input.now, input.now, input.paymentId, input.organizationId, ...(input.availability.params ?? []), ...bookable.params],
+        input.websiteSource, input.now, input.now, input.now, input.organizationId, quote.product_id, input.paymentId, input.organizationId, ...(input.availability.params ?? []), ...bookable.params],
       event: checkoutStayChangedEvent({ organizationId: input.organizationId, stayId: input.stayId, productId: quote.product_id,
         locationId: input.home.location_id, conversationId: requestId, version: 1, range: [quote.check_in_date, quote.check_out_date], endsAt: window.ends_at }),
     },

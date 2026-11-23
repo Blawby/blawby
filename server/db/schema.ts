@@ -928,6 +928,11 @@ export const product_booking_configs = sqliteTable("product_booking_configs", {
 	// whether a guest needing access support should contact the business first.
 	minimum_guest_age: integer(),
 	accessibility_contact_required: integer({ mode: "boolean" }).default(false).notNull(),
+	// The refundable deposit (a security deposit, a retainer in trust) each new
+	// booking of this offering asks for, in the business's currency, as Vrbo and
+	// Zillow state one on the listing; the booking keeps its own copy in
+	// bookings.deposit_minor. server/utils/availability.ts writes it; >0 when set.
+	deposit_minor: integer(),
 	// What the price is charged for when the guest pays online: each guest
 	// ('per_guest', a class seat) or the booking as a whole ('per_booking', a
 	// table's deposit). payment_min_party_size: the smallest party that pays

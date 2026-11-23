@@ -69,6 +69,10 @@
         <UFormField name="accessibility_contact_required">
           <SettingRow v-model="p.form.accessibility_contact_required" :label="`Ask ${p.bookingCopy.value.guestsLabelPlural} who need access support to contact you first`" />
         </UFormField>
+        <!-- A deposit each new booking asks for: a client's retainer in trust, a damage deposit for an event. Recorded on each booking, never part of its price (#1908). -->
+        <UFormField name="deposit_minor" :label="`${legal ? 'Retainer in trust' : 'Refundable deposit'} (${p.currency})`" description="Each new booking asks for it. Leave empty for none.">
+          <UInput v-model="p.form.deposit_major" inputmode="decimal" class="w-full" data-testid="booking-deposit" />
+        </UFormField>
       </div>
       <UFormField v-else-if="concern === 'location'" name="held_online">
         <SettingRow v-model="p.form.held_online" :disabled="p.form.scheduling_mode !== 'provider' && !p.form.held_online" label="Held online" />
@@ -81,6 +85,8 @@
 
 <script setup lang="ts">
 import SettingRow from '~/components/dashboard/SettingRow.vue'
+import { majorAmountToMinor } from '~/shared/prices'
+import type { CurrencyCode } from '~/shared/currencies'
 import { productEditorKey, seatingIntervalValid, type BookingConcern } from '~/components/dashboard/ProductEditorPage.vue'
 import OfferCard from '~/components/dashboard/OfferCard.vue'
 import { offer } from '~/shared/offers'
@@ -169,9 +175,14 @@ const valid = computed(() => {
   if (concern.value === 'payment') return (!p.form.online_payment_required || paymentEntitled.value) && optionalCountValid(p.form.payment_min_party_size, 1)
   if (concern.value === 'party') return optionalCountValid(p.form.party_size_min, 1) && optionalCountValid(p.form.party_size_max, 1)
     && (!p.form.party_size_min.trim() || !p.form.party_size_max.trim() || Number(p.form.party_size_max) >= Number(p.form.party_size_min))
-  if (concern.value === 'guest-terms') return optionalCountValid(p.form.minimum_guest_age, 0)
+  if (concern.value === 'guest-terms') return optionalCountValid(p.form.minimum_guest_age, 0) && depositValid(p.form.deposit_major)
   return true
 })
+/** Empty, or a positive amount in the site's currency. */
+function depositValid(value: string) {
+  if (!value.trim()) return true
+  try { return majorAmountToMinor(value.trim(), p.currency as CurrencyCode) > 0 } catch { return false }
+}
 /** Empty, or a whole number no smaller than the least it may be. */
 function optionalCountValid(value: string, least: number) {
   return !value.trim() || (Number.isSafeInteger(Number(value)) && Number(value) >= least)

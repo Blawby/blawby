@@ -35,6 +35,34 @@ export default {
     "cancelled_unpaid": "Your payment was not completed, so your order was cancelled. You were not charged.",
     "cancelled_refunded": "Your order was cancelled and refunded in full. The refund comes in a separate email."
   },
+  "checkout_state": {
+    "reviewing": "Reviewing payment details",
+    "keep_open": "Keep this page open.",
+    "stay_confirmed": "Your stay is confirmed",
+    "booking_confirmed": "Your booking is confirmed",
+    "order_confirmed": "Thank you, your order #{number} is confirmed",
+    "view_order": "View order",
+    "membership_active": "Your membership is active",
+    "membership_ended": "This membership has ended",
+    "membership_payment_failed": "The latest payment for this membership did not go through",
+    "not_completed": "The payment was not completed.",
+    "not_charged": "You haven’t been charged.",
+    "try_again": "Try again",
+    "start_again": "Start again",
+    "sign_in": "Sign in",
+    "unavailable_help": "The link may be incomplete, or it belongs to another account.",
+    "back_to": "Back to {business}"
+  },
+  "membership": {
+    "option": "Option",
+    "join": "Join",
+    "recurring_terms": "You will be charged {terms} until you cancel. Cancel anytime from your account.",
+    "processing": "Confirming your membership\u2026",
+    "processing_later": "Stripe has not confirmed the first payment yet. Your membership appears in your account once it does.",
+    "manage": "Manage membership",
+    "access_until": "Access until",
+    "next_payment": "Next payment"
+  },
   "shop": {
     "add_to_cart": "Add to cart",
     "cart": "Cart",
@@ -106,6 +134,7 @@ export default {
     "title": "Confirm and pay",
     "unavailable": "This payment is not available.",
     "already_paid": "This booking is already paid.",
+    "receipt_elsewhere": "Your confirmation was emailed to the address used to book. Sign in with that email to see it in your account.",
     "expired": "This payment has expired.",
     "expired_help": "Start the booking again to pay for it.",
     "bank_verification": "Bank verification required",
@@ -142,7 +171,6 @@ export default {
     "pay_to_reserve": "Pay {amount} to reserve",
     "back": "Back",
     "declined": "The payment was not completed.",
-    "verifying": "Confirming your payment…",
     "processing": "Your payment is processing",
     "processing_help": "You'll get an email when your payment is complete.",
     "check_status": "Check payment status",
@@ -393,6 +421,8 @@ export default {
     "time_unavailable": "Time unavailable"
   },
   "booking": {
+    "refundable_deposit": "Refundable deposit of {amount}, paid to the host separately",
+    "retainer_in_trust": "Retainer of {amount} held in trust, paid to the firm separately",
     "confirmed": "Booking confirmed",
     "request_received": "Request received",
     "request_declined": "Booking request declined",

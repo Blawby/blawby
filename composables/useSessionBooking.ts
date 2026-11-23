@@ -76,6 +76,8 @@ export function useSessionBooking(input: MaybeRefOrGetter<SessionBookingContext>
   const checkoutRequestKey = ref<string | null>(null)
   let checkoutFingerprint: string | null = null
   const bookingError = ref('')
+  // The time filled while the guest was booking it: the booking stops on its own screen, and the guest chooses again.
+  const bookingTaken = ref(false)
   /**
    * The occurrences, as the page was served with them.
    *
@@ -103,6 +105,7 @@ export function useSessionBooking(input: MaybeRefOrGetter<SessionBookingContext>
   // A page that books more than one product (a restaurant's tables at each of its
   // locations) starts each one over: its option, its times and its form.
   watch(() => context.value.product.id, () => {
+    bookingTaken.value = false
     selectedVariantId.value = sellableVariants.value.length === 1 ? sellableVariants.value[0]!.id : null
     timeSelection.value = null
     sessions.value = [...context.value.sessions]
@@ -328,6 +331,7 @@ export function useSessionBooking(input: MaybeRefOrGetter<SessionBookingContext>
     submitting.value = true
     bookingError.value = ''
     formQuestions.clear()
+    const productId = context.value.product.id
     try {
       const fingerprint = JSON.stringify({
         organizationId: context.value.organizationId, productId: context.value.product.id,
@@ -405,6 +409,11 @@ export function useSessionBooking(input: MaybeRefOrGetter<SessionBookingContext>
         checkoutRequestKey.value = null
         checkoutFingerprint = null
       }
+      // Only the product still on screen is taken; a reply for one left behind changes nothing.
+      if (failure.code === 'capacity_unavailable') {
+        if (context.value.product.id === productId) bookingTaken.value = true
+        return
+      }
       // Changed questions are a review of what was entered, not a failure to retype.
       bookingError.value = formQuestions.handleRefusal(failure) && formQuestions.notice.value ? '' : failure.message
     } finally {
@@ -413,7 +422,7 @@ export function useSessionBooking(input: MaybeRefOrGetter<SessionBookingContext>
   }
 
     return { bookingOpen, bookingStep, contactForm, formQuestions, defaultPhoneCountry, partySize, showPartySize, allowTimezoneSelection, guestTimezone, bookingTimezone, timezoneOptions, selectedVariantId, selectedPrice, sellableVariants, variantPriceLabel,
-      timeSelection, submitting, timedQuote, quotePending, reviewSelection, bookingError, sessions, sessionsPending, availabilityDates, referenceDate, calendarMonth, lastCalendarMonth, changeMonth, guestsMin, guestsMax,
+      timeSelection, submitting, timedQuote, quotePending, reviewSelection, bookingError, bookingTaken, sessions, sessionsPending, availabilityDates, referenceDate, calendarMonth, lastCalendarMonth, changeMonth, guestsMin, guestsMax,
       selectedSession, loadSessions, openBooking, openBookingAt, upcomingSessions,
       sessionDayLabel, sessionTimeLabel, submitBooking }
 }

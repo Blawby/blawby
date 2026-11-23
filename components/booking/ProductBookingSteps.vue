@@ -1,5 +1,8 @@
 <template>
-        <div v-if="bookingStep === 1" class="flex min-h-0 flex-1 flex-col">
+        <!-- The time filled while the guest was booking: the booking stops on one screen and they choose again. Nothing was charged. -->
+        <CheckoutState v-if="bookingTaken" state="taken" :title="t('payment.taken')" :help="t('payment.taken_help')" class="min-h-0 flex-1"
+          :action="{ label: t('payment.choose_again'), onClick: chooseAgain }" />
+        <div v-else-if="bookingStep === 1" class="flex min-h-0 flex-1 flex-col">
           <!-- What is being booked. One option is not a choice; several are,
                and the guest makes it rather than the server picking an order. -->
           <fieldset v-if="sellableVariants.length > 1" class="mb-5">
@@ -67,6 +70,7 @@
 </template>
 <script setup lang="ts">
 import BookingRecap from '~/components/booking/BookingRecap.vue'
+import CheckoutState from '~/components/booking/CheckoutState.vue'
 import BookingContactForm from '~/components/booking/BookingContactForm.vue'
 import BookingTimeStep from '~/components/booking/BookingTimeStep.vue'
 import BookingTimezoneSelect from '~/components/booking/BookingTimezoneSelect.vue'
@@ -75,7 +79,13 @@ import { formatTime } from '~/utils/timezone'
 // A paid booking is not confirmed in the dialog: the guest goes on to pay, so the button says so.
 const props = defineProps<{ controller: SessionBookingController; confirmationMode: 'instant' | 'review'; phoneRequired?: boolean }>()
 const { bookingStep, contactForm, formQuestions, defaultPhoneCountry, sellableVariants, selectedVariantId, variantPriceLabel, sessionsPending,
-  availabilityDates, referenceDate, calendarMonth, lastCalendarMonth, changeMonth, timeSelection, partySize, showPartySize, allowTimezoneSelection, guestTimezone, bookingTimezone, timezoneOptions, guestsMin, guestsMax, bookingError, submitting, timedQuote, quotePending, reviewSelection, submitBooking } = props.controller
+  availabilityDates, referenceDate, calendarMonth, lastCalendarMonth, changeMonth, timeSelection, partySize, showPartySize, allowTimezoneSelection, guestTimezone, bookingTimezone, timezoneOptions, guestsMin, guestsMax, bookingError, bookingTaken, loadSessions, submitting, timedQuote, quotePending, reviewSelection, submitBooking } = props.controller
 const { t, locale } = useI18n()
 const variantGroup = useId()
+function chooseAgain() {
+  bookingTaken.value = false
+  timeSelection.value = null
+  bookingStep.value = 1
+  void loadSessions()
+}
 </script>

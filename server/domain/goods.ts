@@ -202,8 +202,9 @@ export async function saveShippingZone(db: DbClient, organizationId: string, zon
 }
 
 export async function deleteShippingZone(db: DbClient, organizationId: string, zoneId: string): Promise<void> {
-  const deleted = await executeBatch(db, [{ query: 'DELETE FROM shipping_zones WHERE organization_id = ? AND id = ?', params: [organizationId, zoneId] }], { operation: 'Delete shipping zone' })
-  if (deleted[0]?.meta.changes !== 1) fail(404, 'SHIPPING_ZONE_NOT_FOUND', 'Shipping zone not found')
+  // The zone's rates go with it, so the changed-row count is not the number of zones deleted.
+  const [deleted] = await executeBatch(db, [{ query: 'DELETE FROM shipping_zones WHERE organization_id = ? AND id = ? RETURNING id', params: [organizationId, zoneId] }], { operation: 'Delete shipping zone' })
+  if (deleted?.results.length !== 1) fail(404, 'SHIPPING_ZONE_NOT_FOUND', 'Shipping zone not found')
 }
 
 export async function setLocationPickup(db: DbClient, organizationId: string, locationId: string, enabled: boolean): Promise<void> {

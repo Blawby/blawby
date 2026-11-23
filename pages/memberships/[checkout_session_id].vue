@@ -55,6 +55,13 @@ const screen = computed<InstanceType<typeof CheckoutState>['$props']>(() => {
   if (pending.value) return { state: 'reviewing', live: true, title: t(state.value === 'processing' ? 'membership.processing' : 'checkout_state.reviewing'), help: t('checkout_state.keep_open') }
   // Stripe has not reported the first payment yet (a bank debit can take days): the member is told where it will appear, never that it was paid.
   if (state.value === 'processing' && !value) return { state: 'processing', title: t('membership.processing'), help: t('membership.processing_later') }
+  // Reopened later, the link shows the membership as Stripe has it now: ended, or waiting on a failed payment the member can fix.
+  if (value?.state === 'ended') return { state: 'expired', title: t('checkout_state.membership_ended'), help: `${value.title} · ${value.terms}`, action: { label: t('checkout_state.back_to', { business: organization.name }), to: localePath('/'), quiet: true } }
+  if (value && value.state !== 'active' && value.state !== 'cancelling') {
+    return { state: 'not_completed', title: t('checkout_state.membership_payment_failed'), help: `${value.title} · ${value.terms}`,
+      where: manageError.value || (owned.value ? null : t('payment.receipt_elsewhere')),
+      action: owned.value ? { label: t('membership.manage'), loading: opening.value, onClick: manage } : null }
+  }
   if (value) {
     const when = value.current_period_end ? `${t(value.state === 'cancelling' ? 'membership.access_until' : 'membership.next_payment')} ${day(value.current_period_end)}` : null
     return { state: 'membership_active', title: t('checkout_state.membership_active'), help: `${value.title} · ${value.terms}`,

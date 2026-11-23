@@ -820,10 +820,13 @@
   "checkout_state.order_confirmed": "Grazie, il tuo ordine n. {number} è confermato",
   "checkout_state.view_order": "Visualizza ordine",
   "checkout_state.membership_active": "La tua iscrizione è attiva",
+  "checkout_state.membership_ended": "Questo abbonamento è terminato",
+  "checkout_state.membership_payment_failed": "L’ultimo pagamento di questo abbonamento non è andato a buon fine",
   "checkout_state.not_completed": "Il pagamento non è stato completato.",
   "checkout_state.not_charged": "Non ti è stato addebitato nulla.",
   "checkout_state.try_again": "Riprova",
   "checkout_state.start_again": "Ricomincia",
+  "checkout_state.sign_in": "Accedi",
   "checkout_state.unavailable_help": "Il link potrebbe essere incompleto o appartenere a un altro account.",
   "checkout_state.back_to": "Torna a {business}"
 }

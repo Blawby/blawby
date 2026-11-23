@@ -232,14 +232,16 @@ const screen = computed<InstanceType<typeof CheckoutState>['$props'] | null>(() 
   if (checkoutState.value === 'taken') return { state: 'taken', title: t('payment.taken'), help: t('payment.taken_help'), action: { label: t('payment.choose_again'), onClick: chooseAgain } }
   if (checkoutState.value === 'processing') return { state: 'processing', title: t('payment.processing'), help: t('payment.processing_help'), action: { label: t('payment.check_status'), quiet: true, loading: completing.value, onClick: complete } }
   if (paid.value || checkoutState.value === 'paid') {
-    return { state: 'already_paid', title: t('payment.already_paid'), help: receiptElsewhere.value ? t('payment.receipt_elsewhere') : null,
-      action: receiptElsewhere.value ? { label: t('guest_account.sign_in'), href: guestAccountUrl(platformDomain, '/login'), quiet: true } : null }
+    if (receiptElsewhere.value) return { state: 'already_paid', title: t('payment.already_paid'), help: t('payment.receipt_elsewhere'), action: { label: t('checkout_state.sign_in'), href: guestAccountUrl(platformDomain, '/login'), quiet: true } }
+    // Paid, but its receipt did not open: say why and open it again; nothing is paid twice.
+    return { state: 'already_paid', title: t('payment.already_paid'), help: actionError.value || null,
+      action: actionError.value ? { label: t('checkout_state.try_again'), loading: completing.value, onClick: complete } : null }
   }
   // Stripe reports this payment failed or was cancelled: nothing was taken.
   if (checkoutState.value === 'failed') return { state: 'not_completed', title: t('checkout_state.not_completed'), help: t('checkout_state.not_charged'), action: again && { ...again, label: t('checkout_state.try_again') } }
   if (checkoutState.value !== 'open') return { state: 'expired', title: t('payment.expired'), help: t('payment.expired_help'), action: again }
   // Confirming failed with Stripe's reason (a declined card); trying again returns to the form.
-  if (actionError.value) return { state: 'not_completed', title: t('checkout_state.not_completed'), help: actionError.value, action: { label: t('checkout_state.try_again'), onClick: () => { actionError.value = '' } } }
+  if (actionError.value) return { state: 'not_completed', title: t('checkout_state.not_completed'), help: actionError.value, action: { label: t('checkout_state.try_again'), onClick: () => { actionError.value = ''; if (!stripe) mountAttempt.value++ } } }
   return null
 })
 const review = ref<Review | null>(null)
@@ -252,6 +254,8 @@ const verificationUrl = computed(() => checkoutState.value === 'expired' || chec
   ? null : confirmedVerificationUrl.value ?? handoff.value?.bank_verification_url ?? null)
 let stripe: Stripe | null = null
 let mounting = false
+// Raised when the buyer tries again after Stripe's form failed to load.
+const mountAttempt = ref(0)
 let elements: StripeElements | null = null
 let paymentElement: StripePaymentElement | null = null
 
@@ -355,7 +359,7 @@ watch(handoff, (value) => {
 // method is created first so the server can price it before anything is confirmed.
 // It mounts once both the open handoff and its container exist: the container
 // renders only after the load status settles, which is after the data arrives.
-watch([handoff, mount], async ([value, container]) => {
+watch([handoff, mount, mountAttempt], async ([value, container]) => {
   if (!value || value.state !== 'open' || !container || mounting || import.meta.server) return
   mounting = true
   try {
@@ -381,6 +385,9 @@ watch([handoff, mount], async ([value, container]) => {
     paymentElement.on('change', () => { if (review.value) review.value = null })
     paymentElement.mount(container)
   } catch (cause) {
+    stripe = null
+    elements = null
+    mounting = false
     actionError.value = getErrorMessage(cause, t('payment.unavailable'))
   }
 }, { immediate: true })

@@ -43,10 +43,13 @@ export default {
     "order_confirmed": "Thank you, your order #{number} is confirmed",
     "view_order": "View order",
     "membership_active": "Your membership is active",
+    "membership_ended": "This membership has ended",
+    "membership_payment_failed": "The latest payment for this membership did not go through",
     "not_completed": "The payment was not completed.",
     "not_charged": "You haven’t been charged.",
     "try_again": "Try again",
     "start_again": "Start again",
+    "sign_in": "Sign in",
     "unavailable_help": "The link may be incomplete, or it belongs to another account.",
     "back_to": "Back to {business}"
   },

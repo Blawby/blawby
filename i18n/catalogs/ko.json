@@ -820,10 +820,13 @@
   "checkout_state.order_confirmed": "감사합니다. 주문 #{number}이(가) 확정되었습니다",
   "checkout_state.view_order": "주문 보기",
   "checkout_state.membership_active": "멤버십이 활성화되었습니다",
+  "checkout_state.membership_ended": "이 멤버십은 종료되었습니다",
+  "checkout_state.membership_payment_failed": "이 멤버십의 최근 결제가 완료되지 않았습니다",
   "checkout_state.not_completed": "결제가 완료되지 않았습니다.",
   "checkout_state.not_charged": "요금이 청구되지 않았습니다.",
   "checkout_state.try_again": "다시 시도",
   "checkout_state.start_again": "처음부터 다시",
+  "checkout_state.sign_in": "로그인",
   "checkout_state.unavailable_help": "링크가 불완전하거나 다른 계정의 링크일 수 있습니다.",
   "checkout_state.back_to": "{business}(으)로 돌아가기"
 }

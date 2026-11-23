@@ -105,6 +105,7 @@ export function useSessionBooking(input: MaybeRefOrGetter<SessionBookingContext>
   // A page that books more than one product (a restaurant's tables at each of its
   // locations) starts each one over: its option, its times and its form.
   watch(() => context.value.product.id, () => {
+    bookingTaken.value = false
     selectedVariantId.value = sellableVariants.value.length === 1 ? sellableVariants.value[0]!.id : null
     timeSelection.value = null
     sessions.value = [...context.value.sessions]
@@ -330,6 +331,7 @@ export function useSessionBooking(input: MaybeRefOrGetter<SessionBookingContext>
     submitting.value = true
     bookingError.value = ''
     formQuestions.clear()
+    const productId = context.value.product.id
     try {
       const fingerprint = JSON.stringify({
         organizationId: context.value.organizationId, productId: context.value.product.id,
@@ -407,8 +409,9 @@ export function useSessionBooking(input: MaybeRefOrGetter<SessionBookingContext>
         checkoutRequestKey.value = null
         checkoutFingerprint = null
       }
+      // Only the product still on screen is taken; a reply for one left behind changes nothing.
       if (failure.code === 'capacity_unavailable') {
-        bookingTaken.value = true
+        if (context.value.product.id === productId) bookingTaken.value = true
         return
       }
       // Changed questions are a review of what was entered, not a failure to retype.

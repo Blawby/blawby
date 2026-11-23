@@ -820,10 +820,13 @@
   "checkout_state.order_confirmed": "謝謝，您的訂單 #{number} 已確認",
   "checkout_state.view_order": "查看訂單",
   "checkout_state.membership_active": "您的會員資格已生效",
+  "checkout_state.membership_ended": "此會員資格已結束",
+  "checkout_state.membership_payment_failed": "此會員資格的最近一次付款未成功",
   "checkout_state.not_completed": "付款未完成。",
   "checkout_state.not_charged": "您未被扣款。",
   "checkout_state.try_again": "重試",
   "checkout_state.start_again": "重新開始",
+  "checkout_state.sign_in": "登入",
   "checkout_state.unavailable_help": "連結可能不完整，或屬於其他帳戶。",
   "checkout_state.back_to": "返回 {business}"
 }

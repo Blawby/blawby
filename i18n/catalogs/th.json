@@ -820,10 +820,13 @@
   "checkout_state.order_confirmed": "ขอบคุณ คำสั่งซื้อ #{number} ของคุณได้รับการยืนยันแล้ว",
   "checkout_state.view_order": "ดูคำสั่งซื้อ",
   "checkout_state.membership_active": "การเป็นสมาชิกของคุณเริ่มใช้งานแล้ว",
+  "checkout_state.membership_ended": "สมาชิกภาพนี้สิ้นสุดแล้ว",
+  "checkout_state.membership_payment_failed": "การชำระเงินล่าสุดของสมาชิกภาพนี้ไม่สำเร็จ",
   "checkout_state.not_completed": "การชำระเงินไม่สำเร็จ",
   "checkout_state.not_charged": "คุณยังไม่ถูกเรียกเก็บเงิน",
   "checkout_state.try_again": "ลองอีกครั้ง",
   "checkout_state.start_again": "เริ่มใหม่",
+  "checkout_state.sign_in": "เข้าสู่ระบบ",
   "checkout_state.unavailable_help": "ลิงก์อาจไม่สมบูรณ์ หรือเป็นของบัญชีอื่น",
   "checkout_state.back_to": "กลับไปที่ {business}"
 }

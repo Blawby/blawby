@@ -820,10 +820,13 @@
   "checkout_state.order_confirmed": "ご注文 #{number} が確定しました。ありがとうございます",
   "checkout_state.view_order": "注文を見る",
   "checkout_state.membership_active": "メンバーシップが有効になりました",
+  "checkout_state.membership_ended": "このメンバーシップは終了しました",
+  "checkout_state.membership_payment_failed": "このメンバーシップの最新のお支払いが完了しませんでした",
   "checkout_state.not_completed": "お支払いは完了しませんでした。",
   "checkout_state.not_charged": "請求はされていません。",
   "checkout_state.try_again": "もう一度試す",
   "checkout_state.start_again": "最初からやり直す",
+  "checkout_state.sign_in": "ログイン",
   "checkout_state.unavailable_help": "リンクが不完全か、別のアカウントのものである可能性があります。",
   "checkout_state.back_to": "{business} に戻る"
 }

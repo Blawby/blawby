@@ -820,10 +820,13 @@
   "checkout_state.order_confirmed": "Gracias, tu pedido n.º {number} está confirmado",
   "checkout_state.view_order": "Ver pedido",
   "checkout_state.membership_active": "Tu membresía está activa",
+  "checkout_state.membership_ended": "Esta membresía ha finalizado",
+  "checkout_state.membership_payment_failed": "El último pago de esta membresía no se completó",
   "checkout_state.not_completed": "El pago no se completó.",
   "checkout_state.not_charged": "No se te ha cobrado nada.",
   "checkout_state.try_again": "Intentar de nuevo",
   "checkout_state.start_again": "Empezar de nuevo",
+  "checkout_state.sign_in": "Iniciar sesión",
   "checkout_state.unavailable_help": "Es posible que el enlace esté incompleto o pertenezca a otra cuenta.",
   "checkout_state.back_to": "Volver a {business}"
 }

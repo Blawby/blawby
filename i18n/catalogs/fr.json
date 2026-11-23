@@ -820,10 +820,13 @@
   "checkout_state.order_confirmed": "Merci, votre commande n° {number} est confirmée",
   "checkout_state.view_order": "Voir la commande",
   "checkout_state.membership_active": "Votre adhésion est active",
+  "checkout_state.membership_ended": "Cet abonnement a pris fin",
+  "checkout_state.membership_payment_failed": "Le dernier paiement de cet abonnement n’a pas abouti",
   "checkout_state.not_completed": "Le paiement n’a pas abouti.",
   "checkout_state.not_charged": "Vous n’avez pas été débité.",
   "checkout_state.try_again": "Réessayer",
   "checkout_state.start_again": "Recommencer",
+  "checkout_state.sign_in": "Se connecter",
   "checkout_state.unavailable_help": "Le lien est peut-être incomplet ou appartient à un autre compte.",
   "checkout_state.back_to": "Retour à {business}"
 }

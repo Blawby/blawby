@@ -7,8 +7,7 @@ import { BATCH_VIEWER, isOrganizationWideRole, memberAccessPrincipal, roleAllows
 import { MEMBER_NAME_SQL } from '~/shared/member-scheduling'
 import { PRODUCT_KIND_LABELS, productDetailFields } from '~/shared/product-details'
 import { isCurrencyCode } from '~/shared/currencies'
-import { selectPrice } from '~/shared/prices'
-import { isMembershipProduct, membershipPrice } from '~/shared/memberships'
+import { isMembershipProduct, offeredPrice } from '~/shared/memberships'
 import { formatProductMoney } from '~/utils/product-money'
 import { mediaStillUrl } from '~/shared/media-placement-contract'
 import { agreementLabel } from '~/shared/agreements'
@@ -80,7 +79,7 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
     const text = (value: unknown) => Array.isArray(value) ? value.join('\n') : typeof value === 'string' ? value : ''
     const selection = { currency, location_id: location?.id ?? null }
     // A membership's variant sells its recurring price; anything booked is priced once.
-    const chosenPrice = (variant: typeof product.variants[number]) => selectPrice(variant.prices, selection) ?? (isMembershipProduct(product) ? membershipPrice(variant.prices, selection) : null)
+    const chosenPrice = (variant: typeof product.variants[number]) => offeredPrice(variant.prices, selection, isMembershipProduct(product))
     const locationsUsed = locations.filter(entry => product.locations.some(binding => binding.location_id === entry.id))
     const prices = product.variants.map(variant => {
       const price = chosenPrice(variant)

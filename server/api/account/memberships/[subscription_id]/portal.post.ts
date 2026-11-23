@@ -10,7 +10,9 @@ export default defineHandler(async event => {
   const subscriptionId = getRouterParam(event, 'subscription_id')
   if (!session || !subscriptionId) throw new HTTPError({ statusCode: 401, statusMessage: 'Sign in to manage your membership' })
   const { return_path: returnPath } = await readRequiredBody<{ return_path?: unknown }>(event)
-  if (typeof returnPath !== 'string' || !returnPath.startsWith('/') || returnPath.startsWith('//')) throw new HTTPError({ statusCode: 400, statusMessage: 'A return path on this site is required' })
   const origin = new URL(event.req.url).origin
-  return jsonResponse(await membershipPortal(env.DB, env, session.user.id, subscriptionId, new URL(returnPath, origin).toString()))
+  // Resolved first, then held to this site: "/\\other.example" parses as another host.
+  const returnUrl = typeof returnPath === 'string' && returnPath.startsWith('/') ? new URL(returnPath, origin) : null
+  if (!returnUrl || returnUrl.origin !== origin) throw new HTTPError({ statusCode: 400, statusMessage: 'A return path on this site is required' })
+  return jsonResponse(await membershipPortal(env.DB, env, session.user.id, subscriptionId, returnUrl.toString()))
 })

@@ -448,7 +448,7 @@ import { productDetailFields, PRODUCT_KINDS, PRODUCT_KIND_LABELS, PRODUCT_KIND_I
 import { STAY_SAFETY_DETAIL_KEYS, STAY_SAFETY_SECTIONS, staySafetyLines, staySafetySectionKeys, stayAlarmLines } from '~/shared/stay-safety'
 import { isCurrencyCode } from '~/shared/currencies'
 import { majorAmountToMinor, minorAmountToMajor, scopedPriceAmountPatch, selectPrice, type Price, type PriceBilling } from '~/shared/prices'
-import { MEMBERSHIP_KINDS, membershipPrice } from '~/shared/memberships'
+import { MEMBERSHIP_KINDS, offeredPrice } from '~/shared/memberships'
 import { PRODUCT_LIMITS } from '~/shared/product-limits'
 import { formatPlanPrice } from '~/shared/billing-model'
 import { useHomesQuote } from '~/composables/usePaymentsSettings'
@@ -980,9 +980,9 @@ function priceLocationId(): string | null {
 
 /** What this location and currency pays for one variant, as a major-unit string. */
 /** The offer the price box edits: the one-time price, or a membership's recurring one where a one-time price is not set. */
-function variantOffer(variant: Product['variants'][number], booked = Boolean(product.value?.booking)): Price | null {
+function variantOffer(variant: Pick<Product['variants'][number], 'prices'>, booked = Boolean(product.value?.booking)): Price | null {
   const selection = { currency, location_id: priceLocationId(), at: new Date().toISOString() }
-  return selectPrice(variant.prices, selection) ?? (!booked && (MEMBERSHIP_KINDS as readonly string[]).includes(form.kind) ? membershipPrice(variant.prices, selection) : null)
+  return offeredPrice(variant.prices, selection, !booked && (MEMBERSHIP_KINDS as readonly string[]).includes(form.kind))
 }
 /** The deposit box as minor units: null when empty, undefined when it is not an amount. */
 function depositMinor(): number | null | undefined {
@@ -1508,7 +1508,9 @@ function payload(concern?: ProductConcern) {
       const prices = JSON.stringify(variant.billing) === JSON.stringify(variant.loaded_billing)
         ? scopedPriceAmountPatch(variant.prices, { ...selection, billing: variant.billing }, typed, loaded)
         : [...scopedPriceAmountPatch(variant.prices, { ...selection, billing: variant.loaded_billing }, '', loaded),
-          ...scopedPriceAmountPatch(variant.prices, { ...selection, billing: variant.billing }, typed, '')]
+          // The offer it becomes keeps the tax treatment of the one it replaces.
+          ...scopedPriceAmountPatch(variant.prices, { ...selection, billing: variant.billing }, typed, '')
+            .map(patch => 'id' in patch ? patch : { ...patch, tax_behavior: variantOffer(variant)?.tax_behavior ?? 'unspecified' })]
       return { ...version, ...(prices.length ? { variants: [{ id: variant.id, prices }] } : {}),
         ...(form.variants.length === 1 ? { details_mode: 'merge', details: { [PRICING_NOTE_HANDLE]: form.details[PRICING_NOTE_HANDLE] || null } } : {}),
       }

@@ -806,7 +806,7 @@
   "membership.option": "Opzione",
   "membership.join": "Iscriviti",
   "membership.recurring_terms": "Ti verranno addebitati {terms} fino alla disdetta. Puoi disdire in qualsiasi momento dal tuo account.",
-  "membership.processing": "Il pagamento è andato a buon fine. Stiamo confermando la tua iscrizione…",
+  "membership.processing": "Stiamo confermando la tua iscrizione…",
   "membership.welcome": "Benvenuto",
   "membership.joined": "Ti sei iscritto a {title}",
   "membership.manage": "Gestisci iscrizione",
@@ -816,5 +816,6 @@
   "membership.access_until": "Accesso fino al",
   "membership.next_payment": "Prossimo pagamento",
   "booking.refundable_deposit": "Deposito cauzionale rimborsabile di {amount}, pagato separatamente all’host",
-  "booking.retainer_in_trust": "Anticipo di {amount} in deposito fiduciario, pagato separatamente allo studio"
+  "booking.retainer_in_trust": "Anticipo di {amount} in deposito fiduciario, pagato separatamente allo studio",
+  "membership.processing_later": "Stripe non ha ancora confermato il primo pagamento. La tua iscrizione apparirà nel tuo account non appena lo farà."
 }

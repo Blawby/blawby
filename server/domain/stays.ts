@@ -2755,14 +2755,9 @@ export async function recordStayPayment(db: DbClient, env: CloudflareEnv, access
     if (!recorded) fail(409, 'PAYMENT_CHANGED', 'The payment was recorded but removed before readback. Reload the stay before another change.', 'payment_id', { committed: true, booking_id: stayId })
     return { stay: updated, payment: recorded }
   }
-  // Money paid outside Stripe toward a later month Stripe would charge leaves Stripe only the rest to collect; a retry finishes it.
+  // Money paid outside Stripe toward later months Stripe would charge leaves Stripe only the rest to collect; a retry finishes it.
   const settle = async (result: { stay: StayDetail; payment: StayPayment }) => {
-    const months = result.stay.installments
-    const month = result.payment.period_start ? months?.find(period => period.period_start === result.payment.period_start) : undefined
-    const checkout = result.stay.online_payments[0]
-    if (month && checkout) {
-      await settleInstallmentOutside(env, await requirePayment(db, access.organizationId, checkout.payment_id), stayId, month.period_start, month.amount_minor - month.paid_minor)
-    }
+    await settleMonthsOutside(db, env, access, result.stay, result.payment, `record:${result.payment.id}`)
     return result
   }
   const earlier = await replay()
@@ -2792,11 +2787,24 @@ export async function deleteStayPayment(db: DbClient, env: CloudflareEnv, access
   await publishStayInvalidation(env, { type: 'stay.changed', organization_id: access.organizationId, location_id: stay.location_id, product_id: stay.product_id, booking_id: stayId }, { version: stay.version })
   const updated = await getStay(db, access, stayId)
   // A receipt removed from a later month Stripe collects gives Stripe that month's amount back to collect.
-  const removed = stay.payments.find(payment => payment.id === paymentId)!
-  const month = removed.period_start ? updated.installments?.find(period => period.period_start === removed.period_start) : undefined
-  const checkout = updated.online_payments[0]
-  if (month && checkout) await settleInstallmentOutside(env, await requirePayment(db, access.organizationId, checkout.payment_id), stayId, month.period_start, month.amount_minor - month.paid_minor)
+  await settleMonthsOutside(db, env, access, updated, stay.payments.find(payment => payment.id === paymentId)!, `delete:${paymentId}`)
   return updated
+}
+
+/**
+ * After an outside receipt is recorded or removed, each later month it bears
+ * on (the one it names, or every later month for one recorded for the whole
+ * stay) has Stripe collect exactly what the month still owes. A cancelled stay
+ * collects nothing more. `change` names the receipt change, so a retry of it
+ * repeats Stripe's own idempotent writes and a later change makes new ones.
+ */
+async function settleMonthsOutside(db: DbClient, env: CloudflareEnv, access: StayAccess, stay: StayDetail, receipt: Pick<StayPayment, 'period_start'>, change: string) {
+  const checkout = stay.online_payments[0]
+  if (!checkout || !stay.installments || stay.status === 'cancelled') return
+  const months = stay.installments.slice(1).filter(period => receipt.period_start === null || period.period_start === receipt.period_start)
+  if (!months.length) return
+  const payment = await requirePayment(db, access.organizationId, checkout.payment_id)
+  for (const month of months) await settleInstallmentOutside(env, payment, stay.id, month.period_start, month.amount_minor - month.paid_minor, change)
 }
 
 /**

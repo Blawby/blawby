@@ -15,18 +15,31 @@ type Recurring = Pick<Price, 'id' | 'active' | 'currency' | 'location_id' | 'typ
 
 /** The one recurring offer a variant sells in this scope, or null when it sells none. Two terms at once are refused, never chosen between. */
 export function membershipPrice<T extends Recurring>(prices: readonly T[], selection: Omit<PriceSelection, 'billing'>): T | null {
-  const terms = new Map<string, { interval: PriceRecurringInterval; interval_count: number }>()
   const at = selection.at ?? new Date().toISOString()
-  for (const price of prices) {
-    if (!price.active || price.type !== 'recurring' || price.currency !== selection.currency) continue
-    // Only offers in force at that moment compete: a monthly price that ended yesterday and a yearly one starting today are not two terms at once.
-    if ((price.valid_from_at && price.valid_from_at > at) || (price.valid_until_at && at >= price.valid_until_at)) continue
-    if (price.location_id !== null && price.location_id !== selection.location_id) continue
-    terms.set(`${price.recurring_interval}:${price.recurring_interval_count}`, { interval: price.recurring_interval!, interval_count: price.recurring_interval_count! })
-  }
-  if (terms.size > 1) throw new AmbiguousPriceError(prices.filter(price => price.type === 'recurring' && price.active).map(price => price.id))
+  // Offers in force at that moment, in this currency and scope: a monthly price that ended yesterday and a yearly one starting today are not two terms at once.
+  const live = prices.filter(price => price.active && price.type === 'recurring' && price.currency === selection.currency
+    && !(price.valid_from_at && price.valid_from_at > at) && !(price.valid_until_at && at >= price.valid_until_at))
+  // selectPrice's scope precedence: a location's own offers govern there; the neutral ones apply only where a location has none.
+  const own = selection.location_id === null ? [] : live.filter(price => price.location_id === selection.location_id)
+  const scoped = own.length ? own : live.filter(price => price.location_id === null)
+  const terms = new Map(scoped.map(price => [`${price.recurring_interval}:${price.recurring_interval_count}`, { interval: price.recurring_interval as PriceRecurringInterval, interval_count: price.recurring_interval_count as number }]))
+  if (terms.size > 1) throw new AmbiguousPriceError(scoped.map(price => price.id))
   const [term] = terms.values()
-  return term ? selectPrice(prices, { ...selection, billing: { type: 'recurring', ...term } }) : null
+  return term ? selectPrice(prices, { ...selection, at, billing: { type: 'recurring', ...term } }) : null
+}
+
+/**
+ * The offer a variant sells in this scope, priced once or as a membership:
+ * a location's own offer, of either kind, governs there before a neutral one,
+ * as selectPrice's precedence has it. `recurring` false asks for one-time offers only.
+ */
+export function offeredPrice<T extends Recurring>(prices: readonly T[], selection: Omit<PriceSelection, 'billing'>, recurring: boolean): T | null {
+  const own = selection.location_id === null ? [] : prices.filter(price => price.location_id === selection.location_id)
+  for (const scope of own.length ? [own, prices] : [prices]) {
+    const found = selectPrice(scope, selection) ?? (recurring ? membershipPrice(scope, selection) : null)
+    if (found) return found
+  }
+  return null
 }
 
 /** A product of a membership kind with no booking or outside link, whose active variants sell a recurring price. */

@@ -806,7 +806,7 @@
   "membership.option": "選項",
   "membership.join": "加入",
   "membership.recurring_terms": "在您取消之前，將按 {terms} 收費。可隨時在您的帳戶中取消。",
-  "membership.processing": "付款成功。正在確認您的會員資格…",
+  "membership.processing": "正在確認您的會員資格…",
   "membership.welcome": "歡迎",
   "membership.joined": "您已加入 {title}",
   "membership.manage": "管理會員資格",
@@ -816,5 +816,6 @@
   "membership.access_until": "有效期至",
   "membership.next_payment": "下次付款",
   "booking.refundable_deposit": "可退還押金 {amount}，另行支付給房東",
-  "booking.retainer_in_trust": "預付委任金 {amount}（信託保管），另行支付給事務所"
+  "booking.retainer_in_trust": "預付委任金 {amount}（信託保管），另行支付給事務所",
+  "membership.processing_later": "Stripe 尚未確認首筆付款。確認後，會員資格將顯示在您的帳戶中。"
 }

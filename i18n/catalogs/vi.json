@@ -806,7 +806,7 @@
   "membership.option": "Tùy chọn",
   "membership.join": "Tham gia",
   "membership.recurring_terms": "Bạn sẽ bị tính phí {terms} cho đến khi hủy. Hủy bất cứ lúc nào từ tài khoản của bạn.",
-  "membership.processing": "Thanh toán của bạn đã thành công. Đang xác nhận tư cách thành viên…",
+  "membership.processing": "Đang xác nhận tư cách thành viên…",
   "membership.welcome": "Chào mừng",
   "membership.joined": "Bạn đã tham gia {title}",
   "membership.manage": "Quản lý thành viên",
@@ -816,5 +816,6 @@
   "membership.access_until": "Truy cập đến",
   "membership.next_payment": "Thanh toán tiếp theo",
   "booking.refundable_deposit": "Tiền đặt cọc hoàn lại {amount}, trả riêng cho chủ nhà",
-  "booking.retainer_in_trust": "Tiền ứng trước {amount} giữ trong tài khoản ủy thác, trả riêng cho văn phòng"
+  "booking.retainer_in_trust": "Tiền ứng trước {amount} giữ trong tài khoản ủy thác, trả riêng cho văn phòng",
+  "membership.processing_later": "Stripe chưa xác nhận khoản thanh toán đầu tiên. Tư cách thành viên sẽ xuất hiện trong tài khoản của bạn khi được xác nhận."
 }

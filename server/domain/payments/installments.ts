@@ -144,7 +144,7 @@ export async function recordPaidInvoice(db: DbClient, stripe: Stripe, env: Cloud
  * already tried (open, its card failing) gets its replacement first, charged
  * now, and is then voided, so a retry finds the replacement by its key.
  */
-export async function settleInstallmentOutside(env: CloudflareEnv, payment: Payment, bookingId: string, periodStart: string, remaining: number): Promise<void> {
+export async function settleInstallmentOutside(env: CloudflareEnv, payment: Payment, bookingId: string, periodStart: string, remaining: number, change: string): Promise<void> {
   const plan = checkoutPlan(payment)
   if (!plan) return
   const period = plan.installments.find(entry => entry.period_start === periodStart)
@@ -179,7 +179,7 @@ export async function settleInstallmentOutside(env: CloudflareEnv, payment: Paym
     if (now && invoice.status === 'draft') await stripe.invoices.finalizeInvoice(invoice.id!, { auto_advance: true }, account)
   }
   if (!scheduled.length) {
-    if (remaining > 0) await createFor(remaining, `${bookingId}:${periodStart}:${remaining}`, periodStart <= localDateAt(new Date(), plan.timezone))
+    if (remaining > 0) await createFor(remaining, `${bookingId}:${periodStart}:${change}`, periodStart <= localDateAt(new Date(), plan.timezone))
     return
   }
   for (const invoice of scheduled) {
@@ -191,7 +191,7 @@ export async function settleInstallmentOutside(env: CloudflareEnv, payment: Paym
       if (line!.amount !== remaining) await stripe.invoiceItems.update(item, { amount: remaining }, account)
       continue
     }
-    if (remaining > 0) await createFor(remaining, `${invoice.id}:${remaining}`, true)
+    if (remaining > 0) await createFor(remaining, `${invoice.id}:${change}`, true)
     await stripe.invoices.voidInvoice(invoice.id!, {}, account)
   }
 }

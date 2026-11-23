@@ -1,9 +1,16 @@
 <template>
   <NuxtLayout :name="site.layout">
   <div class="min-h-screen bg-default text-default">
-    <div v-if="pending || state === 'processing'" class="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
+    <div v-if="pending" class="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
       <TenantIcon name="arrow-path" class="size-12 animate-spin text-muted" />
       <p v-if="state === 'processing'" class="text-muted">{{ t('membership.processing') }}</p>
+    </div>
+    <!-- Stripe has not reported the first payment yet (a bank debit can take days): the member is told where it will appear, never that it was paid. -->
+    <div v-else-if="state === 'processing' && !membership" class="mx-auto max-w-xl px-4 pt-24 pb-24 text-center sm:px-6 lg:px-8">
+      <h2 class="text-xl font-bold">{{ t('membership.processing') }}</h2>
+      <p class="mt-2 text-muted">{{ t('membership.processing_later') }}</p>
+      <p v-if="loadError" class="mt-2 text-error">{{ loadError }}</p>
+      <TenantButton :to="localePath('/')" variant="soft" class="mt-10">{{ t('site_pages.home') }}</TenantButton>
     </div>
     <BookingConfirmation
       v-else-if="membership"
@@ -21,6 +28,7 @@
       <template #subtitle>{{ membership.terms }}</template>
       <template #actions>
         <TenantButton variant="outline" :loading="opening" data-testid="membership-manage" @click="manage">{{ t('membership.manage') }}</TenantButton>
+        <p v-if="manageError" role="alert" class="w-full text-sm text-error">{{ manageError }}</p>
         <TenantButton v-if="membership.payments[0]?.receipt_url" :href="membership.payments[0]!.receipt_url!" variant="outline" target="_blank" rel="noopener noreferrer">{{ t('shop.receipt') }}</TenantButton>
       </template>
     </BookingConfirmation>
@@ -87,9 +95,11 @@ const receiptRows = computed(() => {
 })
 
 const opening = ref(false)
+const manageError = ref('')
 async function manage() {
   if (!membership.value) return
   opening.value = true
+  manageError.value = ''
   try {
     const { url } = await publicApiMutation(`/api/account/memberships/${encodeURIComponent(membership.value.id)}/portal`, {
       method: 'POST', body: { return_path: route.fullPath },
@@ -97,7 +107,7 @@ async function manage() {
     })
     window.location.assign(url)
   } catch (cause) {
-    loadError.value = getErrorMessage(cause, t('membership.manage'))
+    manageError.value = getErrorMessage(cause, t('membership.manage'))
     opening.value = false
   }
 }

@@ -34,8 +34,8 @@
       </ul>
     </div>
     <div v-if="manage && (membership.state === 'active' || membership.state === 'payment_failed' || membership.state === 'cancelling')" class="space-y-2 border-t border-default pt-4">
-      <UButton v-if="membership.state !== 'cancelling'" block color="neutral" variant="outline" label="Cancel at the end of the period" :loading="busy === 'at_period_end'" data-testid="membership-cancel-period-end" @click="confirming = 'at_period_end'" />
-      <UButton block color="error" variant="soft" label="End membership now" :loading="busy === 'now'" data-testid="membership-cancel-now" @click="confirming = 'now'" />
+      <UButton v-if="membership.state !== 'cancelling'" block color="neutral" variant="outline" label="Cancel at the end of the period" :loading="busy === 'at_period_end'" :disabled="busy !== null" data-testid="membership-cancel-period-end" @click="confirming = 'at_period_end'" />
+      <UButton block color="error" variant="soft" label="End membership now" :loading="busy === 'now'" :disabled="busy !== null" data-testid="membership-cancel-now" @click="confirming = 'now'" />
     </div>
     <UModal :open="confirming !== null" portal="body" :title="confirming === 'now' ? 'End this membership now?' : 'Cancel at the end of the period?'" @update:open="value => { if (!value) confirming = null }">
       <template #body>

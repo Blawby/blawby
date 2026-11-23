@@ -31,7 +31,7 @@
           <section v-if="method === 'shipping'" class="space-y-3">
             <h2 class="text-lg font-semibold text-default">{{ t('shop.shipping_address') }}</h2>
             <p v-if="!countries.length" class="text-sm text-muted">{{ t('shop.no_shipping') }}</p>
-            <UFormField v-else :label="t('shop.country')"><USelect v-model="address.country" :items="countries" class="w-full" /></UFormField>
+            <UFormField v-else :label="t('shop.country')"><CountrySelect v-model="address.country" :items="countries" class="w-full" /></UFormField>
             <UFormField :label="t('shop.recipient_name')"><UInput v-model="recipient" autocomplete="shipping name" class="w-full" /></UFormField>
             <UFormField :label="t('shop.address_line1')"><UInput v-model="address.line1" autocomplete="address-line1" class="w-full" /></UFormField>
             <UFormField :label="t('shop.address_line2')"><UInput v-model="address.line2" autocomplete="address-line2" class="w-full" /></UFormField>
@@ -145,9 +145,9 @@ watch(quote, value => { if (value && !value.ship_to_countries.length && value.pi
 const address = reactive({ country: '', line1: '', line2: '', city: '', state: '', postal_code: '' })
 const countries = computed(() => {
   const names = new Intl.DisplayNames([locale.value], { type: 'region' })
-  return (quote.value?.ship_to_countries ?? []).map(code => ({ value: code, label: names.of(code) ?? code })).sort((a, b) => a.label.localeCompare(b.label))
+  return (quote.value?.ship_to_countries ?? []).map(code => ({ code, name: names.of(code) ?? code })).sort((a, b) => a.name.localeCompare(b.name))
 })
-watch(countries, list => { if (!address.country && list.length === 1) address.country = list[0]!.value }, { immediate: true })
+watch(countries, list => { if (!address.country && list.length === 1) address.country = list[0]!.code }, { immediate: true })
 const deliveryQuote = ref<OrderQuote | null>(null)
 const rateError = ref('')
 const rateId = ref<string | null>(null)

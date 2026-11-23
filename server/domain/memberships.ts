@@ -250,7 +250,7 @@ export async function readOrganizationMembership(db: DbClient, env: CloudflareEn
 }
 
 /** Where Stripe returns a member after Checkout: the membership it started, once Stripe has recorded its first payment. */
-export async function membershipCheckoutReturn(db: DbClient, env: CloudflareEnv, organizationId: string, buyerUserId: string, sessionId: string) {
+export async function membershipCheckoutReturn(db: DbClient, env: CloudflareEnv, organizationId: string, buyerUserId: string | null, sessionId: string) {
   if (!/^cs_[A-Za-z0-9_]+$/u.test(sessionId)) fail(404, 'MEMBERSHIP_NOT_FOUND', 'That membership was not found')
   // A Checkout Session's ID names its mode; the business's account in that mode holds it.
   const livemode = sessionId.startsWith('cs_live_')
@@ -258,17 +258,19 @@ export async function membershipCheckoutReturn(db: DbClient, env: CloudflareEnv,
   if (!connected) fail(404, 'MEMBERSHIP_NOT_FOUND', 'That membership was not found')
   const stripe = paymentsStripe(env, Boolean(connected.livemode))
   const session = await stripe.checkout.sessions.retrieve(sessionId, {}, { stripeAccount: connected.stripe_account_id })
-  // The session is the buyer's own: the identity that started it, or the account it later joined.
+  // Stripe hands the session ID only to whoever paid, so it shows that payer their confirmation, as Stripe's own
+  // success page does. Managing the membership stays with the account that holds it: the identity that started
+  // the session, or the account it later joined.
+  if (session.mode !== 'subscription' || session.metadata?.blawby_product_id === undefined) fail(404, 'MEMBERSHIP_NOT_FOUND', 'That membership was not found')
   const subscriptionId = typeof session.subscription === 'string' ? session.subscription : session.subscription?.id ?? null
-  const owned = session.client_reference_id === buyerUserId
-    || (subscriptionId !== null && await queryFirst(db, "SELECT 1 FROM payments WHERE organization_id = ? AND subject_type = 'membership' AND subject_id = ? AND buyer_user_id = ?", [organizationId, subscriptionId, buyerUserId]))
-  if (session.mode !== 'subscription' || !owned) fail(404, 'MEMBERSHIP_NOT_FOUND', 'That membership was not found')
-  if (session.status !== 'complete' || !subscriptionId) return { state: 'open' as const, membership: null }
+  const owned = buyerUserId !== null && (session.client_reference_id === buyerUserId
+    || Boolean(subscriptionId !== null && await queryFirst(db, "SELECT 1 FROM payments WHERE organization_id = ? AND subject_type = 'membership' AND subject_id = ? AND buyer_user_id = ?", [organizationId, subscriptionId, buyerUserId])))
+  if (session.status !== 'complete' || !subscriptionId) return { state: 'open' as const, membership: null, owned }
   const rows = await queryAll<MembershipPaymentRow>(db, `SELECT ${PAYMENT_COLUMNS} FROM payments WHERE organization_id = ? AND subject_type = 'membership' AND subject_id = ? ORDER BY created_at DESC, id DESC`, [organizationId, subscriptionId])
   // Stripe tells Blawby the first payment separately; until then the member is told it is on its way.
-  if (!rows.length) return { state: 'processing' as const, membership: null }
+  if (!rows.length) return { state: 'processing' as const, membership: null, owned }
   const [membership] = await readMemberships(env, rows)
-  return { state: 'paid' as const, membership: membership! }
+  return { state: 'paid' as const, membership: membership!, owned }
 }
 
 /**

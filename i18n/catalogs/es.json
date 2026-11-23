@@ -817,5 +817,6 @@
   "membership.next_payment": "Próximo pago",
   "booking.refundable_deposit": "Depósito reembolsable de {amount}, pagado al anfitrión por separado",
   "booking.retainer_in_trust": "Anticipo de {amount} en fideicomiso, pagado al despacho por separado",
-  "membership.processing_later": "Stripe aún no ha confirmado el primer pago. Tu membresía aparecerá en tu cuenta cuando lo haga."
+  "membership.processing_later": "Stripe aún no ha confirmado el primer pago. Tu membresía aparecerá en tu cuenta cuando lo haga.",
+  "payment.receipt_elsewhere": "Tu confirmación se envió al correo usado para reservar. Inicia sesión con ese correo para verla en tu cuenta."
 }

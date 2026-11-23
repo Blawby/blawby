@@ -10,6 +10,6 @@ export default defineHandler(async event => {
   const sessionId = getRouterParam(event, 'checkout_session_id')
   const env = cloudflareEnv(event)
   const session = await getAuthSession(event, env)
-  if (!organizationId || !sessionId || !session?.user) return jsonResponse({ error: 'Membership not found' }, { status: 404 })
-  return jsonResponse(await membershipCheckoutReturn(env.DB, env, organizationId, session.user.id, sessionId), { headers: { 'cache-control': 'private, no-store' } })
+  if (!organizationId || !sessionId) return jsonResponse({ error: 'Membership not found' }, { status: 404 })
+  return jsonResponse(await membershipCheckoutReturn(env.DB, env, organizationId, session?.user.id ?? null, sessionId), { headers: { 'cache-control': 'private, no-store' } })
 })

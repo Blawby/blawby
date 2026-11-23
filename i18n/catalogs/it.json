@@ -817,5 +817,6 @@
   "membership.next_payment": "Prossimo pagamento",
   "booking.refundable_deposit": "Deposito cauzionale rimborsabile di {amount}, pagato separatamente all’host",
   "booking.retainer_in_trust": "Anticipo di {amount} in deposito fiduciario, pagato separatamente allo studio",
-  "membership.processing_later": "Stripe non ha ancora confermato il primo pagamento. La tua iscrizione apparirà nel tuo account non appena lo farà."
+  "membership.processing_later": "Stripe non ha ancora confermato il primo pagamento. La tua iscrizione apparirà nel tuo account non appena lo farà.",
+  "payment.receipt_elsewhere": "La conferma è stata inviata all’indirizzo email usato per prenotare. Accedi con quell’email per vederla nel tuo account."
 }

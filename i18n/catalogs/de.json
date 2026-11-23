@@ -817,5 +817,6 @@
   "membership.next_payment": "Nächste Zahlung",
   "booking.refundable_deposit": "Rückzahlbare Kaution von {amount}, separat an den Gastgeber zu zahlen",
   "booking.retainer_in_trust": "Vorschuss von {amount} auf einem Treuhandkonto, separat an die Kanzlei zu zahlen",
-  "membership.processing_later": "Stripe hat die erste Zahlung noch nicht bestätigt. Deine Mitgliedschaft erscheint in deinem Konto, sobald das geschieht."
+  "membership.processing_later": "Stripe hat die erste Zahlung noch nicht bestätigt. Deine Mitgliedschaft erscheint in deinem Konto, sobald das geschieht.",
+  "payment.receipt_elsewhere": "Deine Bestätigung wurde an die bei der Buchung angegebene E-Mail-Adresse gesendet. Melde dich mit dieser E-Mail an, um sie in deinem Konto zu sehen."
 }

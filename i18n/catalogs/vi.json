@@ -817,5 +817,6 @@
   "membership.next_payment": "Thanh toán tiếp theo",
   "booking.refundable_deposit": "Tiền đặt cọc hoàn lại {amount}, trả riêng cho chủ nhà",
   "booking.retainer_in_trust": "Tiền ứng trước {amount} giữ trong tài khoản ủy thác, trả riêng cho văn phòng",
-  "membership.processing_later": "Stripe chưa xác nhận khoản thanh toán đầu tiên. Tư cách thành viên sẽ xuất hiện trong tài khoản của bạn khi được xác nhận."
+  "membership.processing_later": "Stripe chưa xác nhận khoản thanh toán đầu tiên. Tư cách thành viên sẽ xuất hiện trong tài khoản của bạn khi được xác nhận.",
+  "payment.receipt_elsewhere": "Xác nhận đã được gửi tới email dùng để đặt. Đăng nhập bằng email đó để xem trong tài khoản của bạn."
 }

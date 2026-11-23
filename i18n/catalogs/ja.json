@@ -817,5 +817,6 @@
   "membership.next_payment": "次回のお支払い",
   "booking.refundable_deposit": "返金可能なデポジット {amount}（ホストに別途お支払い）",
   "booking.retainer_in_trust": "預り金 {amount}（信託口座で保管、事務所に別途お支払い）",
-  "membership.processing_later": "Stripe はまだ初回のお支払いを確認していません。確認されるとアカウントにメンバーシップが表示されます。"
+  "membership.processing_later": "Stripe はまだ初回のお支払いを確認していません。確認されるとアカウントにメンバーシップが表示されます。",
+  "payment.receipt_elsewhere": "確認メールは予約時のメールアドレスに送信されました。そのメールアドレスでサインインすると、アカウントで確認できます。"
 }

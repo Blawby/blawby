@@ -121,6 +121,7 @@ export default {
     "title": "Confirm and pay",
     "unavailable": "This payment is not available.",
     "already_paid": "This booking is already paid.",
+    "receipt_elsewhere": "Your confirmation was emailed to the address used to book. Sign in with that email to see it in your account.",
     "expired": "This payment has expired.",
     "expired_help": "Start the booking again to pay for it.",
     "bank_verification": "Bank verification required",

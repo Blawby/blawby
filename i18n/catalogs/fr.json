@@ -817,5 +817,6 @@
   "membership.next_payment": "Prochain paiement",
   "booking.refundable_deposit": "Dépôt de garantie remboursable de {amount}, versé séparément à l’hôte",
   "booking.retainer_in_trust": "Provision de {amount} en compte séquestre, versée séparément au cabinet",
-  "membership.processing_later": "Stripe n’a pas encore confirmé le premier paiement. Votre adhésion apparaîtra dans votre compte dès qu’il le sera."
+  "membership.processing_later": "Stripe n’a pas encore confirmé le premier paiement. Votre adhésion apparaîtra dans votre compte dès qu’il le sera.",
+  "payment.receipt_elsewhere": "Votre confirmation a été envoyée à l’adresse e-mail utilisée pour réserver. Connectez-vous avec cette adresse pour la retrouver dans votre compte."
 }

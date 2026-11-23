@@ -159,6 +159,14 @@ test('an Airbnb sign-in completes only for its own person and state', async () =
     assert.equal((await owner.start()).authorization_url, started.authorization_url)
     assert.equal(channex.seen.filter(request => request.method === 'POST').length, writes)
     await assert.rejects(other.start(), code('SIGN_IN_OWNED_ELSEWHERE'))
+    // A link that ran out is replaced for whoever asks next, on the same setup property.
+    const expire = () => db.prepare("UPDATE channex_connections SET authorization_expires_at = '2000-01-01T00:00:00.000Z' WHERE organization_id = ?").bind(ORG).run()
+    await expire()
+    await other.start()
+    assert.equal(await db.prepare('SELECT authorization_user_id FROM channex_connections WHERE organization_id = ?').bind(ORG).first('authorization_user_id'), OTHER)
+    await expire()
+    await owner.start()
+    assert.deepEqual(channex.created.filter(id => id.startsWith('setup-')), ['setup-1'])
 
     // Only the person who started it, with its own state, completes it.
     await assert.rejects(other.complete(channex.token!, 'chan-1'), code('SIGN_IN_INVALID'))

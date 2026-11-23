@@ -76,6 +76,8 @@ export function useSessionBooking(input: MaybeRefOrGetter<SessionBookingContext>
   const checkoutRequestKey = ref<string | null>(null)
   let checkoutFingerprint: string | null = null
   const bookingError = ref('')
+  // The time filled while the guest was booking it: the booking stops on its own screen, and the guest chooses again.
+  const bookingTaken = ref(false)
   /**
    * The occurrences, as the page was served with them.
    *
@@ -405,6 +407,10 @@ export function useSessionBooking(input: MaybeRefOrGetter<SessionBookingContext>
         checkoutRequestKey.value = null
         checkoutFingerprint = null
       }
+      if (failure.code === 'capacity_unavailable') {
+        bookingTaken.value = true
+        return
+      }
       // Changed questions are a review of what was entered, not a failure to retype.
       bookingError.value = formQuestions.handleRefusal(failure) && formQuestions.notice.value ? '' : failure.message
     } finally {
@@ -413,7 +419,7 @@ export function useSessionBooking(input: MaybeRefOrGetter<SessionBookingContext>
   }
 
     return { bookingOpen, bookingStep, contactForm, formQuestions, defaultPhoneCountry, partySize, showPartySize, allowTimezoneSelection, guestTimezone, bookingTimezone, timezoneOptions, selectedVariantId, selectedPrice, sellableVariants, variantPriceLabel,
-      timeSelection, submitting, timedQuote, quotePending, reviewSelection, bookingError, sessions, sessionsPending, availabilityDates, referenceDate, calendarMonth, lastCalendarMonth, changeMonth, guestsMin, guestsMax,
+      timeSelection, submitting, timedQuote, quotePending, reviewSelection, bookingError, bookingTaken, sessions, sessionsPending, availabilityDates, referenceDate, calendarMonth, lastCalendarMonth, changeMonth, guestsMin, guestsMax,
       selectedSession, loadSessions, openBooking, openBookingAt, upcomingSessions,
       sessionDayLabel, sessionTimeLabel, submitBooking }
 }

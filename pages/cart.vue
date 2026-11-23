@@ -1,15 +1,12 @@
 <template>
   <NuxtLayout :name="site.layout">
-    <div class="tenant-container py-12 sm:py-16">
+    <!-- A cart that cannot go on to payment is the whole screen, as every stopped checkout is. -->
+    <CheckoutState v-if="stopped" v-bind="stopped" :business="organization.name" />
+    <div v-else class="tenant-container py-12 sm:py-16">
       <h1 class="tenant-display text-3xl sm:text-4xl text-default">{{ t('shop.cart') }}</h1>
       <div v-if="!cart.lines.value.length" class="mt-8 space-y-4">
         <p class="text-muted">{{ t('shop.cart_empty') }}</p>
         <NuxtLink :to="localePath('/products')" class="text-sm font-semibold text-default underline">{{ t('shop.continue_shopping') }}</NuxtLink>
-      </div>
-      <div v-else-if="quoteFailure" class="mt-8 space-y-3">
-        <!-- The quote names the item it could not sell, so the buyer can take it out and buy the rest. -->
-        <UAlert color="error" variant="soft" :description="quoteFailure.message" />
-        <button v-if="quoteFailure.product_variant_id" type="button" class="text-sm text-muted underline" :disabled="submitting" @click="cart.set(quoteFailure.product_variant_id, 0)">{{ t('shop.remove') }}</button>
       </div>
       <div v-else-if="quote" class="mt-8 grid gap-10 lg:grid-cols-12">
         <form class="space-y-8 lg:col-span-7" @submit.prevent="checkout">
@@ -57,7 +54,6 @@
             <UFormField :label="t('forms.phone')"><UInput v-model="guest.phone" type="tel" autocomplete="tel" class="w-full" /></UFormField>
             <UFormField :label="t('shop.note')"><UTextarea v-model="note" :rows="3" class="w-full" /></UFormField>
           </section>
-          <UAlert v-if="submitError" color="error" variant="soft" :description="submitError" />
           <TenantButton type="submit" class="w-full" :disabled="!ready || submitting">{{ t('shop.continue_to_payment') }}</TenantButton>
           <!-- What still stops the order, said on the page rather than left to the browser. -->
           <p v-if="missing.length" class="text-sm text-muted">{{ t('shop.still_needed', { fields: missing.join(', ') }) }}</p>
@@ -97,6 +93,7 @@ import { formatMinorAmount } from '~/shared/prices'
 import { formatCalendarDate } from '~/utils/timezone'
 import { ApiClientError, publicApiMutation, isRecord } from '~/utils/api-clients'
 import { getErrorMessage } from '~/utils/errors'
+import CheckoutState from '~/components/booking/CheckoutState.vue'
 import type { OrderQuote } from '~/server/domain/goods'
 
 definePageMeta({ layout: false })
@@ -112,6 +109,16 @@ const money = (amount: number) => quote.value ? formatMinorAmount(amount, quote.
 
 const quote = ref<OrderQuote | null>(null)
 const quoteFailure = ref<{ message: string; product_variant_id: string | null } | null>(null)
+/** Nothing was paid yet, so a cart that stops says so: the item it cannot sell (with the way to take it out), or why checkout did not start. */
+const stopped = computed<InstanceType<typeof CheckoutState>['$props'] | null>(() => {
+  if (cart.lines.value.length && quoteFailure.value) {
+    const variantId = quoteFailure.value.product_variant_id
+    return { state: 'not_completed', title: t('checkout_state.not_completed'), help: quoteFailure.value.message,
+      action: variantId ? { label: t('shop.remove'), quiet: true, onClick: () => cart.set(variantId, 0) } : null }
+  }
+  if (submitError.value) return { state: 'not_completed', title: t('checkout_state.not_completed'), help: `${submitError.value} ${t('checkout_state.not_charged')}`, action: { label: t('checkout_state.try_again'), onClick: () => { submitError.value = '' } } }
+  return null
+})
 // Only the newest request's answer is shown: an earlier cart's quote can arrive after a later one.
 let priceRequest = 0
 async function price() {

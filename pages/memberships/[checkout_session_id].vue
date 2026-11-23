@@ -1,52 +1,14 @@
 <template>
   <NuxtLayout :name="site.layout">
-  <div class="min-h-screen bg-default text-default">
-    <div v-if="pending" class="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
-      <TenantIcon name="arrow-path" class="size-12 animate-spin text-muted" />
-      <p v-if="state === 'processing'" class="text-muted">{{ t('membership.processing') }}</p>
-    </div>
-    <!-- Stripe has not reported the first payment yet (a bank debit can take days): the member is told where it will appear, never that it was paid. -->
-    <div v-else-if="state === 'processing' && !membership" class="mx-auto max-w-xl px-4 pt-24 pb-24 text-center sm:px-6 lg:px-8">
-      <h2 class="text-xl font-bold">{{ t('membership.processing') }}</h2>
-      <p class="mt-2 text-muted">{{ t('membership.processing_later') }}</p>
-      <p v-if="loadError" class="mt-2 text-error">{{ loadError }}</p>
-      <TenantButton :to="localePath('/')" variant="soft" class="mt-10">{{ t('site_pages.home') }}</TenantButton>
-    </div>
-    <BookingConfirmation
-      v-else-if="membership"
-      :kicker="t('membership.welcome')"
-      :cancelled="membership.state === 'ended'"
-      :item-title="membership.title"
-      :item-subtitle="organization.name"
-      :image-url="null"
-      :receipt-rows="receiptRows"
-      :next-steps="[]"
-      next-steps-kicker=""
-      :guest-email="membership.member_email"
-    >
-      <template #title>{{ t('membership.joined', { title: membership.title }) }}</template>
-      <template #subtitle>{{ membership.terms }}</template>
-      <template #actions>
-        <TenantButton v-if="owned" variant="outline" :loading="opening" data-testid="membership-manage" @click="manage">{{ t('membership.manage') }}</TenantButton>
-        <p v-else class="w-full text-sm text-muted">{{ t('payment.receipt_elsewhere') }}</p>
-        <p v-if="manageError" role="alert" class="w-full text-sm text-error">{{ manageError }}</p>
-        <TenantButton v-if="membership.payments[0]?.receipt_url" :href="membership.payments[0]!.receipt_url!" variant="outline" target="_blank" rel="noopener noreferrer">{{ t('shop.receipt') }}</TenantButton>
-      </template>
-    </BookingConfirmation>
-    <div v-else class="mx-auto max-w-xl px-4 pt-24 pb-24 text-center sm:px-6 lg:px-8">
-      <TenantIcon name="exclamation-triangle" class="mx-auto size-12 text-error" />
-      <h2 class="mt-6 text-xl font-bold">{{ t(loadError ? 'booking.receipt_failed' : 'membership.not_completed') }}</h2>
-      <p v-if="loadError" class="mt-2 text-muted">{{ loadError }}</p>
-      <TenantButton :to="localePath('/')" variant="soft" class="mt-10">{{ t('site_pages.home') }}</TenantButton>
-    </div>
-  </div>
+    <!-- Where Stripe returns a member after Checkout: one screen, as every checkout moment is. -->
+    <CheckoutState v-bind="screen" :business="organization.name" />
   </NuxtLayout>
 </template>
 
 <script setup lang="ts">
 // Where Stripe returns a member after Checkout: the membership it started, read from Stripe.
-import BookingConfirmation from '~/components/booking/BookingConfirmation.vue'
-import { MEMBERSHIP_STATE_LABELS, type Membership } from '~/shared/memberships'
+import CheckoutState from '~/components/booking/CheckoutState.vue'
+import type { Membership } from '~/shared/memberships'
 import { formatCalendarDate } from '~/utils/timezone'
 import { publicApiRequest, publicApiMutation, isRecord } from '~/utils/api-clients'
 import { getErrorMessage } from '~/utils/errors'
@@ -88,14 +50,21 @@ onMounted(async () => {
 })
 
 const day = (at: string) => formatCalendarDate(at.slice(0, 10), locale.value, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
-const receiptRows = computed(() => {
+const screen = computed<InstanceType<typeof CheckoutState>['$props']>(() => {
   const value = membership.value
-  if (!value) return []
-  return [
-    { label: t('membership.status'), value: MEMBERSHIP_STATE_LABELS[value.state] },
-    { label: t('membership.price'), value: value.terms },
-    ...(value.current_period_end ? [{ label: t(value.state === 'cancelling' ? 'membership.access_until' : 'membership.next_payment'), value: day(value.current_period_end) }] : []),
-  ]
+  if (pending.value) return { state: 'reviewing', live: true, title: t(state.value === 'processing' ? 'membership.processing' : 'checkout_state.reviewing'), help: t('checkout_state.keep_open') }
+  // Stripe has not reported the first payment yet (a bank debit can take days): the member is told where it will appear, never that it was paid.
+  if (state.value === 'processing' && !value) return { state: 'processing', title: t('membership.processing'), help: loadError.value ?? t('membership.processing_later') }
+  if (value) {
+    const when = value.current_period_end ? `${t(value.state === 'cancelling' ? 'membership.access_until' : 'membership.next_payment')} ${day(value.current_period_end)}` : null
+    return { state: 'membership_active', title: t('checkout_state.membership_active'), help: `${value.title} · ${value.terms}`,
+      // Managing it is for the account that joined; a payer signed in as someone else is told where it is.
+      where: manageError.value || (owned.value ? when : t('payment.receipt_elsewhere')),
+      action: owned.value ? { label: t('membership.manage'), loading: opening.value, onClick: manage } : null }
+  }
+  // Checkout was left before paying: Stripe took nothing.
+  if (state.value === 'open') return { state: 'not_completed', title: t('checkout_state.not_completed'), help: t('checkout_state.not_charged'), action: { label: t('checkout_state.back_to', { business: organization.name }), to: localePath('/'), quiet: true } }
+  return { state: 'unavailable', title: t('payment.unavailable'), help: loadError.value ?? t('checkout_state.unavailable_help'), action: { label: t('checkout_state.back_to', { business: organization.name }), to: localePath('/'), quiet: true } }
 })
 
 const opening = ref(false)

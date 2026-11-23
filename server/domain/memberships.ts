@@ -103,6 +103,8 @@ export async function createMembershipCheckout(db: DbClient, env: CloudflareEnv,
     // Which methods the member may use is the business's payment method configuration's to decide.
     payment_method_configuration: acceptance.methodConfigurationId,
     automatic_tax: { enabled: acceptance.automaticTax },
+    // The member pays the price the business set, in its currency, as the page and the business's records state it; Stripe's Adaptive Pricing would show another currency's amount.
+    adaptive_pricing: { enabled: false },
     subscription_data: { description: title, metadata },
     metadata,
     success_url: new URL(`/memberships/{CHECKOUT_SESSION_ID}`, input.siteOrigin).toString().replace('%7BCHECKOUT_SESSION_ID%7D', '{CHECKOUT_SESSION_ID}'),

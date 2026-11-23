@@ -91,7 +91,8 @@ export async function createMembershipCheckout(db: DbClient, env: CloudflareEnv,
   const productPath = hasSiteProductPage(product.kind) ? presentationForProduct(product).productPath(locationSlug ?? '', product.slug) : product.page?.path ?? '/'
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
-    ...(customer ? { customer: customer.customerId } : { customer_email: guest.email }),
+    // Stripe Tax locates a returning member from the address Checkout collects, saved to their Customer.
+    ...(customer ? { customer: customer.customerId, ...(acceptance.automaticTax ? { customer_update: { address: 'auto' as const, name: 'auto' as const } } : {}) } : { customer_email: guest.email }),
     client_reference_id: input.buyer.id,
     line_items: [{ quantity: 1, price_data: {
       currency: price.currency.toLowerCase(), unit_amount: price.unit_amount,
@@ -249,7 +250,9 @@ export async function readOrganizationMembership(db: DbClient, env: CloudflareEn
 /** Where Stripe returns a member after Checkout: the membership it started, once Stripe has recorded its first payment. */
 export async function membershipCheckoutReturn(db: DbClient, env: CloudflareEnv, organizationId: string, buyerUserId: string, sessionId: string) {
   if (!/^cs_[A-Za-z0-9_]+$/u.test(sessionId)) fail(404, 'MEMBERSHIP_NOT_FOUND', 'That membership was not found')
-  const connected = await queryFirst<{ stripe_account_id: string; livemode: number }>(db, 'SELECT stripe_account_id, livemode FROM stripe_connected_accounts WHERE organization_id = ? AND stripe_account_id IS NOT NULL', [organizationId])
+  // A Checkout Session's ID names its mode; the business's account in that mode holds it.
+  const livemode = sessionId.startsWith('cs_live_')
+  const connected = await queryFirst<{ stripe_account_id: string; livemode: number }>(db, 'SELECT stripe_account_id, livemode FROM stripe_connected_accounts WHERE organization_id = ? AND livemode = ? AND stripe_account_id IS NOT NULL', [organizationId, Number(livemode)])
   if (!connected) fail(404, 'MEMBERSHIP_NOT_FOUND', 'That membership was not found')
   const stripe = paymentsStripe(env, Boolean(connected.livemode))
   const session = await stripe.checkout.sessions.retrieve(sessionId, {}, { stripeAccount: connected.stripe_account_id })

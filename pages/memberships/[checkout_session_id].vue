@@ -54,7 +54,7 @@ const screen = computed<InstanceType<typeof CheckoutState>['$props']>(() => {
   const value = membership.value
   if (pending.value) return { state: 'reviewing', live: true, title: t(state.value === 'processing' ? 'membership.processing' : 'checkout_state.reviewing'), help: t('checkout_state.keep_open') }
   // Stripe has not reported the first payment yet (a bank debit can take days): the member is told where it will appear, never that it was paid.
-  if (state.value === 'processing' && !value) return { state: 'processing', title: t('membership.processing'), help: loadError.value ?? t('membership.processing_later') }
+  if (state.value === 'processing' && !value) return { state: 'processing', title: t('membership.processing'), help: t('membership.processing_later') }
   if (value) {
     const when = value.current_period_end ? `${t(value.state === 'cancelling' ? 'membership.access_until' : 'membership.next_payment')} ${day(value.current_period_end)}` : null
     return { state: 'membership_active', title: t('checkout_state.membership_active'), help: `${value.title} · ${value.terms}`,
@@ -64,7 +64,7 @@ const screen = computed<InstanceType<typeof CheckoutState>['$props']>(() => {
   }
   // Checkout was left before paying: Stripe took nothing.
   if (state.value === 'open') return { state: 'not_completed', title: t('checkout_state.not_completed'), help: t('checkout_state.not_charged'), action: { label: t('checkout_state.back_to', { business: organization.name }), to: localePath('/'), quiet: true } }
-  return { state: 'unavailable', title: t('payment.unavailable'), help: loadError.value ?? t('checkout_state.unavailable_help'), action: { label: t('checkout_state.back_to', { business: organization.name }), to: localePath('/'), quiet: true } }
+  return { state: 'unavailable', title: t('payment.unavailable'), help: t('checkout_state.unavailable_help'), action: { label: t('checkout_state.back_to', { business: organization.name }), to: localePath('/'), quiet: true } }
 })
 
 const opening = ref(false)

@@ -46,7 +46,7 @@ const day = (date: string) => formatCalendarDate(date, locale.value, { weekday: 
 const screen = computed<InstanceType<typeof CheckoutState>['$props']>(() => {
   const value = order.value
   if (pending.value) return { state: 'reviewing', live: true, title: t('checkout_state.reviewing'), help: t('checkout_state.keep_open') }
-  if (!value) return { state: 'unavailable', title: t('payment.unavailable'), help: loadError.value ?? t('checkout_state.unavailable_help'), action: { label: t('checkout_state.back_to', { business: organization.name }), to: localePath('/'), quiet: true } }
+  if (!value) return { state: 'unavailable', title: t('payment.unavailable'), help: t('checkout_state.unavailable_help'), action: { label: t('checkout_state.back_to', { business: organization.name }), to: localePath('/'), quiet: true } }
   // A cancelled order says whether money was taken: a paid one was refunded in full, an unpaid one was never charged.
   if (value.status === 'cancelled') return { state: 'not_completed', title: t('email.subject.order_cancelled', { number: value.number }), help: t(value.receipt_url ? 'order.cancelled_refunded' : 'order.cancelled_unpaid') }
   const sent = value.fulfilled_at ? t(value.delivery_method === 'pickup' ? 'shop.order_collected' : 'shop.order_shipped')

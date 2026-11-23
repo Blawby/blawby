@@ -257,7 +257,11 @@ export async function membershipCheckoutReturn(db: DbClient, env: CloudflareEnv,
   const connected = await queryFirst<{ stripe_account_id: string; livemode: number }>(db, 'SELECT stripe_account_id, livemode FROM stripe_connected_accounts WHERE organization_id = ? AND livemode = ? AND stripe_account_id IS NOT NULL', [organizationId, Number(livemode)])
   if (!connected) fail(404, 'MEMBERSHIP_NOT_FOUND', 'That membership was not found')
   const stripe = paymentsStripe(env, Boolean(connected.livemode))
-  const session = await stripe.checkout.sessions.retrieve(sessionId, {}, { stripeAccount: connected.stripe_account_id })
+  // A session Stripe does not have on this business's account is a link to nothing here.
+  const session = await stripe.checkout.sessions.retrieve(sessionId, {}, { stripeAccount: connected.stripe_account_id }).catch((error: unknown) => {
+    if (error instanceof stripe.errors.StripeInvalidRequestError && error.code === 'resource_missing') fail(404, 'MEMBERSHIP_NOT_FOUND', 'That membership was not found')
+    throw error
+  })
   // Stripe hands the session ID only to whoever paid, so it shows that payer their confirmation, as Stripe's own
   // success page does. Managing the membership stays with the account that holds it: the identity that started
   // the session, or the account it later joined.

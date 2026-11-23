@@ -54,7 +54,7 @@ export interface CheckoutStateAction { label: string; to?: string; href?: string
 
 export type CheckoutPicture = { image: string; icon?: undefined } | { icon: string; image?: undefined }
 
-const TONES = { neutral: 'bg-elevated', good: 'bg-primary/10', warn: 'bg-error/10' } as const
+const TONES = { neutral: 'bg-accented', good: 'bg-primary/10', warn: 'bg-error/10' } as const
 
 // Blawby's cut-paper pieces where they exist; the rest stand in with an icon until theirs are made.
 const PICTURES: Record<CheckoutStateKey, CheckoutPicture & { tone: keyof typeof TONES }> = {

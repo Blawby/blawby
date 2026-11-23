@@ -7,7 +7,8 @@
     charged until Pay.
   -->
   <!-- White, as Airbnb's checkout is: Stripe's fields are white and sit on the page, not in a panel. -->
-  <main class="platform-theme min-h-screen bg-white px-5 py-10 lg:py-14 text-default dark:bg-default">
+  <!-- The pay page wears the platform theme, which has no site button colours: its state screens take the platform's primary, as its Pay button does. -->
+  <main class="platform-theme min-h-screen bg-white px-5 py-10 lg:py-14 text-default dark:bg-default [--site-action:var(--ui-primary)] [--site-on-action:var(--ui-bg)]">
     <div class="mx-auto max-w-5xl">
       <!-- Anything but the open form is the whole screen: loading, confirming, paid, stopped. -->
       <CheckoutState v-if="screen" v-bind="screen" :business="organization?.name ?? null" />

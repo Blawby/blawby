@@ -263,6 +263,7 @@ import type { Collection, MenuPrice, ProductPresentation, PublicMenuProduct, Pub
 import { useSchemaOrg } from '#imports'
 import type { CurrencyCode } from '~/shared/currencies'
 import { formatProductMoney, formatProductPriceRange, summarizeProductPrices } from '~/utils/product-money'
+import { isMembershipProduct } from '~/shared/memberships'
 import { minorAmountToMajor } from '~/shared/prices'
 import { PRICING_NOTE_HANDLE } from '~/shared/product-details'
 import { hasPublicLocationPages } from '~/utils/site-routing'
@@ -411,7 +412,7 @@ const priceScopes = (product: CollectionProduct, collectionLocationId: string | 
   const locationId = productLocationId(product, collectionLocationId)
   return locationId ? [locationId] : [
     ...product.locations.filter(location => menuLocationVisible(location) && locationMap.value.has(location.location_id)).map(location => location.location_id),
-    ...(product.booking?.held_online || product.order_url ? [null] : []),
+    ...(product.booking?.held_online || product.order_url || (isMembershipProduct(product) && !product.locations.length) ? [null] : []),
   ]
 }
 const pricesFor = (product: CollectionProduct, collectionLocationId: string | null = null) => {

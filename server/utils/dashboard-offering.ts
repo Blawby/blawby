@@ -7,7 +7,7 @@ import { BATCH_VIEWER, isOrganizationWideRole, memberAccessPrincipal, roleAllows
 import { MEMBER_NAME_SQL } from '~/shared/member-scheduling'
 import { PRODUCT_KIND_LABELS, productDetailFields } from '~/shared/product-details'
 import { isCurrencyCode } from '~/shared/currencies'
-import { formatMinorAmount, selectPrice } from '~/shared/prices'
+import { selectPrice } from '~/shared/prices'
 import { isMembershipProduct, membershipPrice } from '~/shared/memberships'
 import { formatProductMoney } from '~/utils/product-money'
 import { mediaStillUrl } from '~/shared/media-placement-contract'

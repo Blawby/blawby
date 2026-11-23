@@ -225,7 +225,7 @@ import { formatTime, MINUTE_TIME_PATTERN } from '~/utils/timezone'
 
 export const SECTION_KEYS = [
   'photo', 'kind', 'name', 'internal-name', 'price', 'description', 'page', 'order-url', 'attributes', 'publication', 'booking', 'locations', 'collections',
-  'options', 'shipping', 'guests', 'availability', 'arrival-time', 'directions', 'check-in-method', 'wifi', 'house-manual', 'house-rules', 'checkout-instructions', 'property-type', 'rooms', 'amenities', 'accessibility', 'cancellation', 'team', 'guest-safety', 'location', 'questions',
+  'options', 'shipping', 'guests', 'security-deposit', 'availability', 'arrival-time', 'directions', 'check-in-method', 'wifi', 'house-manual', 'house-rules', 'checkout-instructions', 'property-type', 'rooms', 'amenities', 'accessibility', 'cancellation', 'team', 'guest-safety', 'location', 'questions',
 ] as const
 export type SectionKey = typeof SECTION_KEYS[number]
 export type BookingConcern = 'enabled' | 'duration' | 'seatings' | 'capacity' | 'party' | 'guest-terms' | 'confirmation' | 'notice' | 'payment' | 'location' | 'assignment' | number
@@ -301,6 +301,8 @@ export interface ProductForm {
   /** The youngest guest admitted; empty states none. */
   minimum_guest_age: string
   accessibility_contact_required: boolean
+  /** The refundable deposit each new booking asks for, in the site's currency; empty asks for none (#1908). */
+  deposit_major: string
   /** Held online: booked in the provider's working hours rather than weekly times at a location. */
   held_online: boolean
   image_asset_id: string | null
@@ -554,6 +556,7 @@ const sectionLabels: Record<SectionKey, string> = {
   get booking() { return product.value?.kind === 'service' ? 'Consultations' : product.value?.kind === 'experience' ? 'Bookings' : 'Scheduling' },
   get locations() { return product.value?.kind === 'service' ? 'Offices' : 'Locations' },
   'guests': 'Number of guests',
+  'security-deposit': 'Security deposit',
   'availability': 'Availability',
   'arrival-time': 'Check-in & checkout',
   'directions': 'Directions',
@@ -882,7 +885,7 @@ const draft = useState<ProductForm>(draftKey, () => ({
   booking_duration: '',
   seating_interval: '',
   booking_capacity: '', scheduling_mode: 'business', assigned_member_id: null, confirmation_mode: 'instant', advance_notice_minutes: null, online_payment_required: false, held_online: false,
-  payment_basis: 'per_guest', payment_min_party_size: '', party_size_min: '', party_size_max: '', minimum_guest_age: '', accessibility_contact_required: false,
+  payment_basis: 'per_guest', payment_min_party_size: '', party_size_min: '', party_size_max: '', minimum_guest_age: '', accessibility_contact_required: false, deposit_major: '',
   image_asset_id: null as string | null,
   // A new place to stay starts from these settings; an existing one is loaded from its own.
   stay_location_id: '', check_in_time: '15:00', check_in_end_time: '', check_out_time: '11:00', max_guests: '', min_nights: '', weekend_price_major: '', direct_discounts: {}, stay_member_id: null,
@@ -981,6 +984,15 @@ function variantOffer(variant: Product['variants'][number], booked = Boolean(pro
   const selection = { currency, location_id: priceLocationId(), at: new Date().toISOString() }
   return selectPrice(variant.prices, selection) ?? (!booked && (MEMBERSHIP_KINDS as readonly string[]).includes(form.kind) ? membershipPrice(variant.prices, selection) : null)
 }
+/** The deposit box as minor units: null when empty, undefined when it is not an amount. */
+function depositMinor(): number | null | undefined {
+  const typed = form.deposit_major.trim()
+  if (!typed) return null
+  try {
+    const minor = majorAmountToMinor(typed, currency)
+    return minor > 0 ? minor : undefined
+  } catch { return undefined }
+}
 function variantPriceMajor(variant: Product['variants'][number]): string {
   const price = variantOffer(variant)
   return price ? minorAmountToMajor(price.unit_amount, price.currency) : ''
@@ -1060,6 +1072,8 @@ function loadForm(row: Product) {
   form.party_size_max = row.booking?.party_size_max == null ? '' : String(row.booking.party_size_max)
   form.minimum_guest_age = row.booking?.minimum_guest_age == null ? '' : String(row.booking.minimum_guest_age)
   form.accessibility_contact_required = row.booking?.accessibility_contact_required ?? false
+  const deposit = stay ? stay.deposit_minor : row.booking?.deposit_minor ?? null
+  form.deposit_major = deposit === null ? '' : minorAmountToMajor(deposit, currency)
   form.booking_capacity = row.booking?.default_capacity === null || row.booking === null ? '' : String(row.booking.default_capacity)
   form.check_in_time = stay?.check_in_time ?? ''
   form.check_in_end_time = stay?.check_in_end_time ?? ''
@@ -1145,6 +1159,7 @@ const sectionValid = computed(() => {
   if (editorKey.value === 'name') return Boolean(form.name.trim())
   if (editorKey.value === 'description') return form.description.length <= PRODUCT_LIMITS.description
   if (editorKey.value === 'guests') return Number.isInteger(Number(form.max_guests)) && Number(form.max_guests) >= 1 && Number(form.max_guests) <= 99
+  if (editorKey.value === 'security-deposit') return depositMinor() !== undefined
   if (editorKey.value === 'availability') return Number.isInteger(Number(form.min_nights)) && Number(form.min_nights) >= 1 && Number(form.min_nights) <= MAX_STAY_NIGHTS
   if (editorKey.value === 'arrival-time') return checkInWindowValid()
   if (editorKey.value === 'property-type') {
@@ -1338,6 +1353,7 @@ const navigationGroups = computed<EditorNavigationGroup[]>(() => {
       { id: 'agreement', label: agreementLabel('stay'), summary: product.value.agreement_template ? 'Your template' : product.value.agreement?.file_name ?? 'None', placeholder: !product.value.agreement && !product.value.agreement_template, to: sectionPath('agreement') },
       { id: 'availability', label: 'Availability', summary: `${product.value.stay!.min_nights} ${product.value.stay!.min_nights === 1 ? 'night' : 'nights'} minimum`, to: sectionPath('availability') },
       { id: 'guests', label: 'Number of guests', summary: `${product.value.stay!.max_guests} ${product.value.stay!.max_guests === 1 ? 'guest' : 'guests'}`, to: sectionPath('guests') },
+      { id: 'security-deposit', label: 'Security deposit', summary: product.value.stay!.deposit_minor === null ? 'None' : `${minorAmountToMajor(product.value.stay!.deposit_minor, currency)} ${currency}`, placeholder: product.value.stay!.deposit_minor === null, to: sectionPath('security-deposit') },
       { id: 'house-rules', label: 'House rules', summary: savedHouseRules.value.join('\n') || 'Add details', placeholder: !savedHouseRules.value.length, to: sectionPath('house-rules') },
       { id: 'guest-safety', label: 'Guest safety', summary: savedSafety.value.join('\n') || 'Add details', placeholder: !savedSafety.value.length, to: sectionPath('guest-safety') },
       { id: 'location', label: 'Location', summary: stayLocationError.value || (stayLocation.value ? formatPostalAddress(stayLocation.value.address) || 'Add address' : 'Loading location…'), placeholder: !stayLocation.value?.address, to: sectionPath('location') },
@@ -1368,10 +1384,10 @@ const activeNavigationItem = computed(() => {
  * beside this index. A row that leads into a level of its own — Bookings,
  * Pricing — would open that level too and push this index off the screen.
  */
-const LEAF_SECTIONS: readonly string[] = ['photo', 'internal-name', 'name', 'description', 'price', 'kind', 'order-url', 'options', 'shipping', 'property-type', 'rooms', 'guests', 'availability', 'arrival-time', 'directions', 'wifi', 'house-manual', 'house-rules', 'team']
+const LEAF_SECTIONS: readonly string[] = ['photo', 'internal-name', 'name', 'description', 'price', 'kind', 'order-url', 'options', 'shipping', 'property-type', 'rooms', 'guests', 'security-deposit', 'availability', 'arrival-time', 'directions', 'wifi', 'house-manual', 'house-rules', 'team']
 const autoOpenTarget = computed(() => draftStay.value && !arrivalTab.value ? null : navigationGroups.value[0]?.items.find(item => LEAF_SECTIONS.includes(item.id) && !(stayEditor.value && item.id === 'description') && item.to === sectionPath(item.id))?.to ?? null)
 
-const STAY_ROW_ORDER = ['publication', 'photo', 'internal-name', 'name', 'property-type', 'rooms', 'price', 'availability', 'guests', 'description', 'amenities', 'accessibility', 'location', 'house-rules', 'guest-safety', 'cancellation', 'agreement', 'team', 'questions', 'featured', 'collections']
+const STAY_ROW_ORDER = ['publication', 'photo', 'internal-name', 'name', 'property-type', 'rooms', 'price', 'availability', 'guests', 'description', 'amenities', 'accessibility', 'location', 'house-rules', 'guest-safety', 'cancellation', 'security-deposit', 'agreement', 'team', 'questions', 'featured', 'collections']
 function rowRank(id: string) {
   const at = STAY_ROW_ORDER.indexOf(id)
   return at === -1 ? STAY_ROW_ORDER.length : at
@@ -1586,6 +1602,9 @@ function payload(concern?: ProductConcern) {
     ...(form.kind === 'stay' && !isNew.value && editorKey.value === 'guests' ? { stay: {
       max_guests: Number(form.max_guests),
     } } : {}),
+    ...(form.kind === 'stay' && !isNew.value && editorKey.value === 'security-deposit' ? { stay: {
+      deposit_minor: depositMinor(),
+    } } : {}),
     ...(form.kind === 'stay' && !isNew.value && editorKey.value === 'price' && stayPricingRulesChanged() ? { stay: {
       calendar_rules: stayPricingRules(),
     } } : {}),
@@ -1611,6 +1630,7 @@ const sectionUnchanged = computed(() => {
   const row = product.value
   if (!row) return false
   if (editorKey.value === 'internal-name') return form.internal_name.trim() === row.stay?.internal_name
+  if (editorKey.value === 'security-deposit') return depositMinor() === (row.stay?.deposit_minor ?? null)
   if (editorKey.value === 'name') return form.name.trim() === row.name
   if (editorKey.value === 'kind') return form.kind === row.kind
   if (editorKey.value === 'order-url') return form.order_url === (row.order_url ?? '')
@@ -1878,7 +1898,7 @@ async function saveBooking(concern: BookingConcern) {
     : concern === 'assignment' ? { scheduling_mode: form.scheduling_mode, assigned_member_id: form.assigned_member_id }
     : concern === 'payment' ? { online_payment_required: form.online_payment_required, payment_basis: form.payment_basis, payment_min_party_size: optionalCount(form.payment_min_party_size) }
     : concern === 'party' ? { party_size_min: optionalCount(form.party_size_min), party_size_max: optionalCount(form.party_size_max) }
-    : concern === 'guest-terms' ? { minimum_guest_age: optionalCount(form.minimum_guest_age), accessibility_contact_required: form.accessibility_contact_required }
+    : concern === 'guest-terms' ? { minimum_guest_age: optionalCount(form.minimum_guest_age), accessibility_contact_required: form.accessibility_contact_required, deposit_minor: depositMinor() ?? null }
     : concern === 'location' ? { held_online: form.held_online }
     : {}
   await dashboardApi(url, { method: 'PUT', body, validate: isRecord })

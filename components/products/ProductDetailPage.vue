@@ -360,6 +360,7 @@
               </TenantButton>
             </div>
 
+            <p v-if="depositLabel && (canBook || canEnquire)" class="text-center text-xs text-muted" data-testid="product-deposit">{{ t(vertical === 'service' ? 'booking.retainer_in_trust' : 'booking.refundable_deposit', { amount: depositLabel }) }}</p>
             <p v-if="isStay && canBook" class="text-center text-xs text-muted">{{ stayBooking.needsApproval.value ? t('stay.pay_after_approval') : stayCheckoutAvailable ? 'You won\'t be charged yet' : t('stay.enquiry_note') }}</p>
 
             <!-- Airbnb's dates under the price: the next sessions, each one press from booking. -->
@@ -596,6 +597,11 @@ const privateExperiencePreview = computed(() => previewAuthorized && props.produ
 ))
 /** A place to stay is booked by its nights, paid in full; its booking is not a session's. */
 const isStay = computed(() => props.product.kind === 'stay')
+// The refundable deposit each booking asks for (#1908), stated before booking as Vrbo states a damage deposit; it is paid to the business, not here.
+const depositLabel = computed(() => {
+  const minor = isStay.value ? props.product.stay?.deposit_minor : props.booking?.deposit_minor
+  return minor ? formatProductMoney({ unit_amount: minor, currency: props.currency }) : null
+})
 // Bought for a recurring price with no session to book (#1907).
 const isMembership = computed(() => isMembershipProduct({ ...props.product, booking: props.booking ?? null }))
 const bookingInteractive = useMounted()

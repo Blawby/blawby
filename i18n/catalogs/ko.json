@@ -814,5 +814,7 @@
   "membership.status": "상태",
   "membership.price": "가격",
   "membership.access_until": "이용 기한",
-  "membership.next_payment": "다음 결제"
+  "membership.next_payment": "다음 결제",
+  "booking.refundable_deposit": "환불 가능한 보증금 {amount}, 호스트에게 별도 지불",
+  "booking.retainer_in_trust": "신탁 보관 선임료 {amount}, 법률사무소에 별도 지불"
 }

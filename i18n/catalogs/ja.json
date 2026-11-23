@@ -814,5 +814,7 @@
   "membership.status": "ステータス",
   "membership.price": "料金",
   "membership.access_until": "利用期限",
-  "membership.next_payment": "次回のお支払い"
+  "membership.next_payment": "次回のお支払い",
+  "booking.refundable_deposit": "返金可能なデポジット {amount}（ホストに別途お支払い）",
+  "booking.retainer_in_trust": "預り金 {amount}（信託口座で保管、事務所に別途お支払い）"
 }

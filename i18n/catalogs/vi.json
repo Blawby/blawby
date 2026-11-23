@@ -814,5 +814,7 @@
   "membership.status": "Trạng thái",
   "membership.price": "Giá",
   "membership.access_until": "Truy cập đến",
-  "membership.next_payment": "Thanh toán tiếp theo"
+  "membership.next_payment": "Thanh toán tiếp theo",
+  "booking.refundable_deposit": "Tiền đặt cọc hoàn lại {amount}, trả riêng cho chủ nhà",
+  "booking.retainer_in_trust": "Tiền ứng trước {amount} giữ trong tài khoản ủy thác, trả riêng cho văn phòng"
 }

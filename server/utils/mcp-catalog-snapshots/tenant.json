@@ -1,7 +1,7 @@
 {
   "surface": "tenant",
-  "fingerprint": "sha256:06dc24f9238a45aecd6524fef39bd6a92877e211fc6c55d85e82dc6a303bd727",
-  "documentationFingerprint": "sha256:6b642f4ca82edc429792a5300cd590083862b8dd7b2327b383f458a429d5a105",
+  "fingerprint": "sha256:a3d69fd2487a4bcef2159f223ff977634228c71385e1c201f1892aa83cfa6de2",
+  "documentationFingerprint": "sha256:378caea7dcf8f88f79c4739adb7a3ec64029f5f6c157f89999283d2d7be42641",
   "tools": [
     {
       "name": "add_organization_language",
@@ -9324,6 +9324,14 @@
                         "null"
                       ]
                     },
+                    "deposit_minor": {
+                      "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                      "minimum": 1,
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
                     "internal_name": {
                       "description": "Short operator-only home name. Initially the listing title; edited independently from Product.name and never sent to Airbnb or guests.",
                       "maxLength": 240,
@@ -9784,6 +9792,14 @@
                     },
                     "default_capacity": {
                       "minimum": 0,
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "deposit_minor": {
+                      "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                      "minimum": 1,
                       "type": [
                         "integer",
                         "null"
@@ -11336,6 +11352,14 @@
                       "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
                       "type": [
                         "string",
+                        "null"
+                      ]
+                    },
+                    "deposit_minor": {
+                      "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                      "minimum": 1,
+                      "type": [
+                        "integer",
                         "null"
                       ]
                     },
@@ -13059,6 +13083,194 @@
         }
       ],
       "domain": "locations",
+      "minimumRole": "admin",
+      "requiredEntitlement": null,
+      "fileParams": [],
+      "uiResourceUri": null
+    },
+    {
+      "name": "cancel_membership",
+      "title": "Cancel membership",
+      "description": "End a member’s membership on Stripe. when at_period_end stops future payments and keeps access until the end of what was paid; now ends access today. Neither refunds anything: refund a payment separately. Requires the membership id from list_memberships.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "membership_id": {
+            "type": "string"
+          },
+          "organization_id": {
+            "description": "Internal organization ID from get_workspace_context or list_organizations. If omitted, uses the accessible organization saved by set_workspace_context, or the only accessible organization when no saved selection applies. Otherwise the call fails and requires a selection. Read get_workspace_context before relying on the default. A URL, domain, slug or business name is not an ID.",
+            "minLength": 1,
+            "pattern": "^[\\s\\S]*\\S[\\s\\S]*$",
+            "type": "string"
+          },
+          "when": {
+            "enum": [
+              "at_period_end",
+              "now"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "membership_id",
+          "when"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "$defs": {},
+        "description": "Success fields for this operation. A failure returns MCP isError: true with text content explaining the reason; execution errors may include status, code and recovery fields. Failed results do not use this success schema.",
+        "properties": {
+          "membership": {
+            "properties": {
+              "currency": {
+                "type": "string"
+              },
+              "current_period_end": {
+                "description": "The next payment, or the last day of access when cancelling; null once ended.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dashboard_url": {
+                "type": "string"
+              },
+              "ended_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "description": "Stripe subscription ID: the membership on the business's Stripe account.",
+                "type": "string"
+              },
+              "member_email": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "member_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "payments": {
+                "items": {
+                  "properties": {
+                    "amount": {
+                      "type": "integer"
+                    },
+                    "created_at": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "period_end": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "period_start": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "receipt_url": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "refunded_amount": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "amount",
+                    "created_at"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "product_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "started_at": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "active",
+                  "cancelling",
+                  "payment_failed",
+                  "ended",
+                  "incomplete"
+                ],
+                "type": "string"
+              },
+              "terms": {
+                "description": "The price as Stripe charges it, such as \"THB 5,000.00 per month\".",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "unit_amount": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "state",
+              "currency",
+              "unit_amount",
+              "terms",
+              "started_at",
+              "payments",
+              "dashboard_url"
+            ],
+            "type": "object"
+          },
+          "organization_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "organization_id",
+          "membership"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Cancel membership"
+      },
+      "securitySchemes": [
+        {
+          "scopes": [
+            "tenant"
+          ],
+          "type": "oauth2"
+        }
+      ],
+      "domain": "payments",
       "minimumRole": "admin",
       "requiredEntitlement": null,
       "fileParams": [],
@@ -26345,6 +26557,14 @@
                   "null"
                 ]
               },
+              "deposit_minor": {
+                "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
               "internal_name": {
                 "description": "Short operator-only home name. Initially the listing title; edited independently from Product.name and never sent to Airbnb or guests.",
                 "maxLength": 240,
@@ -26794,6 +27014,14 @@
                   },
                   "default_capacity": {
                     "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "deposit_minor": {
+                    "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                    "minimum": 1,
                     "type": [
                       "integer",
                       "null"
@@ -28346,6 +28574,14 @@
                     "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
                     "type": [
                       "string",
+                      "null"
+                    ]
+                  },
+                  "deposit_minor": {
+                    "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                    "minimum": 1,
+                    "type": [
+                      "integer",
                       "null"
                     ]
                   },
@@ -53000,6 +53236,14 @@
                       "null"
                     ]
                   },
+                  "deposit_minor": {
+                    "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
                   "duration_minutes": {
                     "minimum": 1,
                     "type": [
@@ -54547,6 +54791,14 @@
                     "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
                     "type": [
                       "string",
+                      "null"
+                    ]
+                  },
+                  "deposit_minor": {
+                    "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                    "minimum": 1,
+                    "type": [
+                      "integer",
                       "null"
                     ]
                   },
@@ -69439,6 +69691,188 @@
         }
       ],
       "domain": "media",
+      "minimumRole": "admin",
+      "requiredEntitlement": null,
+      "fileParams": [],
+      "uiResourceUri": null
+    },
+    {
+      "name": "list_memberships",
+      "title": "List memberships",
+      "description": "List the selected business’s memberships: offerings bought for a recurring price with no session to book, such as a monthly open-studio membership, a dining club or a monthly legal plan. Each has its member, Stripe’s current state (active, cancels at the end of the period, payment failed, ended), the price as Stripe charges it, the next payment or last day of access, and the payments Stripe collected. product_id narrows to one offering. A membership is sold by giving the offering’s variant a recurring price (update_product variants[].prices with type recurring, recurring_interval month, recurring_interval_count 1) and publishing it; members join on its public page. Read from Stripe; changes nothing.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "organization_id": {
+            "description": "Internal organization ID from get_workspace_context or list_organizations. If omitted, uses the accessible organization saved by set_workspace_context, or the only accessible organization when no saved selection applies. Otherwise the call fails and requires a selection. Read get_workspace_context before relying on the default. A URL, domain, slug or business name is not an ID.",
+            "minLength": 1,
+            "pattern": "^[\\s\\S]*\\S[\\s\\S]*$",
+            "type": "string"
+          },
+          "product_id": {
+            "description": "Only this offering’s members.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "outputSchema": {
+        "$defs": {},
+        "description": "Success fields for this operation. A failure returns MCP isError: true with text content explaining the reason; execution errors may include status, code and recovery fields. Failed results do not use this success schema.",
+        "properties": {
+          "memberships": {
+            "items": {
+              "properties": {
+                "currency": {
+                  "type": "string"
+                },
+                "current_period_end": {
+                  "description": "The next payment, or the last day of access when cancelling; null once ended.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "dashboard_url": {
+                  "type": "string"
+                },
+                "ended_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "description": "Stripe subscription ID: the membership on the business's Stripe account.",
+                  "type": "string"
+                },
+                "member_email": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "member_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "payments": {
+                  "items": {
+                    "properties": {
+                      "amount": {
+                        "type": "integer"
+                      },
+                      "created_at": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "period_end": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "period_start": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "receipt_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "refunded_amount": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "amount",
+                      "created_at"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "product_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "started_at": {
+                  "type": "string"
+                },
+                "state": {
+                  "enum": [
+                    "active",
+                    "cancelling",
+                    "payment_failed",
+                    "ended",
+                    "incomplete"
+                  ],
+                  "type": "string"
+                },
+                "terms": {
+                  "description": "The price as Stripe charges it, such as \"THB 5,000.00 per month\".",
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "unit_amount": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "state",
+                "currency",
+                "unit_amount",
+                "terms",
+                "started_at",
+                "payments",
+                "dashboard_url"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "organization_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "organization_id",
+          "memberships"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List memberships"
+      },
+      "securitySchemes": [
+        {
+          "scopes": [
+            "tenant"
+          ],
+          "type": "oauth2"
+        }
+      ],
+      "domain": "payments",
       "minimumRole": "admin",
       "requiredEntitlement": null,
       "fileParams": [],
@@ -86304,6 +86738,14 @@
                         "null"
                       ]
                     },
+                    "deposit_minor": {
+                      "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                      "minimum": 1,
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
                     "internal_name": {
                       "description": "Short operator-only home name. Initially the listing title; edited independently from Product.name and never sent to Airbnb or guests.",
                       "maxLength": 240,
@@ -86763,6 +87205,14 @@
                     },
                     "default_capacity": {
                       "minimum": 0,
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "deposit_minor": {
+                      "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                      "minimum": 1,
                       "type": [
                         "integer",
                         "null"
@@ -88357,6 +88807,14 @@
                       "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
                       "type": [
                         "string",
+                        "null"
+                      ]
+                    },
+                    "deposit_minor": {
+                      "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                      "minimum": 1,
+                      "type": [
+                        "integer",
                         "null"
                       ]
                     },
@@ -103077,7 +103535,7 @@
     {
       "name": "set_product_agreement_template",
       "title": "Set product agreement template",
-      "description": "Save a listing’s own agreement template, or null to remove it. Blawby supplies no legal wording: this is the business’s text. Placeholders are {{business_name}}, {{client_name}}, {{client_email}}, {{host_name}}, {{offering}}, {{address}}, {{start_date}}, {{end_date}}, {{price}}, {{deposit}}, {{cancellation_policy}}, {{today}}; a line starting \"# \" is a heading. send_booking_agreement with from_template fills it from a booking and places each signer’s lines.",
+      "description": "Save a listing’s own agreement template, or null to remove it. Blawby supplies no legal wording: this is the business’s text. Placeholders are {{business_name}}, {{client_name}}, {{client_email}}, {{host_name}}, {{offering}}, {{address}}, {{start_date}}, {{end_date}}, {{price}}, {{payment_schedule}}, {{deposit}}, {{cancellation_policy}}, {{today}}; a line starting \"# \" is a heading. send_booking_agreement with from_template fills it from a booking and places each signer’s lines.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -103176,6 +103634,14 @@
           "default_capacity": {
             "description": "Places per session; null means unlimited, zero closes seats.",
             "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "deposit_minor": {
+            "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+            "minimum": 1,
             "type": [
               "integer",
               "null"
@@ -103381,6 +103847,14 @@
               },
               "default_capacity": {
                 "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "deposit_minor": {
+                "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                "minimum": 1,
                 "type": [
                   "integer",
                   "null"
@@ -117978,6 +118452,14 @@
                   "null"
                 ]
               },
+              "deposit_minor": {
+                "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
               "expected_questions_revision": {
                 "description": "stay.questions_revision from get_product; required with questions.",
                 "type": "string"
@@ -118509,6 +118991,14 @@
                   },
                   "default_capacity": {
                     "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "deposit_minor": {
+                    "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                    "minimum": 1,
                     "type": [
                       "integer",
                       "null"
@@ -120103,6 +120593,14 @@
                     "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
                     "type": [
                       "string",
+                      "null"
+                    ]
+                  },
+                  "deposit_minor": {
+                    "description": "The refundable deposit (a security deposit, a client retainer held in trust) each new booking asks for, in the smallest unit of the organization currency; null asks for none. Stated to guests before booking. It is paid to the business outside the booking and recorded per booking with record_booking_deposit; it is never part of the price.",
+                    "minimum": 1,
+                    "type": [
+                      "integer",
                       "null"
                     ]
                   },
@@ -130117,18 +130615,18 @@
         "text": "Update the catalog from: <items_description> Use get_workspace_context, list_organizations and list_locations to resolve the business and explicit location. Read every relevant list_location_products and list_collections page before matching existing IDs. For a restaurant menu, use update_menu with a stable idempotency_key, the stated sections and prices. Match existing product, variant, price and collection IDs. Omitted items and order remain; use set_collection_products or reorder_collections only when the user requests a complete new order. For other products, use create_product for new entries or update_product for partial edits. Use reconcile_products only when the user requests complete replacement of the supplied entries. Ask for missing prices or booking facts. Use get_product and list_location_products to read back the result, then open the returned public URL before reporting completion."
       },
       "toolContracts": {
-        "create_product": "sha256:07ed4f11f506f25196e9c229b527943754c9795d8f83b27d6c6a1f4b8a3eef05",
-        "get_product": "sha256:38328a08cf1d28acf882e4cab34b9a23911045311a48270368254c0f6089e0c5",
+        "create_product": "sha256:45fc5304de2c06fd9aaf3a5d18ccaed85ff969f7b9b80432db9662257e352280",
+        "get_product": "sha256:664085dcee02d6324c765947d9dd9527b981d43b63b97484408552fa6d721a8e",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_collections": "sha256:7eb8f62291a619df46fa146bc6142f898aac1de8bda513b7a0bf92182faff563",
         "list_location_products": "sha256:1daa691e9f5ee49957b2c73141c5fc3bced3d5a4fbba3322d2112befef4ccc53",
         "list_locations": "sha256:7dd88e7fc4bd7ec81ea85799fc2bfd56d6e492a30ddab39669e4286937b9efdd",
         "list_organizations": "sha256:dc1b45423396a800e47e6ca24661305ab670a033738f7ceecc6e8e021ddd3ca9",
-        "reconcile_products": "sha256:3d335928cb8d5fd525cc6933ff6ab587a9e296ffa0ff53362e8a4d5850cef7f5",
+        "reconcile_products": "sha256:4e29e720fd7a5a3cbec41e9ec7d26bc091d484d5054d6dbbeb9750500158e6fc",
         "reorder_collections": "sha256:c8ad3c90e1fe802222fc5c184e33daa7f2f71b24f6161eddc408f1b1e485a59b",
         "set_collection_products": "sha256:547c0dcabda1318de7e48e14d32ddbd51dcf806cec9ed415f14fad81de321aef",
         "update_menu": "sha256:5dbb34f76e421c12837d6b0d97f070c986f3e4a0b29b1b2e96a0411444a489a0",
-        "update_product": "sha256:690ca310462a54f018b833350ba720cf3eb45e34b5b3127b33968c7280a077e2"
+        "update_product": "sha256:18737d9b30d603dea80e8f9acf0ed5baec09e10c8ea7250eabe4340001e4fd34"
       }
     },
     {
@@ -130172,8 +130670,8 @@
       },
       "toolContracts": {
         "attach_media": "sha256:f046b62dae00908f2346a6e1a89eb674c6476716829673f15593c20c128bd1f5",
-        "create_product": "sha256:07ed4f11f506f25196e9c229b527943754c9795d8f83b27d6c6a1f4b8a3eef05",
-        "get_product": "sha256:38328a08cf1d28acf882e4cab34b9a23911045311a48270368254c0f6089e0c5",
+        "create_product": "sha256:45fc5304de2c06fd9aaf3a5d18ccaed85ff969f7b9b80432db9662257e352280",
+        "get_product": "sha256:664085dcee02d6324c765947d9dd9527b981d43b63b97484408552fa6d721a8e",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_locations": "sha256:7dd88e7fc4bd7ec81ea85799fc2bfd56d6e492a30ddab39669e4286937b9efdd",
         "list_product_booking_sessions": "sha256:3649a6bc69afde8d124ed5c8452177c30a70dad2c9301cc7d3f10c9522536376",
@@ -130240,7 +130738,7 @@
         "attach_media": "sha256:f046b62dae00908f2346a6e1a89eb674c6476716829673f15593c20c128bd1f5",
         "get_location": "sha256:eeb473e44df629a24ceb82a2db6873a6b1f108dd852c2fa923f605a637439f34",
         "get_post": "sha256:fd95e9d97a5f0624dda58886752832eee80a1fef08c9c7a64d8c2af4ff3481d1",
-        "get_product": "sha256:38328a08cf1d28acf882e4cab34b9a23911045311a48270368254c0f6089e0c5",
+        "get_product": "sha256:664085dcee02d6324c765947d9dd9527b981d43b63b97484408552fa6d721a8e",
         "get_site_page": "sha256:482ebe0f69cd34d7e8178e56141c0ff05d1400f10dc03aa8e0a362a5445d4427",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "save_media_attachment": "sha256:01fd8d271c4692c887b04d77ae9d58c547b4973183b71591e9b1e48078ad228a",
@@ -130256,7 +130754,7 @@
         "text": "Use get_workspace_context and list_organizations to resolve the business. For an unfinished website use get_website_draft, save_website_draft and publish_website with the returned draft_id and updated_at. For an existing website use get_organization, list_locations, list_site_pages, get_site_page and list_products to identify the missing facts. Check for missing brand assets like logo, favicon, social card, palette colors, hero media, and about page story. Ask for those facts, use update_organization_settings, update_site_page, update_menu or create_product for the requested setup, and read back its public result."
       },
       "toolContracts": {
-        "create_product": "sha256:07ed4f11f506f25196e9c229b527943754c9795d8f83b27d6c6a1f4b8a3eef05",
+        "create_product": "sha256:45fc5304de2c06fd9aaf3a5d18ccaed85ff969f7b9b80432db9662257e352280",
         "get_organization": "sha256:be4891efa8ad393a88869138bf2dacb5a66a3af6005298cfbd261f378cb6c1aa",
         "get_site_page": "sha256:482ebe0f69cd34d7e8178e56141c0ff05d1400f10dc03aa8e0a362a5445d4427",
         "get_website_draft": "sha256:c1444d21ed13337ab56e9d48764d8befe1e0016ba625bc70c8b7d6f29d179d24",
@@ -130282,14 +130780,14 @@
       },
       "toolContracts": {
         "get_location": "sha256:eeb473e44df629a24ceb82a2db6873a6b1f108dd852c2fa923f605a637439f34",
-        "get_product": "sha256:38328a08cf1d28acf882e4cab34b9a23911045311a48270368254c0f6089e0c5",
+        "get_product": "sha256:664085dcee02d6324c765947d9dd9527b981d43b63b97484408552fa6d721a8e",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_locations": "sha256:7dd88e7fc4bd7ec81ea85799fc2bfd56d6e492a30ddab39669e4286937b9efdd",
         "list_product_booking_sessions": "sha256:3649a6bc69afde8d124ed5c8452177c30a70dad2c9301cc7d3f10c9522536376",
         "list_products": "sha256:76e112cfe8092528c778c4d066d079837db14504dab1eec99eefd21b499e7970",
         "replace_product_weekly_schedule": "sha256:114e8115176adaa1707ba8ca9cae7026ffd2ab4803fa566c727b7bd7c2c83e9b",
-        "set_product_booking_config": "sha256:50969e4450fa9d51c05b4a5b2901f3ceac78a3df29d96e77fc48bfea8d2b21fe",
-        "update_product": "sha256:690ca310462a54f018b833350ba720cf3eb45e34b5b3127b33968c7280a077e2"
+        "set_product_booking_config": "sha256:bfb8fb812d6b13ee6190aae100f6b0ce962a0aaa5225c1f7138309f6ee480515",
+        "update_product": "sha256:18737d9b30d603dea80e8f9acf0ed5baec09e10c8ea7250eabe4340001e4fd34"
       }
     },
     {
@@ -130308,7 +130806,7 @@
         "list_products": "sha256:76e112cfe8092528c778c4d066d079837db14504dab1eec99eefd21b499e7970",
         "list_site_pages": "sha256:5a49aa342807192ee45d329880f2f459d1914154e9a04a43562c0ea3587879cc",
         "set_media": "sha256:3d36f1a257f4ca8e1d85c4d0c8623ee2203656d1d7f52c45260c60f9fb6cb4e8",
-        "update_product": "sha256:690ca310462a54f018b833350ba720cf3eb45e34b5b3127b33968c7280a077e2",
+        "update_product": "sha256:18737d9b30d603dea80e8f9acf0ed5baec09e10c8ea7250eabe4340001e4fd34",
         "update_site_page": "sha256:467bad83026861320c7ed582236f5c4b5f2cec39cbf5e7f74a8e976d34c9a7c1"
       }
     },
@@ -130324,14 +130822,14 @@
         "create_post": "sha256:a2a95f5e752b47a10f2d42dfaaca0caca19afd2a4110adc3fd97dad2eb8a763a",
         "get_conversation": "sha256:5007b5cc2485f51db503b10ae92e88691fe6d2ffa56dafced5194e41abd1fd3f",
         "get_organization_analytics": "sha256:6778353a6266b04efaca189217f19982d643d91249d8444829e9936ff203e487",
-        "get_product": "sha256:38328a08cf1d28acf882e4cab34b9a23911045311a48270368254c0f6089e0c5",
+        "get_product": "sha256:664085dcee02d6324c765947d9dd9527b981d43b63b97484408552fa6d721a8e",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_conversations": "sha256:563552eb6b0af82a762e138edf26711d2560e62fdb2cee2a757e19106704fbad",
         "list_product_booking_sessions": "sha256:3649a6bc69afde8d124ed5c8452177c30a70dad2c9301cc7d3f10c9522536376",
         "list_products": "sha256:76e112cfe8092528c778c4d066d079837db14504dab1eec99eefd21b499e7970",
         "publish_post": "sha256:752fb1e9c0267e6ba03088081fa8a0e5c5f8034640f03df3c52078a8df8f95d4",
         "send_message": "sha256:4cac8008e1434c5ec878d41deec75950ca99aad5e6f94092a3e5fdf0731a85ec",
-        "update_product": "sha256:690ca310462a54f018b833350ba720cf3eb45e34b5b3127b33968c7280a077e2"
+        "update_product": "sha256:18737d9b30d603dea80e8f9acf0ed5baec09e10c8ea7250eabe4340001e4fd34"
       }
     }
   ]

@@ -15,6 +15,13 @@
       "when": 1795315164506,
       "tag": "0001_order_line_stock_taken",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1795404803290,
+      "tag": "0002_booking_config_deposit",
+      "breakpoints": true
     }
   ]
 }

@@ -814,5 +814,7 @@
   "membership.status": "Status",
   "membership.price": "Preis",
   "membership.access_until": "Zugang bis",
-  "membership.next_payment": "Nächste Zahlung"
+  "membership.next_payment": "Nächste Zahlung",
+  "booking.refundable_deposit": "Rückzahlbare Kaution von {amount}, separat an den Gastgeber zu zahlen",
+  "booking.retainer_in_trust": "Vorschuss von {amount} auf einem Treuhandkonto, separat an die Kanzlei zu zahlen"
 }

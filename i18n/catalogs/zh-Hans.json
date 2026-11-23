@@ -814,5 +814,7 @@
   "membership.status": "状态",
   "membership.price": "价格",
   "membership.access_until": "有效期至",
-  "membership.next_payment": "下次付款"
+  "membership.next_payment": "下次付款",
+  "booking.refundable_deposit": "可退还押金 {amount}，另行支付给房东",
+  "booking.retainer_in_trust": "预付聘用金 {amount}（托管保存），另行支付给律所"
 }

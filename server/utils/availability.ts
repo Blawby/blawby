@@ -96,6 +96,8 @@ export interface ProductBookingConfigRecord extends NightsBookingSettings {
   party_size_max: number | null
   minimum_guest_age: number | null
   accessibility_contact_required: boolean
+  /** The refundable deposit each new booking asks for (#1908), in the business's currency; null asks for none. */
+  deposit_minor: number | null
   /** What an online payment's price is charged for: each guest, or the booking as a whole. */
   payment_basis: PaymentBasis
   /** The smallest party that pays online; null is every party. */
@@ -196,7 +198,7 @@ export async function requireBookingConfig(
 }
 
 /** The booking terms any offering may set, beside its schedule. */
-const GUEST_TERMS_FIELDS = ['party_size_min', 'party_size_max', 'minimum_guest_age', 'accessibility_contact_required', 'payment_basis', 'payment_min_party_size'] as const
+const GUEST_TERMS_FIELDS = ['party_size_min', 'party_size_max', 'minimum_guest_age', 'accessibility_contact_required', 'payment_basis', 'payment_min_party_size', 'deposit_minor'] as const
 const BOOKING_CONFIG_COLUMNS = ['product_id', 'organization_id', 'unit', 'duration_minutes', 'seating_interval_minutes', 'default_capacity', 'confirmation_mode', 'online_payment_required', 'held_online', 'scheduling_mode', 'assigned_member_id', 'advance_notice_minutes', 'questions', ...GUEST_TERMS_FIELDS, ...NIGHTS_BOOKING_FIELDS] as const
 type StoredBookingConfig = Omit<ProductBookingConfigRecord, 'online_payment_required' | 'held_online' | 'accessibility_contact_required' | 'questions' | 'questions_revision' | 'calendar_rules'> & { online_payment_required: number; held_online: number; accessibility_contact_required: number; questions: string; calendar_rules: string | null }
 
@@ -252,6 +254,7 @@ export async function prepareProductBookingConfig(db: DbClient, input: {
     if (value !== undefined && value !== null && (!Number.isSafeInteger(value) || (value as number) < 1)) badRequest(`${field} must be a positive integer or null`)
   }
   if (patch.accessibility_contact_required !== undefined && typeof patch.accessibility_contact_required !== 'boolean') badRequest('accessibility_contact_required must be boolean')
+  if (patch.deposit_minor !== undefined && patch.deposit_minor !== null && (!Number.isSafeInteger(patch.deposit_minor) || (patch.deposit_minor as number) <= 0)) badRequest('deposit_minor must be a positive whole amount in the smallest currency unit, or null')
   if (patch.payment_basis !== undefined && !(PAYMENT_BASES as readonly unknown[]).includes(patch.payment_basis)) badRequest('payment_basis must be per_guest or per_booking')
   if (patch.duration_minutes === 0) badRequest('duration_minutes must be positive')
   if (patch.seating_interval_minutes !== undefined && patch.seating_interval_minutes !== null && kind !== 'table') badRequest('Only a table takes seating_interval_minutes; other offerings start at their weekly times')
@@ -296,7 +299,7 @@ export async function prepareProductBookingConfig(db: DbClient, input: {
   const saved = current ? bookingConfigRecord(current) : null
   const term = <K extends typeof GUEST_TERMS_FIELDS[number]>(field: K, empty: ProductBookingConfigRecord[K]): ProductBookingConfigRecord[K] => (patch[field] === undefined ? saved?.[field] ?? empty : patch[field]) as ProductBookingConfigRecord[K]
   const guestTerms = {
-    minimum_guest_age: term('minimum_guest_age', null), accessibility_contact_required: term('accessibility_contact_required', false),
+    minimum_guest_age: term('minimum_guest_age', null), accessibility_contact_required: term('accessibility_contact_required', false), deposit_minor: term('deposit_minor', null),
     ...(unit === 'nights'
       ? { party_size_min: null, party_size_max: null, payment_basis: 'per_guest' as const, payment_min_party_size: null }
       : { party_size_min: term('party_size_min', null), party_size_max: term('party_size_max', null), payment_basis: term('payment_basis', 'per_guest'), payment_min_party_size: term('payment_min_party_size', null) }),
@@ -1649,17 +1652,20 @@ export async function sessionClaimQuery(db: DbClient, input: {
 }): Promise<BatchQuery> {
   const allocation = await sessionAllocationPredicate(db, input)
   const payment = input.payment
+  // A new booking asks for the offering's deposit; one moved to another time keeps the deposit it had.
   return {
     query: `
       INSERT INTO bookings (
         id, organization_id, product_id, product_session_id, product_variant_id, location_id, starts_at, ends_at, timezone,
-        user_id, party_size, party_size_is_minimum, answers, policy_json, status, website_source, received_at, created_at, updated_at
+        user_id, party_size, party_size_is_minimum, answers, policy_json, status, website_source, received_at, created_at, updated_at, deposit_minor
       )
       SELECT ?, session.organization_id, session.product_id, session.id, ?, session.location_id, session.starts_at, session.ends_at, session.timezone,
         ?, ?, ?, ?, ?,
         COALESCE((SELECT status FROM bookings WHERE id = ?),
           (SELECT CASE WHEN ? IS NULL AND confirmation_mode = 'review' THEN 'pending' ELSE 'confirmed' END
-           FROM product_booking_configs WHERE product_id=session.product_id AND organization_id=session.organization_id)), ?, ?, ?, ?
+           FROM product_booking_configs WHERE product_id=session.product_id AND organization_id=session.organization_id)), ?, ?, ?, ?,
+        CASE WHEN ? IS NULL THEN (SELECT deposit_minor FROM product_booking_configs WHERE product_id=session.product_id AND organization_id=session.organization_id)
+          ELSE (SELECT deposit_minor FROM bookings WHERE id = ?) END
       FROM product_sessions session
       WHERE session.id=? AND session.organization_id=? AND session.product_id=? AND ${allocation.query}
         AND EXISTS (SELECT 1 FROM product_variants v WHERE v.id=? AND v.product_id=session.product_id AND v.organization_id=session.organization_id AND v.active=1)
@@ -1673,7 +1679,7 @@ export async function sessionClaimQuery(db: DbClient, input: {
     params: [
       input.bookingId, input.productVariantId, input.userId ?? null, input.partySize, input.partySizeIsMinimum ?? false,
       JSON.stringify(input.answers ?? []), input.policyJson, input.replacingBookingId ?? null, payment?.id ?? null,
-      input.websiteSource, input.now, input.now, input.now, input.sessionId, input.organizationId, input.productId,
+      input.websiteSource, input.now, input.now, input.now, input.replacingBookingId ?? null, input.replacingBookingId ?? null, input.sessionId, input.organizationId, input.productId,
       ...allocation.params!, input.productVariantId,
       ...(payment ? [payment.startsAt, payment.endsAt, payment.locationId, payment.id, input.now, input.productVariantId] : []),
     ],

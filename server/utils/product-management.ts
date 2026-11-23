@@ -294,7 +294,7 @@ function productHydrationQueries(organizationId: string | { sql: string }, selec
       WHERE organization_id = ${org} AND product_id IN (${selection.query}) ORDER BY collection_id`, params },
     // A session offering's booking; a home's is presented with its stay settings below.
     { query: `SELECT product_id, duration_minutes, seating_interval_minutes, default_capacity, confirmation_mode, online_payment_required, held_online, scheduling_mode, assigned_member_id, advance_notice_minutes, questions,
-        party_size_min, party_size_max, minimum_guest_age, accessibility_contact_required, payment_basis, payment_min_party_size FROM product_booking_configs
+        party_size_min, party_size_max, minimum_guest_age, accessibility_contact_required, payment_basis, payment_min_party_size, deposit_minor FROM product_booking_configs
       WHERE organization_id = ${org} AND unit = 'slot' AND product_id IN (${selection.query})`, params },
     // The page each product owns: the source row that carries its product_id.
     { query: `SELECT product_id, id, path, title FROM content_documents
@@ -302,7 +302,7 @@ function productHydrationQueries(organizationId: string | { sql: string }, selec
     // How a home is booked is its booking configuration, presented here with what the home is.
     { query: `SELECT c.product_id, c.internal_name, c.location_id, b.check_in_time, b.check_in_end_time, b.check_out_time, b.default_capacity AS max_guests, b.min_nights, b.calendar_rules, ${stayWeekendPriceSql('c')} AS weekend_price_minor, c.property_type_group, c.property_type,
         c.listing_type, c.total_floors, c.listing_floor, c.year_built, c.property_size, c.property_size_unit, c.bedrooms, c.beds, c.bathrooms, c.amenities,
-        b.cancellation_policy, b.long_term_cancellation_policy, b.assigned_member_id, b.questions, ${liveHomeSql('p')} AS live
+        b.cancellation_policy, b.long_term_cancellation_policy, b.assigned_member_id, b.questions, b.deposit_minor, ${liveHomeSql('p')} AS live
       FROM product_stay_configs c JOIN products p ON p.organization_id = c.organization_id AND p.id = c.product_id
       JOIN product_booking_configs b ON b.organization_id = c.organization_id AND b.product_id = c.product_id AND b.unit = 'nights'
       WHERE c.organization_id = ${org} AND c.product_id IN (${selection.query})`, params },
@@ -362,6 +362,7 @@ function hydrateProductRows(
       location_id: String(row.location_id), check_in_time: row.check_in_time === null ? null : String(row.check_in_time),
       check_in_end_time: row.check_in_end_time === null ? null : String(row.check_in_end_time), check_out_time: row.check_out_time === null ? null : String(row.check_out_time),
       max_guests: Number(row.max_guests), min_nights: Number(row.min_nights), calendar_rules: readStayCalendarRules(row.calendar_rules, row.weekend_price_minor),
+      deposit_minor: row.deposit_minor === null ? null : Number(row.deposit_minor),
       ...storedStayListing(row),
       assigned_member_id: row.assigned_member_id === null ? null : String(row.assigned_member_id),
       live: Number(row.live) === 1,
@@ -393,6 +394,7 @@ function hydrateProductRows(
       accessibility_contact_required: Number(row.accessibility_contact_required) === 1,
       payment_basis: paymentBasis(row.payment_basis, String(row.product_id)),
       payment_min_party_size: row.payment_min_party_size === null ? null : Number(row.payment_min_party_size),
+      deposit_minor: row.deposit_minor === null ? null : Number(row.deposit_minor),
       ...storedQuestions(row.questions),
     }
   }
@@ -1006,6 +1008,8 @@ async function planStayConfig(db: DbClient, organizationId: string, kind: Produc
   if (typeof maxGuests !== 'number' || !Number.isInteger(maxGuests) || maxGuests < 1 || maxGuests > 99) invalid('stay.max_guests must be a whole number from 1 to 99')
   const minNights = stay.min_nights
   if (typeof minNights !== 'number' || !Number.isInteger(minNights) || minNights < 1 || minNights > MAX_STAY_NIGHTS) invalid(`stay.min_nights must be a whole number from 1 to ${MAX_STAY_NIGHTS}`)
+  const depositMinor = stay.deposit_minor ?? null
+  if (depositMinor !== null && (!Number.isSafeInteger(depositMinor) || (depositMinor as number) <= 0)) invalidStayField('deposit_minor', 'stay.deposit_minor must be a positive whole amount in the smallest currency unit, or null for none')
   let calendarRules: ProductStayConfig['calendar_rules']
   try { calendarRules = parseStayCalendarRules(stay.calendar_rules ?? null) }
   catch (error) {
@@ -1023,7 +1027,7 @@ async function planStayConfig(db: DbClient, organizationId: string, kind: Produc
     if (!(error instanceof FormQuestionDefinitionError)) throw error
     invalidStayField('questions', error.message)
   }
-  return { internal_name: requireTrimmedProductString(stay.internal_name, 'stay.internal_name', PRODUCT_LIMITS.name), location_id: locationId, check_in_time: stay.check_in_time as string | null, check_in_end_time: checkInEnd as string | null, check_out_time: stay.check_out_time as string | null, max_guests: maxGuests, min_nights: minNights, calendar_rules: calendarRules,
+  return { internal_name: requireTrimmedProductString(stay.internal_name, 'stay.internal_name', PRODUCT_LIMITS.name), location_id: locationId, check_in_time: stay.check_in_time as string | null, check_in_end_time: checkInEnd as string | null, check_out_time: stay.check_out_time as string | null, max_guests: maxGuests, min_nights: minNights, calendar_rules: calendarRules, deposit_minor: depositMinor as number | null,
     ...planStayListing(stay), assigned_member_id: assignedMember, questions, questions_revision: formQuestionsRevision(questions) }
 }
 
@@ -1283,7 +1287,7 @@ async function planProduct(
 }
 
 /** A home's stay settings that are how it is booked: its booking configuration's, unit nights. */
-const STAY_BOOKING_FIELDS = ['check_in_time', 'check_in_end_time', 'check_out_time', 'max_guests', 'min_nights', 'calendar_rules', 'cancellation_policy', 'long_term_cancellation_policy', 'assigned_member_id', 'questions'] as const
+const STAY_BOOKING_FIELDS = ['check_in_time', 'check_in_end_time', 'check_out_time', 'max_guests', 'min_nights', 'calendar_rules', 'cancellation_policy', 'long_term_cancellation_policy', 'assigned_member_id', 'questions', 'deposit_minor'] as const
 
 /**
  * A home's booking settings, through the one booking-configuration writer, in
@@ -1308,6 +1312,7 @@ async function stayBookingWrites(db: DbClient, input: {
   }
   if (named('max_guests')) patch.default_capacity = stay.max_guests
   if (named('assigned_member_id')) patch.assigned_member_id = stay.assigned_member_id
+  if (named('deposit_minor')) patch.deposit_minor = stay.deposit_minor
   if (input.edit?.fields.includes('questions')) Object.assign(patch, { questions: input.edit.questions, expected_questions_revision: input.edit.expectedQuestionsRevision })
   else if (!input.edit && stay.questions.length) Object.assign(patch, { questions: stay.questions, expected_questions_revision: formQuestionsRevision([]) })
   const { queries } = await prepareProductBookingConfig(db, { organizationId: input.organizationId, productId: input.planned.id, actorId: input.actorId, env: input.env, productInSameBatch: !input.edit, productKind: 'stay', patch })

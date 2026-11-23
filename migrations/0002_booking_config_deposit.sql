@@ -1,0 +1,1 @@
+ALTER TABLE `product_booking_configs` ADD `deposit_minor` integer;

@@ -407,6 +407,8 @@ export default {
     "time_unavailable": "Time unavailable"
   },
   "booking": {
+    "refundable_deposit": "Refundable deposit of {amount}, paid to the host separately",
+    "retainer_in_trust": "Retainer of {amount} held in trust, paid to the firm separately",
     "confirmed": "Booking confirmed",
     "request_received": "Request received",
     "request_declined": "Booking request declined",

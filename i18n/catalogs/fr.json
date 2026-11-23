@@ -814,5 +814,7 @@
   "membership.status": "Statut",
   "membership.price": "Prix",
   "membership.access_until": "Accès jusqu’au",
-  "membership.next_payment": "Prochain paiement"
+  "membership.next_payment": "Prochain paiement",
+  "booking.refundable_deposit": "Dépôt de garantie remboursable de {amount}, versé séparément à l’hôte",
+  "booking.retainer_in_trust": "Provision de {amount} en compte séquestre, versée séparément au cabinet"
 }

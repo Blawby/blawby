@@ -814,5 +814,7 @@
   "membership.status": "สถานะ",
   "membership.price": "ราคา",
   "membership.access_until": "ใช้งานได้ถึง",
-  "membership.next_payment": "การชำระเงินครั้งถัดไป"
+  "membership.next_payment": "การชำระเงินครั้งถัดไป",
+  "booking.refundable_deposit": "เงินมัดจำที่ขอคืนได้ {amount} ชำระให้เจ้าของที่พักแยกต่างหาก",
+  "booking.retainer_in_trust": "เงินมัดจำค่าทนาย {amount} เก็บในบัญชีทรัสต์ ชำระให้สำนักงานแยกต่างหาก"
 }

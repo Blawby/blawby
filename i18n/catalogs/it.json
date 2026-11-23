@@ -814,5 +814,7 @@
   "membership.status": "Stato",
   "membership.price": "Prezzo",
   "membership.access_until": "Accesso fino al",
-  "membership.next_payment": "Prossimo pagamento"
+  "membership.next_payment": "Prossimo pagamento",
+  "booking.refundable_deposit": "Deposito cauzionale rimborsabile di {amount}, pagato separatamente all’host",
+  "booking.retainer_in_trust": "Anticipo di {amount} in deposito fiduciario, pagato separatamente allo studio"
 }

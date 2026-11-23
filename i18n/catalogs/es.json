@@ -814,5 +814,7 @@
   "membership.status": "Estado",
   "membership.price": "Precio",
   "membership.access_until": "Acceso hasta",
-  "membership.next_payment": "Próximo pago"
+  "membership.next_payment": "Próximo pago",
+  "booking.refundable_deposit": "Depósito reembolsable de {amount}, pagado al anfitrión por separado",
+  "booking.retainer_in_trust": "Anticipo de {amount} en fideicomiso, pagado al despacho por separado"
 }

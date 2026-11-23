@@ -1787,6 +1787,7 @@ export async function createSession(db: DbClient, input: {
       publicResourceCacheInvalidationQuery(input.organizationId, 'product-session-created')], { operation: 'Create product session' })
   } catch (error) {
     if (isUniqueDedupeConflict(error)) { const concurrent = await replay(); if (concurrent) return concurrent }
+    if (/UNIQUE constraint failed: product_sessions\.product_id, product_sessions\.location_id, product_sessions\.starts_at/.test(error instanceof Error ? error.message : String(error))) throw new HTTPError({ statusCode: 409, statusMessage: 'This offering already has a session at that time and location' })
     throw error
   }
   return Promise.all(sessions.map(session => getScheduleSession(db, input.env, { organizationId: input.organizationId, productId: input.productId, sessionId: session.id })))

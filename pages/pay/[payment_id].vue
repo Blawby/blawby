@@ -225,7 +225,7 @@ const screen = computed<InstanceType<typeof CheckoutState>['$props'] | null>(() 
   const again = offeringPath.value ? { label: t('checkout_state.start_again'), to: offeringPath.value } : null
   if (confirmed.value) {
     return value.order ? { state: 'order_confirmed', title: t('checkout_state.order_confirmed', { number: value.order.number }) }
-      : { state: 'confirmed', title: t(value.stay ? 'checkout_state.stay_confirmed' : 'checkout_state.booking_confirmed'), help: value.title, where: value.stay ? stayRange.value : bookedWhen.value }
+      : { state: 'confirmed', picture: confirmedPicture(value.stay ? 'stay' : value.kind), title: t(value.stay ? 'checkout_state.stay_confirmed' : 'checkout_state.booking_confirmed'), help: value.title, where: value.stay ? stayRange.value : bookedWhen.value }
   }
   if (verificationUrl.value) return { state: 'bank_verification', title: t('payment.bank_verification'), help: t('payment.bank_verification_help'), action: { label: t('payment.bank_verification_action'), href: verificationUrl.value } }
   if (checkoutState.value === 'taken') return { state: 'taken', title: t('payment.taken'), help: t('payment.taken_help'), action: { label: t('payment.choose_again'), onClick: chooseAgain } }
@@ -268,6 +268,11 @@ const guestsLabel = (count: number) => `${count} ${t(count === 1 ? 'site.experie
 /** The months after today's, from the plan the checkout froze. */
 const laterPayments = computed(() => handoff.value?.stay?.installments?.slice(1) ?? [])
 const stayTotal = computed(() => handoff.value?.stay?.nightly.reduce((sum, price) => sum + price, 0) ?? 0)
+/** What was booked, pictured: a home for a stay, a briefcase for a consultation; a class's and a table's own pieces are still to be made (#2072). */
+function confirmedPicture(kind: string | null) {
+  return kind === 'stay' ? { image: '/images/offers/home.webp' } : kind === 'service' ? { image: '/images/offers/briefcase.webp' }
+    : { icon: kind === 'table' ? 'i-lucide-utensils' : 'i-lucide-calendar-check' }
+}
 // When a timed booking was made for, in its own clock.
 const bookedWhen = computed(() => {
   const value = handoff.value

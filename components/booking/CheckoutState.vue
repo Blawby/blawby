@@ -61,7 +61,8 @@ const PICTURES: Record<CheckoutStateKey, CheckoutPicture & { tone: keyof typeof 
   reviewing: { icon: 'i-lucide-credit-card', tone: 'neutral' },
   processing: { icon: 'i-lucide-mail', tone: 'neutral' },
   bank_verification: { icon: 'i-lucide-landmark', tone: 'neutral' },
-  confirmed: { image: '/images/offers/home.webp', tone: 'good' },
+  // The page names what was booked with the picture prop: a home, a briefcase, or a stand-in.
+  confirmed: { icon: 'i-lucide-calendar-check', tone: 'good' },
   order_confirmed: { icon: 'i-lucide-package-check', tone: 'good' },
   membership_active: { icon: 'i-lucide-badge-check', tone: 'good' },
   already_paid: { image: '/images/offers/card.webp', tone: 'good' },

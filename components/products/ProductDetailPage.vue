@@ -397,14 +397,16 @@
             <p class="tenant-kicker">{{ collectionName }}</p>
             <h1 class="tenant-display tenant-italic mt-3 text-3xl sm:text-4xl lg:text-5xl text-default leading-tight">{{ product.name }}</h1>
             <p class="mt-2 text-sm sm:text-base text-muted">{{ location?.title ?? organizationName }}</p>
-            <ProductVariantPrices :product="product" :location-ids="[location?.id ?? null]" :currency="currency" class="mt-6 text-lg" />
-            <div v-if="!offer && priceLabel" class="mt-6 flex items-baseline gap-3 text-2xl font-semibold tabular-nums">
+            <!-- An item is priced as Shopify's product form prices it: the chosen variant's one price, never a list of every combination. -->
+            <ProductVariantPrices v-if="product.kind !== 'item'" :product="product" :location-ids="[location?.id ?? null]" :currency="currency" class="mt-6 text-lg" />
+            <div v-if="(!offer || product.kind === 'item') && priceLabel" class="mt-6 flex items-baseline gap-3 text-2xl font-semibold tabular-nums">
               <span v-if="compareAtLabel" class="text-base font-normal text-muted line-through">{{ compareAtLabel }}</span>
               <span>{{ priceLabel }}</span>
             </div>
-            <p v-if="product.description" class="mt-6 text-base sm:text-lg leading-relaxed text-muted">{{ product.description }}</p>
+            <p v-if="product.description && product.kind !== 'item'" class="mt-6 whitespace-pre-line text-base sm:text-lg leading-relaxed text-muted">{{ product.description }}</p>
             <p v-if="!isAvailable" class="mt-6 font-semibold text-muted">{{ t('site.common.temporarily_unavailable') }}</p>
             <ProductBuyPanel v-if="product.kind === 'item' && isAvailable && !product.order_url" :product="product" :location-id="location?.id ?? null" class="mt-8" @variant="value => chosenVariantId = value" />
+            <p v-if="product.description && product.kind === 'item'" class="mt-8 whitespace-pre-line text-base leading-relaxed text-muted">{{ product.description }}</p>
             <MembershipJoinPanel v-if="isMembership && isAvailable && !scopeRequired && (location || !product.locations.length)" :product="product" :location-id="location?.id ?? null" :currency="currency" class="mt-8 max-w-md" />
             <div v-if="product.kind !== 'item' || product.order_url" class="mt-8 flex flex-wrap items-center gap-5">
               <TenantButton v-if="canEnquire" :to="enquiryPath">{{ t('site.experience_detail.enquire') }}</TenantButton>
@@ -686,7 +688,9 @@ const offer = computed<Price | null>(() => {
   const selection = { currency: props.currency, location_id: props.location?.id ?? null, at: new Date().toISOString() }
   // Only variants a customer can actually choose: a disabled variant's price
   // would otherwise headline an amount the selector never offers.
-  const offers = sellableVariants.value.flatMap(variant => selectPrice(variant.prices, selection) ?? [])
+  // An item's buy box has one variant chosen, and the page prices that one.
+  const chosen = props.product.kind === 'item' ? sellableVariants.value.find(variant => variant.id === chosenVariantId.value) : undefined
+  const offers = (chosen ? [chosen] : sellableVariants.value).flatMap(variant => selectPrice(variant.prices, selection) ?? [])
   return offers.reduce<Price | null>((lowest, candidate) => (!lowest || candidate.unit_amount < lowest.unit_amount ? candidate : lowest), null)
 })
 /**

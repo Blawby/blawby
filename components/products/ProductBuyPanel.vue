@@ -18,7 +18,7 @@
     </fieldset>
     <p v-if="stockLine" class="text-sm text-muted">{{ stockLine }}</p>
     <div class="space-y-2">
-      <label class="text-sm text-muted" :for="quantityId">{{ t('shop.quantity') }}</label>
+      <label class="block text-sm text-muted" :for="quantityId">{{ t('shop.quantity') }}</label>
       <UInputNumber :id="quantityId" v-model="quantity" :min="1" :max="Math.max(maxQuantity, 1)" class="w-36" />
     </div>
     <div class="space-y-3">

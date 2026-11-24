@@ -65,6 +65,7 @@ export default {
   },
   "shop": {
     "add_to_cart": "Add to cart",
+    "buy_now": "Buy it now",
     "cart": "Cart",
     "cart_empty": "Your cart is empty",
     "checkout": "Checkout",

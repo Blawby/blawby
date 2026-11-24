@@ -385,21 +385,26 @@
       </div>
 
       <div v-else class="rounded-2xl bg-elevated p-6 sm:p-10 lg:p-12">
-        <div :class="product.image?.public_url ? 'grid gap-10 lg:grid-cols-2 items-start' : 'max-w-3xl'">
-          <div v-if="shownImage?.public_url">
+        <div :class="product.image?.public_url ? ['grid gap-10 items-start', product.kind === 'item' ? 'lg:grid-cols-[minmax(0,1.85fr)_minmax(0,1fr)] lg:gap-12' : 'lg:grid-cols-2'] : 'max-w-3xl'">
+          <!-- An item's photos are its media column, as Shopify's Dawn lays them: the chosen variant's photo first, the rest two across beneath it. -->
+          <div v-if="shownImage?.public_url" :class="product.kind === 'item' ? 'grid grid-cols-2 gap-3' : undefined">
             <img
               :src="shownImage.public_url"
               :alt="shownImage.alt_text || product.name"
               class="aspect-square w-full rounded-2xl object-cover"
+              :class="product.kind === 'item' ? 'col-span-2' : undefined"
             >
+            <template v-if="product.kind === 'item'">
+              <img v-for="asset in otherImages" :key="asset.asset_id" :src="asset.public_url" :alt="asset.alt_text || product.name" class="aspect-square w-full rounded-2xl object-cover">
+            </template>
           </div>
-          <div class="py-2">
+          <div class="py-2" :class="product.kind === 'item' ? 'lg:sticky lg:top-24' : undefined">
             <p class="tenant-kicker">{{ collectionName }}</p>
             <h1 class="tenant-display tenant-italic mt-3 text-3xl sm:text-4xl lg:text-5xl text-default leading-tight">{{ product.name }}</h1>
             <p class="mt-2 text-sm sm:text-base text-muted">{{ location?.title ?? organizationName }}</p>
             <!-- An item is priced as Shopify's product form prices it: the chosen variant's one price, never a list of every combination. -->
             <ProductVariantPrices v-if="product.kind !== 'item'" :product="product" :location-ids="[location?.id ?? null]" :currency="currency" class="mt-6 text-lg" />
-            <div v-if="(!offer || product.kind === 'item') && priceLabel" class="mt-6 flex items-baseline gap-3 text-2xl font-semibold tabular-nums">
+            <div v-if="(!offer || product.kind === 'item') && priceLabel" class="mt-6 flex items-baseline gap-3 font-semibold tabular-nums" :class="product.kind === 'item' ? 'text-lg' : 'text-2xl'">
               <span v-if="compareAtLabel" class="text-base font-normal text-muted line-through">{{ compareAtLabel }}</span>
               <span>{{ priceLabel }}</span>
             </div>
@@ -457,7 +462,7 @@
 
       <!-- The bookable layout already shows every photograph in its gallery;
            this strip is the card layout's only place for them. -->
-      <section v-if="!booking && !isStay && product.gallery.length" class="mt-16">
+      <section v-if="!booking && !isStay && product.kind !== 'item' && product.gallery.length" class="mt-16">
         <h2 class="tenant-display tenant-italic text-4xl">{{ t('site.footer.gallery') }}</h2>
         <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <img
@@ -736,6 +741,8 @@ const shownImage = computed(() => {
   const assetId = props.product.variants.find(variant => variant.id === chosenVariantId.value)?.media_asset_id
   return (assetId ? [props.product.image, ...props.product.gallery].find(image => image?.asset_id === assetId) : null) ?? props.product.image
 })
+const otherImages = computed(() => [props.product.image, ...props.product.gallery]
+  .filter((image, index, all): image is NonNullable<typeof image> => Boolean(image?.public_url) && image!.asset_id !== shownImage.value?.asset_id && all.findIndex(other => other?.asset_id === image!.asset_id) === index))
 
 const isAvailable = computed(() =>
   props.product.active

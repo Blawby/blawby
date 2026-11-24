@@ -1023,7 +1023,7 @@ test('a connected backup merges into the same room across accounts and keeps bil
     const revision = await landBookingRevision(db, env, { id: 'cancel-after-merge', type: 'booking_revision', attributes: {
       property_id: 'old-property', booking_id: 'old-booking', ota_name: 'AirBNB', ota_reservation_code: 'HMBACKUP',
       inserted_at: '2026-10-30T01:00:00Z', status: 'cancelled', arrival_date: arrival, departure_date: departure, amount: '387.00', currency: 'USD',
-      occupancy: { adults: 2, children: 0, infants: 0 }, customer: { name: 'Guest' },
+      occupancy: { adults: 2, children: 0, infants: 0 }, customer: { name: 'Guest' }, rooms: [{ rate_plan_id: ratePlan }],
     } })
     assert.equal(revision.status, 'acknowledged')
     const cancelled = await getStay(db, manager, stay.id)

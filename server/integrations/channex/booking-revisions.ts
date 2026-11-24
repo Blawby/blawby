@@ -95,13 +95,15 @@ function importedRevision(revision: Resource): boolean {
  * The Airbnb listing a reservation was sold through: each listing sells through
  * its own rate plan (the first on a home through the home's), and the revision's
  * room names the rate plan (rooms[].rate_plan_id, read live 2026-11-24). Null
- * for another channel, or a plan no listing has now.
+ * for another channel, or a plan no listing has now (one deleted when its
+ * listing moved).
  */
 async function soldThrough(db: DbClient, organizationId: string, revision: Resource): Promise<string | null> {
-  if (String(revision.attributes.ota_name).toLowerCase() !== 'airbnb' || !Array.isArray(revision.attributes.rooms)) return null
-  // The listing is what the revision's one rate plan says; a room naming none, or rooms naming several, say no listing.
-  const plans = [...new Set(revision.attributes.rooms.map(room => object(room, 'room').rate_plan_id))]
-  if (plans.length !== 1 || typeof plans[0] !== 'string') return null
+  if (String(revision.attributes.ota_name).toLowerCase() !== 'airbnb') return null
+  // Every Airbnb revision read live names its room's rate plan; one that does not cannot be attributed, so it fails and Channex redelivers it.
+  if (!Array.isArray(revision.attributes.rooms) || !revision.attributes.rooms.length) throw new ChannexDataError(`revision ${revision.id} names no room`)
+  const plans = [...new Set(revision.attributes.rooms.map(room => string(object(room, 'room').rate_plan_id, 'rooms.rate_plan_id')))]
+  if (plans.length !== 1) throw new ChannexDataError(`revision ${revision.id} sells ${plans.length} rate plans, not one listing`)
   const listing = await queryFirst<{ listing_id: string }>(db, `SELECT listing_id FROM ${AIRBNB_MAPPINGS} WHERE organization_id = ? AND rate_plan_id = ?`, [organizationId, plans[0]])
   return listing?.listing_id ?? null
 }

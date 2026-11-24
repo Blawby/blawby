@@ -72,7 +72,7 @@ class FakeChannex {
     this.revisions.set(revision, {
       booking_id: booking.id, property_id: booking.property_id, status: booking.status, ota_name: booking.ota_name ?? 'AirBNB', ota_reservation_code: booking.code ?? `HM${booking.id}`,
       inserted_at: at, arrival_date: booking.arrival, departure_date: booking.departure, amount: booking.amount, currency: 'USD',
-      customer: booking.customer ?? { name: 'Lee', surname: 'Park', mail: 'lee@example.test', phone: null }, occupancy: { adults: 2, children: 1, infants: 0 },
+      customer: booking.customer ?? { name: 'Lee', surname: 'Park', mail: 'lee@example.test', phone: null }, occupancy: { adults: 2, children: 1, infants: 0 }, rooms: [{ rate_plan_id: 'rate-plan' }],
       ...(booking.imported ? { meta: { is_imported: true } } : {}),
     })
   }

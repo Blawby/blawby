@@ -988,7 +988,6 @@ export async function listTasks(db: DbClient, viewer: TaskViewer, query: TaskLis
 /** An open task as Today reads it: what it is about, who has it, and the conversation it is done in. */
 export interface OpenWorkRow {
   id: string; kind: TaskKind | typeof PAYMENT_TASK_KIND; version: number; subject_type: TaskRow['subject_type']; subject_id: string | null; dedupe_key: string
-  booking_status: 'pending' | 'confirmed' | 'cancelled' | null
   product_id: string | null; location_id: string | null; title: string | null; timezone: string; starts_at: string | null; due_at: string | null
   claim_role: string | null; notes: string | null; assigned_member_id: string | null; assignee_name: string | null; assigned_to_viewer: number
   /** Who added a task by hand; 1 when it was the viewer. */
@@ -1021,7 +1020,7 @@ export function openWorkQuery(viewer: ViewerTerms, to: string): BatchQuery {
   // What a booking still has to pay is read only by the people who manage the business, as its payments are.
   const wideTo = `${addLocalDays(to, 1)}T23:59:59.999Z`
   return {
-    query: `SELECT x.*, b.starts_at AS booking_starts_at, b.ends_at AS booking_ends_at, b.timezone AS booking_timezone, b.status AS booking_status,
+    query: `SELECT x.*, b.starts_at AS booking_starts_at, b.ends_at AS booking_ends_at, b.timezone AS booking_timezone,
         CASE WHEN b.id IS NULL THEN NULL WHEN b.product_session_id IS NULL THEN 'nights' ELSE 'slot' END AS booking_unit, b.party_size,
         json_extract(r.payload_json, '$.guest.name') AS guest_name, p.kind AS product_kind, COALESCE(sc.internal_name, p.name) AS product_name, l.title AS location_title,
         r.id AS guest_conversation_id,

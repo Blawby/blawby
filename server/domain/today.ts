@@ -321,25 +321,28 @@ async function presentToday(
     })
   }
 
-  // Who has to pay: a booking whose rent, balance or deposit fell due on or before today, as its tasks say,
-  // in the amounts its stored payments leave owing. A cancelled booking, or one a channel took over, owes nothing.
+  // Who has to pay: a booking whose rent, balance or deposit fell due on or before today, as its open tasks say,
+  // in the amounts its stored payments leave owing. The writes that cancel a booking or settle a debt close its tasks.
   const owing = new Map((unpaidResult!.results as UnpaidRow[]).map(row => [row.id, row]))
   for (const [bookingId, tasks] of payments) {
     const work = tasks[0]!
-    if (work.booking_status !== 'confirmed') continue
     const row = owing.get(bookingId)
-    if (!row) continue
-    const dues = bookingDues(row, row, now)
-    const due = tasks.filter(task => task.due_at && localDateAt(new Date(task.due_at), row.timezone) <= today(row.timezone)).map((task) => {
-      const found = dues.find(entry => task.dedupe_key === `payment:${bookingId}:${entry.key}`)
-      if (!found) throw new Error(`Payment task ${task.id} is open but booking ${bookingId} owes nothing for it`)
-      return found
-    }).sort((left, right) => left.due_at.localeCompare(right.due_at))
-    if (!due.length) continue
+    const zone = row?.timezone ?? work.booking_timezone ?? work.timezone
+    const guest = first(row?.guest_name ?? work.guest_name)
+    const fallen = tasks.filter(task => task.due_at && localDateAt(new Date(task.due_at), zone) <= today(zone))
+    const due = (row ? bookingDues(row, row, now) : []).filter(entry => fallen.some(task => task.dedupe_key === `payment:${bookingId}:${entry.key}`))
+      .sort((left, right) => left.due_at.localeCompare(right.due_at))
+    // A task whose debt the stored payments no longer show is out of date: its card says so, and the rest of Today stands.
+    if (due.length < fallen.length) {
+      add({ id: `unpaid:${bookingId}`, noun: 'payment', order: [1, fallen[0]!.due_at!], bookings: [], day: today(zone), when: null, image_url: null, icon: 'i-lucide-credit-card',
+        headline: `What ${guest ?? 'this booking'} owes couldn’t be read`, line: row?.product_name ?? work.product_name,
+        action: { title: 'Open the reservation', detail: 'Its payments changed since this was written; check them there' },
+        to: recordPath(bookingId, work.guest_conversation_id, work.viewer_seated), draft: null })
+      continue
+    }
+    if (!due.length || !row) continue
     if (!row.currency) throw new Error(`Booking ${bookingId} owes money and has no currency`)
     const oldest = due[0]!
-    const guest = first(row.guest_name)
-    const zone = row.timezone
     const late = oldest.due_on < today(zone)
     const what = oldest.reason === 'rent' ? `rent is ${late ? 'overdue' : 'due today'}` : oldest.reason === 'balance' ? 'stay balance is unpaid' : `${oldest.label.toLowerCase()} hasn’t been received`
     const total = due.reduce((sum, entry) => sum + entry.owed_minor, 0)

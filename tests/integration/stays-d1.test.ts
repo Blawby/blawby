@@ -344,6 +344,11 @@ test('a channel stay is read-only here and is paid through its channel; an app s
     assert.deepEqual([readBack?.required_minor, readBack?.held_minor], [50_000, 0])
     // A deposit received and given back at checkout was paid; it is not owed again.
     assert.deepEqual([await depositTask(), await owes()], ['done', []])
+    // Asking for more opens it again; cancelling the stay closes it in the cancellation's own batch.
+    await setBookingDeposit(db, depositor, stay.id, 60_000)
+    assert.deepEqual([await depositTask(), await owes()], ['open', [['deposit', 10_000]]])
+    await cancelStay(db, env, manager, stay.id, { version: (await getStay(db, manager, stay.id)).version, reason: 'Guest changed plans' })
+    assert.deepEqual([await depositTask(), await owes()], ['cancelled', []])
 
     // A guest who already paid: the stay and its first payment are one write, and a replay adds no second payment.
     const withPayment = { product_id: cabin.id, idempotency_key: 'paid-up-front', check_in_date: '2026-12-10', check_out_date: '2026-12-12', ...guest, payment: { amount_minor: 45_000, method: 'cash', paid_on: '2026-12-01', reference: 'cash at the door' } }

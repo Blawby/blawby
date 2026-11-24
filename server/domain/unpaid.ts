@@ -1,4 +1,5 @@
-import { executeBatch, type BatchQuery, type DbClient } from '~/server/db'
+import { executeBatch, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
+import { MAX_D1_BATCH_STATEMENTS } from '~/server/db/d1-limits'
 import { assertRoleAllows } from '~/server/utils/member-access'
 import { depositReceivedSql } from '~/server/domain/deposits'
 import { bookingDay } from '~/server/domain/requests'
@@ -231,6 +232,21 @@ export function stayMoneyTaskQueries(organizationId: string, stay: StayMoneyFact
 }
 
 /**
+ * Every open payment task of a booking that no longer owes the business
+ * anything, because it was cancelled or its channel now collects, closed in
+ * the batch of the write that did it. Reads the booking as that write left it.
+ */
+export function closedBookingPaymentTasksQuery(organizationId: string, bookingId: string, now: string): BatchQuery {
+  return {
+    query: `UPDATE tasks SET status = 'cancelled', closed_at = ?, version = version + 1, updated_at = ?
+      WHERE organization_id = ? AND kind = '${PAYMENT_TASK_KIND}' AND subject_type = 'booking' AND subject_id = ? AND status = 'open'
+        AND EXISTS (SELECT 1 FROM bookings b WHERE b.organization_id = tasks.organization_id AND b.id = tasks.subject_id
+          AND (b.status = 'cancelled' OR b.owner <> 'app' OR b.channel <> 'direct'))`,
+    params: [now, now, organizationId, bookingId],
+  }
+}
+
+/**
  * A booking's deposit task from its stored deposit, in SQL: it needs nothing
  * the write's caller holds, so any write that changes the deposit or makes
  * the booking appends it. Open while less was received than is asked for.
@@ -308,4 +324,27 @@ export async function readUnpaid(db: DbClient, principal: { organizationId: stri
   await assertRoleAllows({ organizationId: principal.organizationId, role: principal.role, permissions: { settings: ['update'] }, message: 'Only owners and admins see who owes the business' })
   const [rows] = await executeBatch(db, [unpaidQuery({ sql: '?', params: [principal.organizationId] })], { operation: 'Read unpaid bookings' })
   return { bookings: unpaidBookings(rows!.results as UnpaidRow[], now) }
+}
+
+/**
+ * The payment tasks of one organization's existing debts, written by the same
+ * statements its writes use (#2079 shipped stored tasks for what had been
+ * computed): run once for data that existed before them, and safe to repeat.
+ * Returns what the stored rows owe and what the tasks then say, which match.
+ */
+export async function writeExistingPaymentTasks(db: DbClient, organizationId: string, options: { write: boolean; now?: Date }) {
+  const now = options.now ?? new Date()
+  const stamp = now.toISOString()
+  const [read] = await executeBatch(db, [unpaidQuery({ sql: '?', params: [organizationId] })], { operation: 'Read existing debts' })
+  const rows = read!.results as UnpaidRow[]
+  const queries = rows.flatMap(row => [
+    ...(row.unit === 'nights' && row.total_minor !== null ? stayPaymentTaskQueries({ organizationId, now: stamp, stay: { ...ledgerStay(row), id: row.id, product_id: row.product_id }, money: stayMoney(ledgerStay(row), row, now) }) : []),
+    depositTaskQuery(organizationId, { sql: '?', params: [row.id] }, stamp),
+  ])
+  if (options.write) for (let start = 0; start < queries.length; start += MAX_D1_BATCH_STATEMENTS) {
+    await executeBatch(db, queries.slice(start, start + MAX_D1_BATCH_STATEMENTS), { operation: 'Write existing payment tasks' })
+  }
+  const dues = rows.reduce((sum, row) => sum + bookingDues(row, row, now).length, 0)
+  const open = await queryFirst<{ n: number }>(db, `SELECT count(*) AS n FROM tasks WHERE organization_id = ? AND kind = '${PAYMENT_TASK_KIND}' AND status = 'open'`, [organizationId])
+  return { bookings: rows.length, dues, owed_now: unpaidBookings(rows, now).reduce((sum, booking) => sum + booking.items.length, 0), open_tasks: open?.n ?? 0 }
 }

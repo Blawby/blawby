@@ -25,7 +25,7 @@ import { calculateMapUrl, coordinatesFailure } from '~/utils/location-map'
 import { visitRefundPaymentQuery, visitRefundQueries } from '~/server/domain/payments/visit-refund'
 import { cancelStayInstallments, settleInstallmentOutside } from '~/server/domain/payments/installments'
 import { enteredStayInstallments } from '~/shared/stay-installments'
-import { bookingDues, depositTaskQuery, stayMoney, stayMoneyColumns, stayPaymentTaskQueries, type StayMoneyRow } from '~/server/domain/unpaid'
+import { bookingDues, closedBookingPaymentTasksQuery, depositTaskQuery, stayMoney, stayMoneyColumns, stayPaymentTaskQueries, type StayMoneyRow } from '~/server/domain/unpaid'
 import { bookedPolicyFor, LONG_TERM_STAY_NIGHTS, stayCancellationRefund, type StayBookedPolicy, type StayCancellationInput } from '~/shared/stay-cancellation'
 import { executeRefund, requirePayment, type Payment } from '~/server/domain/payments'
 import { paymentsStripe } from '~/server/utils/stripe-connect'
@@ -2314,6 +2314,7 @@ function stayCancellationQueries(organizationId: string, stay: Stay, now: string
         entityType: 'stay', entityId: stay.id, metadata: input.metadata, onlyIfPreviousChangedOneRow: true }),
       ...stayNightReleaseQueries(stay, organizationId, now),
       ...queries,
+      closedBookingPaymentTasksQuery(organizationId, stay.id, now),
     ], keys,
   }
 }
@@ -3273,6 +3274,8 @@ export async function applyChannelBooking(db: DbClient, env: GuestInboxPublicati
     guest: { name: guestName ?? undefined, email: booking.guest_email ?? undefined, phone: booking.guest_phone ?? undefined } }),
   ...reconcileGuestListingParticipants(organizationId, { query: 'c.booking_id = ?', params: [id] }),
   ...turnovers.queries,
+  // A booking its channel now collects for owes the business nothing here.
+  closedBookingPaymentTasksQuery(organizationId, id, now),
   ]
   const writes = await executeBatch(db, write, { operation: 'Apply channel booking' })
   const changed = writes[existing?.external_booking_id === null || reimported !== null ? 2 : 1]?.meta.changes

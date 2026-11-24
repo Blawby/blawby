@@ -486,13 +486,15 @@ export function conversationTaskQueries(conversationId: string | BatchQuery, now
     params: [...conversationParams, ...conversationParams, previousSessionId],
   }, now), {
     // A change is answered, or replaced by a newer proposal or a move: its task is done, by whoever answered or replaced it.
-    query: `UPDATE tasks SET status = 'done', closed_at = ?, version = tasks.version + 1, updated_at = ?,
+    // A change on a cancelled booking has nothing left to answer: its task is cancelled.
+    query: `UPDATE tasks SET status = CASE WHEN ${CHANGE_ANSWERED_SQL} THEN 'done' ELSE 'cancelled' END, closed_at = ?, version = tasks.version + 1, updated_at = ?,
         closed_by_user_id = (SELECT answer.author_user_id FROM messages answer WHERE answer.conversation_id = p.conversation_id
           AND (answer.dedupe_key = 'booking-change-decision:' || p.id OR (answer.event_name IN ('booking_change.requested', 'booking_change.moved') AND answer.sequence > p.sequence))
           ORDER BY answer.sequence LIMIT 1)
       FROM messages p
       WHERE tasks.kind = 'booking_change' AND tasks.status = 'open' AND tasks.dedupe_key = 'booking_change:' || p.id
-        AND p.conversation_id = ${conversation.query} AND p.event_name = 'booking_change.requested' AND ${CHANGE_ANSWERED_SQL}`,
+        AND p.conversation_id = ${conversation.query} AND p.event_name = 'booking_change.requested'
+        AND (${CHANGE_ANSWERED_SQL} OR EXISTS (SELECT 1 FROM bookings cancelled WHERE cancelled.id = tasks.subject_id AND cancelled.status = 'cancelled'))`,
     params: [now, now, ...conversationParams],
   }, {
     // A change that needs the business: one the guest asked for (now), or a business proposal on a booking
@@ -506,6 +508,7 @@ export function conversationTaskQueries(conversationId: string | BatchQuery, now
         JOIN bookings record ON record.id = r.booking_id AND record.organization_id = r.organization_id
         JOIN messages p ON p.conversation_id = r.id
        WHERE r.id = ${conversation.query} AND p.event_name = 'booking_change.requested' AND NOT ${CHANGE_ANSWERED_SQL}
+           AND record.status <> 'cancelled'
            -- A stay's change proposed by the business waits on the guest's channel, not on the business.
            AND (${GUEST_CAUSED_SQL('p', 'r')} OR record.product_session_id IS NOT NULL)
       ON CONFLICT (dedupe_key) DO NOTHING`,

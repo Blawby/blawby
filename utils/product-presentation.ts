@@ -13,6 +13,7 @@ const KIND_SURFACES: Partial<Record<Product['kind'], ProductSurface>> = {
   stay: 'stays',
   experience: 'experiences',
   service: 'products',
+  item: 'products',
 }
 
 export function productSurfaceOf(_vertical: string | null | undefined, product: Pick<Product, 'kind'>): ProductSurface | null {
@@ -205,7 +206,7 @@ export function countCatalog(products: ReadonlyArray<Pick<Product, 'kind'>>): Ca
     experiences: products.filter(isExperience).length,
     dishes: products.filter(product => product.kind === 'dish').length,
     stays: products.filter(product => product.kind === 'stay').length,
-    products: products.filter(product => product.kind === 'service').length,
+    products: products.filter(product => product.kind === 'service' || product.kind === 'item').length,
   }
 }
 

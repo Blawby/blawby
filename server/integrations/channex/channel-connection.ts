@@ -613,7 +613,11 @@ export class ChannexConnection {
       if (primary.length !== 1 || typeof primary[0]!.occupancy !== 'number') throw new ChannexDataError('The home’s rate plan must have one primary occupancy')
       return primary[0]!.occupancy
     })
-    const plan = matches[0] ?? await channexCreate(this.env, '/rate_plans', { rate_plan: {
+    const earlier = matches[0]
+    if (earlier && (earlier.attributes.parent_rate_plan_id !== parentId || earlier.attributes.inherit_rate !== true || earlier.attributes.inherit_min_stay_arrival !== true)) {
+      fail(409, 'PROVIDER_STATE_AMBIGUOUS', `Channex rate plan ${earlier.id} for this listing does not follow the home’s rate plan.`)
+    }
+    const plan = earlier ?? await channexCreate(this.env, '/rate_plans', { rate_plan: {
       property_id: propertyId, room_type_id: roomId, title, currency: details.currency, parent_rate_plan_id: parentId,
       rate_mode: 'derived', sell_mode: 'per_room', options: [{ occupancy, is_primary: true, rate: 0 }],
       inherit_rate: true, inherit_stop_sell: true, inherit_closed_to_arrival: true, inherit_closed_to_departure: true,
@@ -1137,7 +1141,7 @@ export class ChannexConnection {
     const others = await queryAll<{ listing_id: string; enabled: number }>(this.db, 'SELECT listing_id, enabled FROM product_airbnb_listings WHERE organization_id = ? AND product_id = ? AND listing_id <> ? ORDER BY listing_id',
       [this.organizationId, mapping.product_id, mapping.listing_id])
     if (others.length) {
-      fail(409, 'HOME_HAS_OTHER_LISTINGS', `This listing’s home also carries Airbnb ${others.length === 1 ? 'listing' : 'listings'} ${others.map(other => `${other.listing_id}${other.enabled ? '' : ' (stopped)'}`).join(', ')}. Move ${others.length === 1 ? 'it' : 'them'} to the chosen home too, or stop ${others.length === 1 ? 'it' : 'them'}, then merge again.`,
+      fail(409, 'HOME_HAS_OTHER_LISTINGS', `This listing’s home also carries Airbnb ${others.length === 1 ? 'listing' : 'listings'} ${others.map(other => `${other.listing_id}${other.enabled ? '' : ' (stopped)'}`).join(', ')}, and a home with more than one listing cannot be merged into another. Put the chosen home’s listing on this listing’s home instead.`,
         { listing_ids: others.map(other => other.listing_id) })
     }
     if (await this.hasVrbo(mapping)) fail(409, 'HOME_HAS_OTHER_LISTINGS', 'This listing’s home also syncs with Vrbo. Disconnect Vrbo from it, then merge again.')

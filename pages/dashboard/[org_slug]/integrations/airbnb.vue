@@ -197,7 +197,7 @@ type SyncedHome = { product_id: string; internal_name: string; channel: { status
 /** Homes a listing can share: those that already sync, as iOS lists them. */
 const { data: stayHomes, refresh: refreshHomes } = await useAsyncData(
   () => `integration-airbnb-homes:${integrations.organizationId}`,
-  () => connected.value && canManage.value ? dashboardApi('/api/dashboard/stay-homes', { query: { view: 'calendar' },
+  () => connected.value && canManage.value ? dashboardApi('/api/dashboard/stay-homes', {
     validate: (value): value is { homes: SyncedHome[] } => isRecord(value) && Array.isArray(value.homes) && value.homes.every(home => isRecord(home)
       && typeof home.product_id === 'string' && typeof home.internal_name === 'string' && (home.channel === null || (isRecord(home.channel) && typeof home.channel.status === 'string'))),
   }) : Promise.resolve(null),
@@ -381,6 +381,8 @@ async function chooseHome(listing: AirbnbListing) {
   const { [listing.id]: _previous, ...others } = assigned.value
   assigned.value = chosen === null ? others : { ...others, [listing.id]: chosen }
   if (chosen !== null && !checked.value.includes(listing.id)) checked.value = [...checked.value, listing.id]
+  // Back to a new home: a checked listing needs the details Airbnb left out, as when it is first checked.
+  if (chosen === null && checked.value.includes(listing.id)) await choose(listing.id, true)
 }
 
 async function actOnListing(id: string, action: string) {

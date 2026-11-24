@@ -9,9 +9,11 @@ import * as schema from '../../server/db/schema.ts'
 import { bindDatabaseEvents } from '../../server/db/index.ts'
 import { landBookingRevision } from '../../server/integrations/channex/booking-revisions.ts'
 import { ChannexConnection, type ImportContentReport } from '../../server/integrations/channex/channel-connection.ts'
-import { applyChannelBooking, createStayHome, getStay, readStayHome, stayHomeInput, updateStayHome } from '../../server/domain/stays.ts'
+import { applyChannelBooking, cancelStay, createStay, createStayHome, createStayRequest, getStay, quoteStay, readPublicStayHome, readStayHome, stayCheckoutPolicy, stayHomeInput, updateStayHome } from '../../server/domain/stays.ts'
+import { requestAirbnbSync, readAirbnbSync } from '../../server/integrations/channex/airbnb-sync.ts'
+import { writeMemberScheduling } from '../../server/domain/member-scheduling.ts'
 import { getMediaAsset } from '../../server/utils/media-asset-manager.ts'
-import { createProduct, getProduct } from '../../server/utils/product-management.ts'
+import { createProduct, getProduct, setProductPublication } from '../../server/utils/product-management.ts'
 import { createAuth, type CloudflareEnv } from '../../server/utils/auth.ts'
 import { countActiveHomes } from '../../server/utils/billing.ts'
 import { publishedCatalogResponse } from './support/stripe-published-catalog.ts'
@@ -77,6 +79,8 @@ class FakeChannex {
   token = ''
   channelId = 'chan-1'
   listingId = LISTING
+  /** More listings on the same Airbnb account. */
+  extraListings: string[] = []
   nightlyRate = 189.5
   restrictionsByRate = new Map<string, Map<string, unknown>>()
   messagesProperty: string | null = null
@@ -175,7 +179,7 @@ class FakeChannex {
     if (method === 'GET' && path === '/channels/chan-1/action/listings' && this.airbnbDown) {
       return new Response(JSON.stringify({ errors: { error_code: 500, error_message: 'Unfortunately, a server error prevented your request from being completed. Airbnb may be undergoing maintenance or your connection may have timed out. Please try again.', error_type: 'unknown_error' } }), { status: 422, headers: { 'content-type': 'application/json' } })
     }
-    if (method === 'GET' && path === '/channels/chan-1/action/listings') return json({ data: { listing_id_dictionary: { values: this.listingPresent ? [{ id: this.listingId, title: 'Cliff Cabin', city: 'Moab', country_code: 'US' }] : [] } } })
+    if (method === 'GET' && path === '/channels/chan-1/action/listings') return json({ data: { listing_id_dictionary: { values: this.listingPresent ? [this.listingId, ...this.extraListings].map(id => ({ id, title: 'Cliff Cabin', city: 'Moab', country_code: 'US' })) : [] } } })
     if (method === 'GET' && path === '/channels/chan-1/action/listing_details') {
       const listingId = url.searchParams.get('listing_id')!
       const content = {
@@ -206,6 +210,12 @@ class FakeChannex {
       this.rateProperties.set(this.ratePlan, (JSON.parse(String(init.body)) as { rate_plan: { property_id: string } }).rate_plan.property_id)
       this.ratePlans.set(this.ratePlan, (JSON.parse(String(init.body)) as { rate_plan: Record<string, unknown> }).rate_plan)
       return resource('rate_plan')
+    }
+    if (method === 'DELETE' && /^\/rate_plans\/[^/]+$/.test(path)) {
+      const id = path.split('/').at(-1)!
+      assert.ok(!this.channel.ratePlans.some(entry => entry.rate_plan_id === id), `rate plan ${id} is deleted while mapped`)
+      this.ratePlans.delete(id)
+      return json({ meta: { message: 'Success' } })
     }
     if ((method === 'GET' || method === 'PUT') && /^\/rate_plans\/[^/]+$/.test(path)) {
       const id = path.split('/').at(-1)!
@@ -319,10 +329,10 @@ async function track(db: D1Database, channex: FakeChannex, productId: string): P
 }
 
 /** Advance until the import rests at `until`. */
-async function advanceTo(connection: ChannexConnection, db: D1Database, channex: FakeChannex, productId: string, until: 'draft' | 'complete'): Promise<void> {
+async function advanceTo(connection: ChannexConnection, db: D1Database, channex: FakeChannex, productId: string, until: 'draft' | 'complete', listingId = LISTING): Promise<void> {
   for (let step = 0; step < 14; step++) {
     await track(db, channex, productId)
-    if ((await connection.advance(LISTING)).stage === until) return
+    if ((await connection.advance(listingId)).stage === until) return
   }
   throw new Error(`The import did not reach ${until}`)
 }
@@ -364,6 +374,8 @@ test('a listing imports through every stage into a home Channex and Blawby agree
     const nights = await db.prepare("SELECT COUNT(*) AS total, SUM(n.closed) AS closed, SUM(n.closed_to_departure) AS ctd, MAX(pr.unit_amount) AS top FROM product_nights n JOIN product_variants v ON v.organization_id = n.organization_id AND v.product_id = n.product_id LEFT JOIN prices pr ON pr.organization_id = v.organization_id AND pr.product_variant_id = v.id AND pr.stay_date = n.date WHERE n.product_id = ? AND n.source = 'import'").bind(productId).first()
     // The blocked night and the reserved night are closed; the nights past Airbnb's booking window are not.
     assert.deepEqual(nights, { total: 500, closed: 2, ctd: 1, top: 21_000 })
+    // Airbnb names the reserved night a reservation and the other a busy block; the import keeps which is which.
+    assert.deepEqual((await db.prepare("SELECT closed_for_reservation FROM product_nights WHERE product_id = ? AND closed = 1 ORDER BY date").bind(productId).all()).results, [{ closed_for_reservation: 0 }, { closed_for_reservation: 1 }])
     const first = await db.prepare('SELECT n.date, pr.unit_amount AS price_minor, n.min_stay_arrival, n.max_stay FROM product_nights n JOIN product_variants v ON v.organization_id = n.organization_id AND v.product_id = n.product_id LEFT JOIN prices pr ON pr.organization_id = v.organization_id AND pr.product_variant_id = v.id AND pr.stay_date = n.date WHERE n.product_id = ? ORDER BY n.date LIMIT 1').bind(productId).first()
     assert.deepEqual(first, { date: today(), price_minor: 21_000, min_stay_arrival: 2, max_stay: 30 })
 
@@ -474,7 +486,7 @@ test('a listing imports through every stage into a home Channex and Blawby agree
     assert.equal(channex.restrictions[today()]!.min_stay_arrival, 2)
     assert.equal(await db.prepare('SELECT setup_property_id FROM channex_connections').first('setup_property_id'), null)
     const report = JSON.parse(String(mapping!.import_content)) as ImportContentReport
-    assert.deepEqual((await connection.listings()).listings[0]!.import, { status: 'imported', product_id: productId, stage: 'complete', syncing: true, content: report })
+    assert.deepEqual((await connection.listings()).listings[0]!.import, { status: 'imported', product_id: productId, stage: 'complete', syncing: true, content: report, own_rate_plan: false, price_adjustment_type: null, price_adjustment: null })
 
     // Every syncing home names its Airbnb listing and that listing's editor.
     assert.deepEqual([filled.airbnb_listing_id, filled.airbnb_editor_url], [LISTING, `https://www.airbnb.com/hosting/listings/editor/${LISTING}/details`])
@@ -516,7 +528,7 @@ test('a listing imports through every stage into a home Channex and Blawby agree
     assert.deepEqual([drafted.live, drafted.photos.length, drafted.description, drafted.base_price_minor], [false, 3, 'Our own words.', filled.base_price_minor])
     // A draft is not syncing: an edit names nothing for Airbnb.
     assert.deepEqual((await updateStayHome(env, db, manager, productId, { description: 'Our own words, again.' })).airbnb_unsynced, [])
-    assert.deepEqual((await connection.listings()).listings[0]!.import, { status: 'imported', product_id: productId, stage: 'draft', syncing: false, content: report })
+    assert.deepEqual((await connection.listings()).listings[0]!.import, { status: 'imported', product_id: productId, stage: 'draft', syncing: false, content: report, own_rate_plan: false, price_adjustment_type: null, price_adjustment: null })
     // Again on a draft: answered as it is.
     assert.deepEqual(await connection.deactivate(LISTING), { product_id: productId, stage: 'draft', waiting: false })
     // Draft edits become the canonical provider defaults once the actual mapping is recreated, before the home goes live.
@@ -924,6 +936,25 @@ test('a connected backup merges into the same room across accounts and keeps bil
       adults: 2, children: 0, infants: 0, total_minor: 38700, currency: 'USD', guest_name: 'Guest', guest_surname: null, guest_email: null, guest_phone: null,
     })
     assert.equal(await countActiveHomes(db, ORG), 2)
+    const refused = (code: string, bookingId: string, conflictingId?: string) => (error: { message?: string; data?: { code?: string; booking_id?: string; conflicting_booking_id?: string } }) =>
+      error.data?.code === code && error.data.booking_id === bookingId && (conflictingId === undefined || error.data.conflicting_booking_id === conflictingId) && Boolean(error.message?.includes(bookingId))
+    // A merge is refused naming the booking in the way: a direct stay on the kept home under the backup's reservation,
+    const direct = await createStay(db, env, manager, { product_id: targetId, idempotency_key: 'direct-overlap', check_in_date: arrival, check_out_date: addDays(arrival, 1), adults: 2, guest_name: 'Ana', guest_email: 'ana@example.test', total_minor: 45_000 })
+    await assert.rejects(connection.attach('backup', targetId), refused('HOME_MERGE_CONFLICT', stay.id, direct.id))
+    await cancelStay(db, env, manager, direct.id, { version: direct.version, actorRole: 'owner' })
+    // and a request on the home being merged that still awaits the host's decision.
+    await db.prepare("INSERT INTO organization_locales(id, organization_id, locale, is_source, status) VALUES ('org-en', ?, 'en', 1, 'published')").bind(ORG).run()
+    await db.prepare("INSERT INTO user (id, name, email, emailVerified, createdAt, updatedAt) VALUES ('guest-user', 'Ana', 'ana@example.test', 1, 0, 0)").run()
+    await writeMemberScheduling({ env, userId: OWNER, organizationId: ORG }, 'm-owner', { updated_at: null, public_name: 'Owner', public_approved: true })
+    await setProductPublication(db, { env, organizationId: ORG, productId: source.id, published: true, actor: { actorId: OWNER } })
+    const listed = await readPublicStayHome(db, ORG, source.id)
+    const quote = await quoteStay(db, ORG, listed, { check_in_date: addDays(today(), 20), check_out_date: addDays(today(), 22), adults: 2 })
+    const request = await createStayRequest(db, env, { organizationId: ORG, buyerUserId: 'guest-user', key: 'merge-request', fingerprint: 'merge-request', home: listed, quote, policy: stayCheckoutPolicy(listed.guestTerms, quote),
+      guest: { name: 'Ana', email: 'ana@example.test', phone: null, notes: null }, locale: 'en', ipHash: 'proof', websiteSource: 'Direct' })
+    await assert.rejects(connection.attach('backup', targetId), refused('HOME_MERGE_CONFLICT', request.id))
+    await cancelStay(db, env, manager, request.id, { version: request.version, actorRole: 'owner' })
+
+    const closedBefore = await importClosed()
     await connection.attach('backup', targetId)
     for (let step = 0; step < 5; step++) if ((await connection.advance('backup')).stage === 'complete') break
     const merged = await readStayHome(db, manager, targetId)
@@ -938,14 +969,57 @@ test('a connected backup merges into the same room across accounts and keeps bil
       [inventory.rate_plan_id, 'derived', true, true, true, true, true, true],
     )
     assert.equal(primary.restrictionsByRate.get(ratePlan), undefined)
-    // The backup's reservation now holds the nights the import closed for it, so its cancellation frees them.
-    assert.equal(await importClosed(), 0)
+    // Airbnb showed the primary these nights 'busy', as it shows a host's own block, so the merge reopens none of them.
+    assert.ok(closedBefore)
+    assert.equal(await importClosed(), closedBefore)
     assert.equal(primary.availability[arrival], 0)
     assert.equal(await countActiveHomes(db, ORG), 2)
     assert.equal(await db.prepare('SELECT active FROM products WHERE id = ?').bind(source.id).first('active'), 0)
     assert.equal((await getStay(db, manager, stay.id)).product_id, targetId)
     assert.deepEqual(await db.prepare('SELECT DISTINCT product_id FROM stay_nights WHERE booking_id = ?').bind(stay.id).all().then(result => result.results), [{ product_id: targetId }])
+    // Landed before the listing was recorded, the reservation is the merged home's one listing's.
+    assert.equal(await db.prepare('SELECT channel_listing_id FROM bookings WHERE id = ?').bind(stay.id).first('channel_listing_id'), 'backup')
 
+    // A second backup on the same account joins the home: three listings selling one calendar.
+    backup.extraListings = ['backup-2']
+    await connection.attach('backup-2', targetId)
+    await connection.activate('backup-2')
+    await advanceTo(connection, db, primary, targetId, 'complete', 'backup-2')
+    const secondPlan = backup.channel.ratePlans.find(entry => entry.settings.listing_id === 'backup-2')!.rate_plan_id
+
+    // A backup sells at the home's price changed by its own rule, which is its plan's Channex derived option; the home's first listing is the home's price.
+    assert.deepEqual(await connection.setListingPrice('backup', { price_adjustment_type: 'percent', price_adjustment: 10 }), { listing_id: 'backup', price_adjustment_type: 'percent', price_adjustment: 10 })
+    const primaryOption = (id: string) => (primary.ratePlans.get(id)!.options as Array<Record<string, unknown>>).find(option => option.is_primary)!
+    assert.deepEqual(primaryOption(ratePlan).derived_option, { rate: [['increase_by_percent', '10']] })
+    await connection.setListingPrice('backup-2', { price_adjustment_type: 'amount', price_adjustment: -1500 })
+    assert.deepEqual(primaryOption(secondPlan).derived_option, { rate: [['decrease_by_amount', '15.00']] })
+    await assert.rejects(connection.setListingPrice(LISTING, { price_adjustment_type: 'percent', price_adjustment: 10 }), (error: { data?: { code?: string } }) => error.data?.code === 'LISTING_SELLS_HOME_PRICE')
+    await assert.rejects(connection.setListingPrice('backup', { price_adjustment_type: 'percent', price_adjustment: -100 }), (error: { data?: { code?: string } }) => error.data?.code === 'VALIDATION_ERROR')
+    const listed2 = (await connection.listings()).listings.find(listing => listing.id === 'backup')!.import
+    assert.deepEqual(listed2.status === 'imported' && [listed2.own_rate_plan, listed2.price_adjustment_type, listed2.price_adjustment], [true, 'percent', 10])
+
+    // Stopping an attached listing takes its Airbnb mapping away; the home keeps syncing through its other listings.
+    await connection.deactivate('backup-2')
+    assert.deepEqual(await db.prepare("SELECT product_id, import_stage, enabled FROM product_airbnb_listings WHERE listing_id = 'backup-2'").first(), { product_id: targetId, import_stage: 'draft', enabled: 0 })
+    assert.ok(!backup.channel.ratePlans.some(entry => entry.settings.listing_id === 'backup-2'))
+    assert.equal((await readStayHome(db, manager, targetId)).channel?.status, 'connected')
+
+    // Given its own home again, the backup takes its reservation that has not ended; the shared home keeps it unavailable,
+    // since Channex took those nights off that room and sends the reservation's changes there.
+    const own = (await connection.ownHome('backup', { missingDetails: { assigned_member_id: 'm-owner' } })).product_id
+    assert.notEqual(own, targetId)
+    const moved = await getStay(db, manager, stay.id)
+    assert.deepEqual([moved.product_id, moved.booked_product_id], [own, targetId])
+    assert.deepEqual(await db.prepare('SELECT product_id FROM occupied_stay_nights WHERE booking_id = ? AND date = ? ORDER BY product_id').bind(stay.id, arrival).all().then(result => result.results.map(row => row.product_id)).then(ids => ids.sort()), [own, targetId].sort())
+    await advanceTo(connection, db, primary, own, 'draft', 'backup')
+    await connection.activate('backup')
+    await advanceTo(connection, db, primary, own, 'complete', 'backup')
+    const ownPlan = await db.prepare('SELECT rate_plan_id FROM product_channel_mappings WHERE product_id = ?').bind(own).first<string>('rate_plan_id')
+    assert.deepEqual(backup.channel.ratePlans.filter(entry => entry.settings.listing_id === 'backup').map(entry => entry.rate_plan_id), [ownPlan])
+    assert.ok(!primary.ratePlans.has(ratePlan), 'the backup’s plan on the shared home goes once its mapping moves')
+    assert.deepEqual((await readStayHome(db, manager, targetId)).airbnb_listings.map(listing => listing.listing_id), [LISTING, 'backup-2'])
+
+    // Its cancellation still comes through the shared home's old property and lands where the guest moved.
     const revision = await landBookingRevision(db, env, { id: 'cancel-after-merge', type: 'booking_revision', attributes: {
       property_id: 'old-property', booking_id: 'old-booking', ota_name: 'AirBNB', ota_reservation_code: 'HMBACKUP',
       inserted_at: '2026-10-30T01:00:00Z', status: 'cancelled', arrival_date: arrival, departure_date: departure, amount: '387.00', currency: 'USD',
@@ -953,7 +1027,27 @@ test('a connected backup merges into the same room across accounts and keeps bil
     } })
     assert.equal(revision.status, 'acknowledged')
     const cancelled = await getStay(db, manager, stay.id)
-    assert.deepEqual([cancelled.status, cancelled.product_id, cancelled.conversation_id], ['cancelled', targetId, stay.conversation_id])
+    assert.deepEqual([cancelled.status, cancelled.product_id, cancelled.conversation_id], ['cancelled', own, stay.conversation_id])
+
+    // One listing moves off a home with others: only it moves, and its stopped plan there goes.
+    await connection.attach('backup-2', own)
+    assert.ok(!primary.ratePlans.has(secondPlan))
+    await advanceTo(connection, db, primary, own, 'complete', 'backup-2')
+    assert.deepEqual((await readStayHome(db, manager, targetId)).airbnb_listings.map(listing => listing.listing_id), [LISTING])
+    assert.equal((await readStayHome(db, manager, targetId)).channel?.status, 'connected')
+    assert.deepEqual((await readStayHome(db, manager, own)).airbnb_listings.map(listing => listing.listing_id).sort(), ['backup', 'backup-2'])
+
+    // Asking for every listing of a home at once merges it: each moves in turn and the last one takes the home with it.
+    await requestAirbnbSync(env, db, ORG, OWNER, { sync: [{ listing_id: 'backup', product_id: targetId }, { listing_id: 'backup-2', product_id: targetId }] })
+    for (let delivered = 0; syncs.pending.length; delivered++) {
+      assert.ok(delivered < 60, 'the merge requests did not settle')
+      await syncs.deliver(env, syncs.pending.shift()!)
+    }
+    assert.deepEqual((await readAirbnbSync(db, ORG)).filter(job => job.listing_id.startsWith('backup')).map(job => [job.listing_id, job.status, job.product_id]), [['backup', 'done', targetId], ['backup-2', 'done', targetId]])
+    assert.equal(await db.prepare('SELECT active FROM products WHERE id = ?').bind(own).first('active'), 0)
+    assert.deepEqual((await readStayHome(db, manager, targetId)).airbnb_listings.map(listing => listing.listing_id).sort(), [LISTING, 'backup', 'backup-2'].sort())
+    assert.equal((await getStay(db, manager, stay.id)).product_id, targetId)
+
     await connection.disconnect('chan-2')
     await syncs.drain(env)
     assert.deepEqual((await connection.status()).connections.map(account => account.channel_id), ['chan-1'])

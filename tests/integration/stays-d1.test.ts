@@ -398,8 +398,8 @@ test('the host sets nights apart from the defaults and resets them', { timeout: 
     await assert.rejects(updateStayHome(env, db, manager, cabin.id, { min_nights: null }), code('INVALID_DETAIL'))
     assert.equal((await getProduct(db, ORG, cabin.id)).stay!.min_nights, 2)
     await importStayNights(db, env, manager, cabin.id, [
-      { date: '2026-11-20', available: true, price_minor: 15_000, min_stay_arrival: 21, max_stay: null, closed_to_arrival: false, closed_to_departure: false },
-      { date: '2026-11-21', available: true, price_minor: 15_000, min_stay_arrival: 2, max_stay: null, closed_to_arrival: false, closed_to_departure: false },
+      { date: '2026-11-20', available: true, closed_for_reservation: false, price_minor: 15_000, min_stay_arrival: 21, max_stay: null, closed_to_arrival: false, closed_to_departure: false },
+      { date: '2026-11-21', available: true, closed_for_reservation: false, price_minor: 15_000, min_stay_arrival: 2, max_stay: null, closed_to_arrival: false, closed_to_departure: false },
     ])
     const datedHome = await readStayHome(db, manager, cabin.id)
     const dated = await readHomeCalendar(db, manager, { productId: cabin.id, from: '2026-11-20', to: '2026-11-22' })
@@ -423,7 +423,7 @@ test('the host sets nights apart from the defaults and resets them', { timeout: 
       JOIN prices pr ON pr.organization_id = v.organization_id AND pr.product_variant_id = v.id AND pr.weekend = 1 WHERE b.product_id = ?`).bind(cabin.id).first()
     assert.deepEqual(weekend, { unit_amount: 22000, stored_in_rules: null })
     await importStayNights(db, env, manager, cabin.id, Array.from({ length: 6 }, (_, offset) => ({
-      date: `2026-12-0${offset + 1}`, available: true, price_minor: offset === 2 ? 19_000 : null,
+      date: `2026-12-0${offset + 1}`, available: true, closed_for_reservation: false, price_minor: offset === 2 ? 19_000 : null,
       min_stay_arrival: offset === 2 ? 2 : null, max_stay: null, closed_to_arrival: false, closed_to_departure: false,
     })))
     const policyWindow = { productId: cabin.id, from: '2026-12-01', to: '2026-12-07' }

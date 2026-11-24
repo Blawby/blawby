@@ -1,7 +1,7 @@
 {
   "surface": "tenant",
-  "fingerprint": "sha256:4fd73f1111ae4fc3026d85019570225d7c0038cd9773cfe1a934cf5c2f7f7f1a",
-  "documentationFingerprint": "sha256:4bd65086dc85b5a22ca14f648078f74bbbef67f4f547850c80a2414d2cab1af4",
+  "fingerprint": "sha256:ebe16767bf61c785a054e5499e0c2b44f652ffc422180f1431e384f028f97a94",
+  "documentationFingerprint": "sha256:7ce221902c8838aad4b86bb652aec023c2466c5f321aa43afd75195543c6f620",
   "tools": [
     {
       "name": "add_organization_language",
@@ -67518,6 +67518,9 @@
                 "listing_id": {
                   "type": "string"
                 },
+                "own_home": {
+                  "type": "boolean"
+                },
                 "product_id": {
                   "type": [
                     "string",
@@ -67565,6 +67568,7 @@
                 "listing_id",
                 "product_id",
                 "action",
+                "own_home",
                 "status",
                 "stage",
                 "error",
@@ -67591,11 +67595,32 @@
                   "type": "string"
                 },
                 "import": {
-                  "description": "not_imported, or the home it syncs with: product_id, its stage and whether it syncs now.",
+                  "description": "not_imported, or the home it syncs with: product_id, its stage, whether it syncs now, and its price against the home’s.",
                   "properties": {
                     "content": {
                       "type": [
                         "object",
+                        "null"
+                      ]
+                    },
+                    "own_rate_plan": {
+                      "description": "The listing sells through its own rate plan derived from the home’s, so set_airbnb_listing_price can set its price. False for the listing selling at the home’s own price.",
+                      "type": "boolean"
+                    },
+                    "price_adjustment": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "price_adjustment_type": {
+                      "enum": [
+                        "percent",
+                        "amount",
+                        null
+                      ],
+                      "type": [
+                        "string",
                         "null"
                       ]
                     },
@@ -102267,6 +102292,97 @@
       "uiResourceUri": null
     },
     {
+      "name": "set_airbnb_listing_price",
+      "title": "Set airbnb listing price",
+      "description": "Set a listing’s price against its home’s, for a listing with own_rate_plan: the home’s nightly price changed by a whole percent (price_adjustment_type percent, e.g. -10) or an amount in minor units (amount, e.g. 1500 for +15.00), or both null to sell at the home’s price. Airbnb gets it from Channex on every price the home sends. Needs the Business plan.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "listing_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "organization_id": {
+            "description": "Internal organization ID from get_workspace_context or list_organizations. If omitted, uses the accessible organization saved by set_workspace_context, or the only accessible organization when no saved selection applies. Otherwise the call fails and requires a selection. Read get_workspace_context before relying on the default. A URL, domain, slug or business name is not an ID.",
+            "minLength": 1,
+            "pattern": "^[\\s\\S]*\\S[\\s\\S]*$",
+            "type": "string"
+          },
+          "price_adjustment": {
+            "description": "Signed and not 0; a percent is above -100 and at most 1000. null with price_adjustment_type null.",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "price_adjustment_type": {
+            "enum": [
+              "percent",
+              "amount",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "listing_id",
+          "price_adjustment_type",
+          "price_adjustment"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "$defs": {},
+        "description": "Success fields for this operation. A failure returns MCP isError: true with text content explaining the reason; execution errors may include status, code and recovery fields. Failed results do not use this success schema.",
+        "properties": {
+          "listing_id": {
+            "type": "string"
+          },
+          "price_adjustment": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "price_adjustment_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "listing_id",
+          "price_adjustment_type",
+          "price_adjustment"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Set airbnb listing price"
+      },
+      "securitySchemes": [
+        {
+          "scopes": [
+            "tenant"
+          ],
+          "type": "oauth2"
+        }
+      ],
+      "domain": "airbnb",
+      "minimumRole": "admin",
+      "requiredEntitlement": null,
+      "fileParams": [],
+      "uiResourceUri": null
+    },
+    {
       "name": "set_booking_deposit",
       "title": "Set booking deposit",
       "description": "Set the refundable deposit a booking asks for — a security deposit, or for a law firm a retainer held in trust — in the booking’s currency, or null for none. It is not part of the booking total and never counts as revenue. Recorded entries stay.",
@@ -105958,7 +106074,7 @@
     {
       "name": "sync_airbnb_listings",
       "title": "Sync airbnb listings",
-      "description": "Start or stop syncing Airbnb listings; the work runs in the background and list_airbnb_listings reports each listing’s progress. Each sync item imports the listing as a new home (details: the missing_fields from get_airbnb_listing) or, with product_id, puts it on an existing home that already syncs so both listings share that home’s calendar, price and stay rules; a listing that already has its own home is merged into the chosen one, its bookings and conversations moving with it. stop takes homes, stop_listing_ids takes single listings; a stopped listing keeps its home and its reservations stay on that calendar. Syncing needs the Business plan.",
+      "description": "Start or stop syncing Airbnb listings; the work runs in the background and list_airbnb_listings reports each listing’s progress. Each sync item imports the listing as a new home (details: the missing_fields from get_airbnb_listing); or, with product_id, puts it on an existing home that already syncs, so the listings share that home’s calendar, price and stay rules; or, with own_home: true, gives a listing that shares a home its own home again (details as for an import). A listing moving off a home it shares takes its reservations that have not ended; when it is the last listing there, that home merges into the chosen one with all its bookings and conversations, so naming every listing of a home with the same product_id merges the home. stop takes homes, stop_listing_ids takes single listings; a stopped listing keeps its home and its reservations stay on that calendar. Syncing needs the Business plan.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -105993,12 +106109,17 @@
                     "minLength": 1,
                     "type": "string"
                   },
-                  "description": "Only the missing_fields get_airbnb_listing reports, each as text. Not with product_id.",
+                  "description": "Only the missing_fields get_airbnb_listing reports, each as text, for a new home or own_home. Not with product_id.",
                   "type": "object"
                 },
                 "listing_id": {
                   "minLength": 1,
                   "type": "string"
+                },
+                "own_home": {
+                  "const": true,
+                  "description": "Give this listing, which shares a home, its own home again. Not with product_id.",
+                  "type": "boolean"
                 },
                 "product_id": {
                   "description": "An existing home from list_airbnb_listings import.product_id or list_stay_homes. Leave out to import a new home.",
@@ -106056,6 +106177,9 @@
                 "listing_id": {
                   "type": "string"
                 },
+                "own_home": {
+                  "type": "boolean"
+                },
                 "product_id": {
                   "type": [
                     "string",
@@ -106103,6 +106227,7 @@
                 "listing_id",
                 "product_id",
                 "action",
+                "own_home",
                 "status",
                 "stage",
                 "error",

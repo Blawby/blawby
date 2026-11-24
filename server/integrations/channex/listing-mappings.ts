@@ -5,7 +5,7 @@ export const AIRBNB_MAPPINGS = `(
     CASE WHEN l.import_stage = 'property' AND i.import_stage = 'complete' THEN 'content'
       WHEN l.import_stage = 'property' THEN i.import_stage ELSE l.import_stage END AS import_stage,
     l.import_stage AS listing_stage, i.import_stage AS inventory_stage, i.import_property,
-    l.import_content, l.import_written, l.enabled, l.created_at, l.updated_at
+    l.import_content, l.import_written, l.enabled, l.price_adjustment_type, l.price_adjustment, l.created_at, l.updated_at
   FROM product_airbnb_listings l JOIN product_channel_mappings i
     ON i.organization_id = l.organization_id AND i.product_id = l.product_id AND i.provider = 'channex'
 )`

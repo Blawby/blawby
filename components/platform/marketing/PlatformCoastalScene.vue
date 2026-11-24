@@ -1,5 +1,5 @@
 <template>
-  <section class="kc-product-scene" :class="{ 'kc-product-scene--closing': closing, 'kc-product-scene--featured': featured && !closing, 'kc-product-scene--compact': block.data.layout === 'compact' }" :data-parity-section="closing ? 'cta' : 'hero'">
+  <section class="kc-product-scene" :class="{ 'kc-product-scene--closing': closing, 'kc-product-scene--featured': (featured || illustration) && !closing, 'kc-product-scene--compact': block.data.layout === 'compact' }" :data-parity-section="closing ? 'cta' : 'hero'">
     <img v-if="imageUrl" :src="imageUrl" alt="" class="kc-product-scene__art" :loading="closing ? 'lazy' : 'eager'" :fetchpriority="closing ? 'auto' : 'high'" decoding="async">
     <div class="kc-product-scene__content">
     <div class="kc-product-scene__copy">
@@ -11,9 +11,10 @@
         <PlatformButton v-if="secondaryLabel && secondaryUrl" :to="secondaryUrl" variant="ghost" size="xl" class="kc-product-scene__secondary">{{ secondaryLabel }}</PlatformButton>
       </div>
     </div>
-    <figure v-if="featured && !closing" class="kc-product-scene__featured">
-      <img :src="mediaStillUrl(featured)!" :alt="featured.alt_text || ''" :width="featured.width ?? undefined" :height="featured.height ?? undefined" class="kc-product-capture" :class="['kc-product-capture--' + text(block.data.image_ratio), 'kc-product-capture--' + text(block.data.image_position)]" fetchpriority="high" decoding="async">
-      <figcaption v-if="text(block.data.caption)">{{ text(block.data.caption) }}</figcaption>
+    <figure v-if="illustration || (featured && !closing)" class="kc-product-scene__featured">
+      <img v-if="illustration" :src="illustration" alt="" width="900" height="600" fetchpriority="high" decoding="async">
+      <img v-else-if="featured" :src="mediaStillUrl(featured)!" :alt="featured.alt_text || ''" :width="featured.width ?? undefined" :height="featured.height ?? undefined" class="kc-product-capture" :class="['kc-product-capture--' + text(block.data.image_ratio), 'kc-product-capture--' + text(block.data.image_position)]" fetchpriority="high" decoding="async">
+      <figcaption v-if="!illustration && text(block.data.caption)">{{ text(block.data.caption) }}</figcaption>
     </figure>
     </div>
   </section>
@@ -24,10 +25,10 @@ import type { PublicTenantPage } from '~/server/utils/public-tenant-pages'
 import type { TenantPageBlock } from '~/utils/tenant-page-blocks'
 import { blockMedia, blockText as text } from '~/utils/tenant-page-block-data'
 import { mediaStillUrl } from '~/shared/media-placement-contract'
-const props = defineProps<{ block: TenantPageBlock; page: PublicTenantPage; closing?: boolean; defaultArt?: string }>()
+const props = defineProps<{ block: TenantPageBlock; page: PublicTenantPage; closing?: boolean; defaultArt?: string; illustration?: string }>()
 const image = computed(() => blockMedia(props.block, 'media')[0])
 const featured = computed(() => blockMedia(props.block, 'featured').find(media => mediaStillUrl(media)))
-const imageUrl = computed(() => image.value ? mediaStillUrl(image.value) : props.defaultArt)
+const imageUrl = computed(() => props.illustration ? undefined : image.value ? mediaStillUrl(image.value) : props.defaultArt)
 const label = computed(() => text(props.closing ? props.block.data.label : props.block.data.cta_label))
 const url = computed(() => text(props.closing ? props.block.data.url : props.block.data.cta_url))
 const secondaryLabel = computed(() => text(props.block.data.secondary_label))

@@ -9,11 +9,11 @@
         <NuxtLink v-if="secondaryLabel && secondaryUrl" :to="secondaryUrl" class="kc-mcp-hero__link">{{ secondaryLabel }} <span aria-hidden="true">↗</span></NuxtLink>
       </div>
     </div>
-    <figure v-if="pluginImage && mediaStillUrl(pluginImage)" class="kc-mcp-hero__art">
-      <img :src="mediaStillUrl(pluginImage)!" :alt="pluginImage.alt_text || ''" :width="pluginImage.width ?? undefined" :height="pluginImage.height ?? undefined" fetchpriority="high" decoding="async">
+    <figure class="kc-mcp-hero__art">
+      <img src="/platform/blawby-agent-desk.webp" alt="" width="1200" height="800" fetchpriority="high" decoding="async">
     </figure>
   </section>
-  <PlatformCoastalScene v-else-if="page.recipe === 'products'" :block="block" :page="page" />
+  <PlatformCoastalScene v-else-if="page.recipe === 'products'" :block="block" :page="page" :illustration="solutionIllustration" />
   <template v-else-if="page.path === '/'">
     <section
       ref="homeHero"
@@ -21,40 +21,12 @@
       data-parity-section="hero"
       aria-label="Blawby"
     >
-      <div class="kc-parallax-hero__art" aria-hidden="true">
-        <picture
-          v-for="(layer, index) in parallaxLayers"
-          :key="layer.name"
-          class="kc-parallax-hero__layer"
-          :class="'kc-parallax-hero__layer--' + (index + 1)"
-          :style="{
-            '--kc-layer-compensation': String(layer.compensation),
-            '--kc-layer-top': layer.top + 'px',
-          }"
-        >
-          <source media="(min-width: 1264px)" :srcset="layer.sources.lg">
-          <source media="(min-width: 960px)" :srcset="layer.sources.md">
-          <source media="(min-width: 600px)" :srcset="layer.sources.sm">
-          <source media="(min-width: 376px)" :srcset="layer.sources.xs">
-          <img
-            :src="layer.sources.xxs"
-            alt=""
-            loading="eager"
-            :fetchpriority="index === 0 ? 'high' : 'auto'"
-            decoding="async"
-          >
-        </picture>
-
-        <picture class="kc-parallax-hero__foreground">
-          <source media="(min-width: 1264px)" :srcset="parallaxForeground.lg">
-          <source media="(min-width: 960px)" :srcset="parallaxForeground.md">
-          <source media="(min-width: 600px)" :srcset="parallaxForeground.sm">
-          <source media="(min-width: 376px)" :srcset="parallaxForeground.xs">
-          <img :src="parallaxForeground.xxs" alt="" loading="eager" decoding="async">
-        </picture>
+      <div class="kc-parallax-hero__scene" aria-hidden="true">
+        <img class="kc-parallax-hero__bay" src="/platform/blawby-coastal-bay.webp" alt="" width="1774" height="887" fetchpriority="high">
+        <img class="kc-parallax-hero__desk" src="/platform/blawby-reception-desk.webp" alt="" width="1774" height="887" fetchpriority="high">
+        <img class="kc-parallax-hero__shore" src="/platform/blawby-coastal-foreground.webp" alt="" width="1774" height="887" decoding="async">
       </div>
-
-      <div class="kc-parallax-hero__mark max-w-304 px-6">
+      <div class="kc-parallax-hero__inner">
         <div class="kc-parallax-hero__copy">
           <span v-if="eyebrow" class="kc-parallax-intro__eyebrow">
             <span class="size-1.5 rounded-full bg-(--kc-teal) shrink-0" />
@@ -92,8 +64,6 @@
         </div>
       </div>
     </section>
-
-    <section class="kc-parallax-intro" :style="{ '--kc-transition-image': transitionImage }" aria-hidden="true" />
   </template>
 
   <!-- The About header: a pill, a headline, a lede. Nothing else. -->
@@ -143,8 +113,7 @@ import PlatformCoastalScene from '~/components/platform/marketing/PlatformCoasta
 import type { PlatformIconName } from '~/components/platform/PlatformIcon.vue'
 import type { PublicTenantPage } from '~/server/utils/public-tenant-pages'
 import type { TenantPageBlock } from '~/utils/tenant-page-blocks'
-import { blockStrings, blockText, blockTextOrNull, blockMedia } from '~/utils/tenant-page-block-data'
-import { mediaStillUrl } from '~/shared/media-placement-contract'
+import { blockStrings, blockText, blockTextOrNull } from '~/utils/tenant-page-block-data'
 
 /**
  * Each marketing page renders its authored headline and media in its own
@@ -154,87 +123,6 @@ import { mediaStillUrl } from '~/shared/media-placement-contract'
  */
 const props = defineProps<{ block: TenantPageBlock; page: PublicTenantPage }>()
 
-type ParallaxBreakpoint = 'xxs' | 'xs' | 'sm' | 'md' | 'lg'
-
-type ParallaxImageSet = Record<ParallaxBreakpoint, string>
-
-type ParallaxLayer = {
-  name: string
-  slot: string
-  top: number
-  compensation: number
-  sources: ParallaxImageSet
-}
-
-/**
- * The six artwork planes are CMS media placements on the homepage hero block.
- *
- * Each plane requires its exact breakpoint slots (parallax_sky_xxs, _xs,
- * _sm, _md, _lg). These placements keep the
- * original art-directed mobile/tablet/desktop compositions editable through
- * Blawby's normal media tools instead of baking image URLs into the frontend.
- */
-const PARALLAX_BREAKPOINTS: ParallaxBreakpoint[] = ['xxs', 'xs', 'sm', 'md', 'lg']
-
-function mediaUrl(slot: string): string | null {
-  const media = props.block.media.find(item => item.slot === slot && item.public_url)
-  return media?.public_url ?? null
-}
-
-function parallaxImageSet(slot: string): ParallaxImageSet {
-  return Object.fromEntries(PARALLAX_BREAKPOINTS.map((breakpoint) => {
-    const exactSlot = slot + '_' + breakpoint
-    const url = mediaUrl(exactSlot)
-    if (!url) throw new Error('Homepage hero is missing required media placement ' + exactSlot)
-    return [breakpoint, url]
-  })) as ParallaxImageSet
-}
-
-const parallaxLayers = computed<ParallaxLayer[]>(() => [
-  {
-    name: 'sky',
-    slot: 'parallax_sky',
-    top: 0,
-    compensation: 1,
-    sources: parallaxImageSet('parallax_sky'),
-  },
-  {
-    name: 'clouds',
-    slot: 'parallax_clouds',
-    top: 0,
-    compensation: 0.8,
-    sources: parallaxImageSet('parallax_clouds'),
-  },
-  {
-    name: 'mountains',
-    slot: 'parallax_mountains',
-    top: 120,
-    compensation: 0.6,
-    sources: parallaxImageSet('parallax_mountains'),
-  },
-  {
-    name: 'far-trees',
-    slot: 'parallax_far_trees',
-    top: 440,
-    compensation: 0.4,
-    sources: parallaxImageSet('parallax_far_trees'),
-  },
-  {
-    name: 'building-and-dark-trees',
-    slot: 'parallax_building_trees',
-    top: 580,
-    compensation: 0.2,
-    sources: parallaxImageSet('parallax_building_trees'),
-  },
-])
-
-const parallaxForeground = computed<ParallaxImageSet>(() => parallaxImageSet('parallax_foreground'))
-const transitionImage = computed(() => {
-  const url = mediaUrl('media')
-  if (!url) throw new Error('Homepage hero is missing required media placement media')
-  return `url("${url}")`
-})
-
 const homeHero = ref<HTMLElement | null>(null)
 let homeHeroFrame: number | null = null
 let homeHeroScrollListener: (() => void) | null = null
@@ -242,7 +130,7 @@ let homeHeroScrollListener: (() => void) | null = null
 function renderHomeParallax() {
   if (!homeHero.value) return
   if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    homeHero.value.style.setProperty('--kc-parallax-offset', String(Math.max(0, window.scrollY)) + 'px')
+    homeHero.value.style.setProperty('--kc-parallax-offset', String(Math.max(0, -homeHero.value.getBoundingClientRect().top)) + 'px')
   }
 }
 
@@ -282,7 +170,17 @@ onBeforeUnmount(() => {
   if (homeHeroFrame !== null) window.cancelAnimationFrame(homeHeroFrame)
 })
 
-const pluginImage = computed(() => blockMedia(props.block, 'media')[0])
+const solutionArt: Record<string, string> = {
+  '/products': 'blawby-at-work',
+  '/restaurants': 'blawby-restaurant',
+  '/experiences': 'blawby-experiences',
+  '/lodging': 'blawby-lodging',
+  '/legal': 'blawby-legal',
+}
+const solutionIllustration = computed(() => {
+  const asset = solutionArt[props.page.path]
+  return asset ? `/platform/${asset}.webp` : undefined
+})
 const eyebrow = computed(() => blockTextOrNull(props.block.data.eyebrow))
 const eyebrowIcon = computed(() => blockTextOrNull(props.block.data.eyebrow_icon) as PlatformIconName | null)
 const title = computed(() => blockText(props.block.data.title))
@@ -323,149 +221,101 @@ const gradientClass = computed(() => GRADIENT_CLASS[props.page.path] ?? GRADIENT
 
 <style scoped>
 .kc-parallax-hero {
-  --kc-scene-ratio: 1.8;
   --kc-parallax-offset: 0px;
   position: relative;
   isolation: isolate;
-  height: calc(1600px / var(--kc-scene-ratio));
-  overflow: hidden;
   overflow: clip;
-  /* The artwork's own black, so no strip of another shade shows at its foot. */
-  background: #000;
+  background: #101e38;
+  color: #fff7eb;
 }
 
-.kc-parallax-hero__art {
+.kc-parallax-hero__scene {
   position: absolute;
   inset: 0;
-}
-
-.kc-parallax-hero__layer {
-  position: absolute;
-  top: calc(var(--kc-layer-top) / var(--kc-scene-ratio));
-  right: 0;
-  left: 0;
-  height: 100%;
   pointer-events: none;
-  transform: translate3d(0, calc(var(--kc-parallax-offset) * var(--kc-layer-compensation)), 0);
-  will-change: transform;
 }
 
-.kc-parallax-hero__layer--1 { z-index: 1; }
-.kc-parallax-hero__layer--2 { z-index: 3; }
-.kc-parallax-hero__layer--3 { z-index: 4; }
-.kc-parallax-hero__layer--4 { z-index: 5; }
-.kc-parallax-hero__layer--5 { z-index: 6; }
-
-.kc-parallax-hero__layer img,
-.kc-parallax-hero__foreground img {
-  display: block;
+.kc-parallax-hero__scene img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-}
-
-.kc-parallax-hero__layer img {
-  object-fit: contain;
-  object-position: top center;
-}
-
-.kc-parallax-hero__foreground {
-  position: absolute;
-  z-index: 20;
-  right: 0;
-  bottom: -1px;
-  left: 0;
-  height: calc(582px / var(--kc-scene-ratio));
-  pointer-events: none;
-}
-
-.kc-parallax-hero__foreground img {
   object-fit: cover;
-  object-position: top center;
+  transform: translateY(calc(var(--kc-parallax-offset) * var(--kc-layer-compensation)));
 }
 
-.kc-parallax-hero__mark {
+.kc-parallax-hero__bay { --kc-layer-compensation: 0.32; }
+.kc-parallax-hero__desk { --kc-layer-compensation: 0.13; }
+.kc-parallax-hero__shore { --kc-layer-compensation: 0; }
+
+.kc-parallax-hero__scene::after {
   position: absolute;
-  z-index: 2;
-  top: calc(120px / var(--kc-scene-ratio));
-  left: 50%;
-  display: flex;
-  width: 100%;
-  flex-direction: column;
+  inset: 0;
+  background: linear-gradient(90deg, rgb(8 17 32 / 41%), transparent 57%);
+  content: '';
+}
+
+.kc-parallax-hero__inner {
+  position: relative;
+  display: grid;
   align-items: center;
-  color: white;
-  font-family: var(--font-sans);
-  font-size: 1rem;
-  letter-spacing: normal;
-  line-height: normal;
-  text-align: center;
-  text-shadow: 0 2px 18px rgb(0 0 0 / 32%);
-  transform: translate3d(-50%, var(--kc-parallax-offset), 0);
-  will-change: transform;
+  width: min(100% - clamp(2.5rem, 12vw, 12rem), 86rem);
+  min-height: clamp(31rem, 50vw, 53rem);
+  margin-inline: auto;
+  padding-block: 3rem;
 }
 
 .kc-parallax-hero__copy {
-  display: flex;
-  width: 100%;
-  max-width: 48rem;
-  flex-direction: column;
-  align-items: center;
-  gap: 1rem;
+  display: grid;
+  justify-items: start;
+  width: min(50%, 35rem);
+  gap: 1.35rem;
 }
 
 .kc-parallax-hero__copy .kc-parallax-intro__title {
-  color: white;
-  font-size: clamp(2rem, 4vw, 3.25rem);
-  line-height: 1.08;
+  color: inherit;
+  font-size: clamp(2.65rem, 5.15vw, 5.5rem);
+  line-height: 1.03;
 }
 
 .kc-parallax-hero__copy .kc-parallax-intro__subtitle {
-  max-width: 42rem;
-  color: white;
-  font-size: clamp(0.95rem, 1.4vw, 1.1rem);
-  line-height: 1.5;
+  max-width: 30rem;
+  color: #e4e6ed;
+  font-size: clamp(1rem, 1.35vw, 1.2rem);
+  line-height: 1.55;
 }
 
-@media (max-width: 599px) {
-  .kc-parallax-hero__copy { gap: 0.5rem; }
-  .kc-parallax-hero__copy .kc-parallax-intro__title {
+@media (max-width: 767px) {
+  .kc-parallax-hero {
+    display: grid;
+  }
+
+  .kc-parallax-hero__inner {
+    grid-row: 1;
+    justify-items: center;
+    min-height: 0;
+    padding-block: 2.5rem 1rem;
+  }
+
+  .kc-parallax-hero__copy {
     width: 100%;
-    max-width: none;
-    font-size: clamp(1.4rem, 6vw, 1.7rem);
-    line-height: 1.08;
+    justify-items: center;
+    gap: 0.9rem;
+    text-align: center;
   }
-  .kc-parallax-hero__copy .kc-parallax-intro__subtitle {
-    font-size: 0.85rem;
-    line-height: 1.4;
-  }
-  .kc-parallax-hero__copy .kc-parallax-intro__actions a {
-    box-sizing: border-box;
-    min-height: 44px;
-    padding: 10px 20px;
-    font-size: 14px;
-    line-height: 24px;
-  }
-}
 
-.kc-parallax-intro {
-  position: relative;
-  z-index: 30;
-  min-height: 128px;
-  margin-top: -2px;
-  overflow: hidden;
-  background: var(--ui-bg);
-  color: var(--ui-text);
-}
+  .kc-parallax-hero__scene {
+    position: relative;
+    min-height: clamp(20rem, 64vw, 28rem);
+  }
 
-.kc-parallax-intro::before {
-  position: absolute;
-  z-index: 0;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 128px;
-  background: var(--kc-transition-image) top center / 100% 100% no-repeat;
-  content: "";
-  pointer-events: none;
+  .kc-parallax-hero__scene img {
+    object-position: 89% center;
+  }
+
+  .kc-parallax-hero__scene::after {
+    background: linear-gradient(#101e38, transparent 26%);
+  }
 }
 
 .kc-parallax-intro__eyebrow {
@@ -537,69 +387,9 @@ const gradientClass = computed(() => GRADIENT_CLASS[props.page.path] ?? GRADIENT
   margin-top: 0.25rem;
 }
 
-@media (min-width: 376px) {
-  .kc-parallax-hero { --kc-scene-ratio: 2.3; }
-}
-
-@media (min-width: 600px) {
-  .kc-parallax-hero { --kc-scene-ratio: 2.1; }
-}
-
-@media (min-width: 960px) {
-  .kc-parallax-hero { --kc-scene-ratio: 1.5; }
-}
-
-@media (min-width: 1264px) {
-  .kc-parallax-hero { --kc-scene-ratio: 1.5; }
-}
-
-@media (min-width: 1904px) {
-  .kc-parallax-hero { --kc-scene-ratio: 1; }
-}
-
-@media (min-width: 2544px) {
-  .kc-parallax-hero { --kc-scene-ratio: 0.7; }
-}
-
-@media (max-width: 599px) {
-  .kc-parallax-intro__title {
-    max-width: 12ch;
-    font-size: clamp(2.15rem, 10vw, 3.15rem);
-  }
-
-  .kc-parallax-intro__subtitle {
-    font-size: 0.96rem;
-    line-height: 1.65;
-  }
-}
-
-@keyframes kc-parallax-layer-exit {
-  from {
-    transform: translate3d(0, 0, 0);
-  }
-  to {
-    transform: translate3d(0, calc(100% * var(--kc-layer-compensation)), 0);
-  }
-}
-
-@keyframes kc-parallax-mark-exit {
-  from {
-    transform: translate3d(-50%, 0, 0);
-  }
-  to {
-    transform: translate3d(-50%, calc(1600px / var(--kc-scene-ratio)), 0);
-  }
-}
-
-@keyframes kc-hero-copy-fade {
-  0%, 55% {
-    opacity: 1;
-    pointer-events: auto;
-  }
-  80%, 100% {
-    opacity: 0;
-    pointer-events: none;
-  }
+@keyframes kc-coastal-plane-exit {
+  from { transform: translateY(0); }
+  to { transform: translateY(calc(100% * var(--kc-layer-compensation))); }
 }
 
 @supports ((animation-timeline: view()) and (animation-range: entry)) {
@@ -607,51 +397,18 @@ const gradientClass = computed(() => GRADIENT_CLASS[props.page.path] ?? GRADIENT
     view-timeline: --kc-hero-timeline block;
   }
 
-  .kc-parallax-hero__layer {
-    animation: kc-parallax-layer-exit linear both;
-    animation-timeline: --kc-hero-timeline;
-    animation-range: exit 0% exit 100%;
-  }
-
-  .kc-parallax-hero__mark {
-    animation: kc-parallax-mark-exit linear both;
-    animation-timeline: --kc-hero-timeline;
-    animation-range: exit 0% exit 100%;
-  }
-
-  .kc-parallax-hero__copy {
-    animation: kc-hero-copy-fade linear both;
+  .kc-parallax-hero__scene img {
+    animation: kc-coastal-plane-exit linear both;
     animation-timeline: --kc-hero-timeline;
     animation-range: exit 0% exit 100%;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .kc-parallax-hero__layer {
+  .kc-parallax-hero__scene img {
     animation: none;
     transform: none;
-    will-change: auto;
   }
-
-  .kc-parallax-hero__mark {
-    animation: none;
-    transform: translateX(-50%);
-    will-change: auto;
-  }
-
-  .kc-parallax-hero__copy {
-    animation: none;
-  }
-}
-.kc-parallax-hero__foreground::after {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 96px;
-  background: linear-gradient(to bottom, transparent, #000 calc(100% - 2px), #000);
-  content: '';
-  pointer-events: none;
 }
 
 </style>

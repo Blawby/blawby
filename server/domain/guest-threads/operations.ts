@@ -2,6 +2,7 @@ import { PLATFORM_MESSAGE_AUTHOR_KIND } from '~/shared/messages-contract'
 import { changedTaskIds, publishChangedJobs, publishEvent, type DomainEvent } from '~/server/events'
 import { HTTPError } from 'nitro'
 import { bookingStatusQuery } from '~/server/domain/bookings'
+import { closedBookingPaymentTasksQuery, depositTaskQuery } from '~/server/domain/unpaid'
 import { visitRefundPaymentQuery, visitRefundQueries } from '~/server/domain/payments/visit-refund'
 import type { Payment } from '~/server/domain/payments'
 import { recordBookingCancelled, recordBookingDecision } from '~/server/domain/booking-analytics'
@@ -461,6 +462,9 @@ async function executeSourceMutation(
     ...refundPlan.queries,
     // An approval closes the booking's review; a cancellation also answers what the guest asked before it.
     ...conversationTaskQueries(context.thread.id, now),
+    // A deposit or retainer is owed once the booking stands, and no longer once it is cancelled.
+    depositTaskQuery(context.thread.organization_id, { sql: '?', params: [context.record.id] }, now),
+    closedBookingPaymentTasksQuery(context.thread.organization_id, context.record.id, now),
   ]
   if (plan.afterStatus === 'cancelled') queries.push(revokeReviewRequestQuery({
     query: 'booking_id = ? AND EXISTS (SELECT 1 FROM messages WHERE id = ?)',

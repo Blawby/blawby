@@ -22,6 +22,13 @@
       "when": 1795404803290,
       "tag": "0002_booking_config_deposit",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1795495411992,
+      "tag": "0003_payment_due_task_kind",
+      "breakpoints": true
     }
   ]
 }

@@ -70,6 +70,7 @@ export async function cancelFailedCheckoutBooking(db: DbClient, env: CloudflareE
           params: [target.product_session_id, ...failedCheckout.params] } }),
       revokeReview,
       ...conversationTaskQueries(target.conversation_id, now),
+      (await import('~/server/domain/unpaid')).closedBookingPaymentTasksQuery(organizationId, bookingId, now),
     ], { operation: 'Cancel booking after failed payment' })
     if (write?.meta.changes !== 1) throw new Error(`Booking ${bookingId} changed before payment failure cancellation`)
   }

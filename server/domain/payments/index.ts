@@ -9,6 +9,7 @@ import { paymentsStripe } from '~/server/utils/stripe-connect'
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { publishPaymentNotification } from './notifications'
 import { recordPaymentRefunded } from '~/server/domain/booking-analytics'
+import { readStayMoney, receiptsAre, stayMoneyTaskQueries } from '~/server/domain/unpaid'
 import { isCurrencyCode, type CurrencyCode } from '~/shared/currencies'
 import { isRecord } from '~/server/utils/type-guards'
 import { paymentDisplay, paymentRefundsDisplay } from '~/shared/payment-display'
@@ -294,6 +295,15 @@ export async function reconcileRefundState(db:DbClient,stripe:Stripe,payment:Pay
  // A partial refund was approved at one amount; a full-remaining one takes whatever Stripe returned.
  if(matched&&matched.amount!==null&&matched.amount!==refund.amount)throw new Error('Native refund amount changed from authorized intent')
  const id=matched?.id??crypto.randomUUID(),now=new Date().toISOString()
+ // A stay's payment given back is owed again: its month, or the rest of the stay.
+ const stay=payment.subject_type==='booking'&&payment.subject_id?await readStayMoney(db,payment.organization_id,payment.subject_id):null
+ const owedAgain=stay?await (async()=>{
+  const other=await queryFirst<{amount:number}>(db,"SELECT COALESCE(SUM(amount),0) AS amount FROM payment_refunds WHERE payment_id=? AND id<>? AND status='succeeded'",[payment.id,id])
+  const refunded=(other?.amount??0)+(refund.status==='succeeded'?refund.amount:0)
+  const online=(JSON.parse(stay.online_payments_json) as Array<{payment_id:string;refunded_minor:number}>).map(entry=>entry.payment_id===payment.id?{...entry,refunded_minor:refunded}:entry)
+  // Computed from the receipts read here; a receipt committed in between refuses the batch and Stripe's retry reads it.
+  return [receiptsAre(payment.organization_id,stay.id,JSON.parse(stay.offline_payments_json)),...stayMoneyTaskQueries(payment.organization_id,{...stay,online_payments_json:JSON.stringify(online)},now)]
+ })():[]
  const written=await executeBatch(db,[
   {query:`INSERT INTO payment_refunds(id,payment_id,idempotency_key,stripe_refund_id,amount,reason,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET stripe_refund_id=excluded.stripe_refund_id,amount=excluded.amount,status=excluded.status,error=NULL,updated_at=excluded.updated_at`,params:[id,payment.id,`provider:${payment.stripe_account_id}:${payment.livemode}:${refund.id}`,refund.id,refund.amount,refund.reason??'provider',refund.status,now,now]},
   {query:"UPDATE payments SET refunded_amount=(SELECT COALESCE(SUM(amount),0) FROM payment_refunds WHERE payment_id=? AND status='succeeded'),updated_at=? WHERE id=?",params:[payment.id,now,payment.id]},
@@ -301,6 +311,7 @@ export async function reconcileRefundState(db:DbClient,stripe:Stripe,payment:Pay
   // An order refunded in full before it ships is cancelled, as Shopify's is: its stock back, its task closed.
   ...(payment.subject_type==='order'?cancelRefundedOrderQueries(payment,now):[]),
   {query:`UPDATE payment_authorizations SET consumed_at=COALESCE(consumed_at,?) WHERE payment_id=? AND approved_at IS NOT NULL AND action='refund' AND EXISTS(SELECT 1 FROM payment_refunds r WHERE r.id=? AND r.payment_id=payment_authorizations.payment_id AND r.idempotency_key='approved:'||payment_authorizations.id AND (payment_authorizations.amount IS NULL OR r.amount=payment_authorizations.amount) AND r.created_by=payment_authorizations.user_id)`,params:[now,payment.id,id]},
+  ...owedAgain,
  ])
  await publishPaymentNotification(env,payment,{kind,nativeId:refund.id,status:refund.status!,amount:refund.amount})
  // The refund that cancelled an unshipped order also tells the buyer and the business the order is off.

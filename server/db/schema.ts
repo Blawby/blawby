@@ -323,7 +323,8 @@ export const jwks = sqliteTable("jwks", {
 export const tasks = sqliteTable('tasks', {
   id: text().primaryKey(),
   organization_id: text().notNull().references(() => organization.id, { onDelete: 'cascade' }),
-  kind: text({ enum: ['turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance', 'order_fulfillment'] }).notNull(),
+  // payment_due: something a booking still has to pay (server/domain/unpaid.ts), written and closed by the money writes.
+  kind: text({ enum: ['turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance', 'order_fulfillment', 'payment_due'] }).notNull(),
   // A maintenance job's subject is the guest's message that reported it, when it came from one.
   subject_type: text({ enum: ['scheduled_guest_message', 'booking', 'product_session', 'message', 'order'] }),
   subject_id: text(),
@@ -350,8 +351,9 @@ export const tasks = sqliteTable('tasks', {
   index('tasks_status_due_idx').on(table.organization_id, table.status, table.due_at),
   index('tasks_member_status_due_idx').on(table.organization_id, table.assigned_member_id, table.status, table.due_at),
   index('tasks_subject_idx').on(table.subject_type, table.subject_id),
-  check('tasks_kind_check', sql`kind IN ('turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance', 'order_fulfillment')
+  check('tasks_kind_check', sql`kind IN ('turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance', 'order_fulfillment', 'payment_due')
     AND (subject_type IS NULL) = (subject_id IS NULL)
+    AND (kind <> 'payment_due' OR subject_type IS 'booking')
     AND (subject_type IS NULL OR subject_type IN ('scheduled_guest_message', 'booking', 'product_session', 'message', 'order'))
     AND (kind = 'order_fulfillment') = (subject_type IS 'order')
     AND (kind <> 'custom' OR subject_type IS NULL)

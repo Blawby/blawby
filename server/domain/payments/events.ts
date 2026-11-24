@@ -25,6 +25,7 @@ import { cancelRefundedOrderQueries, cancelUncapturedOrderQueries, OrderStockUna
 import { TURNOVER_HOME_FROM } from '~/server/domain/tasks'
 import { organizationEventQuery } from '~/server/utils/organization-events'
 import { conversationTaskQueries } from '~/server/domain/guest-threads/repository'
+import { depositTaskQuery, stayMoney, stayPaymentTaskQueries } from '~/server/domain/unpaid'
 import { stayRequestConfirmationKey } from '~/server/domain/requests'
 import { checkoutStayChangedEvent, isStayNightConflict, stayFromCheckoutQueries, type CheckoutHome } from '~/server/domain/stays'
 
@@ -377,6 +378,8 @@ async function saveCheckoutBooking(db: DbClient, env: CloudflareEnv, payment: Pa
    params: [...predicate.params ?? [], ...capturedVisit.params ?? []],
  } : predicate)
  let claim:BatchQuery[]
+ // What the new booking still owes: its deposit or retainer, and for a stay paid monthly each month after the first, which this checkout paid.
+ const owed:BatchQuery[]=[depositTaskQuery(payment.organization_id,{sql:'?',params:[bookingId]},now)]
  if(hold.session_id){
   if(!hold.conversation_id)throw new Error('Visit hold has no guest conversation')
   if(!hold.variant_id)throw new Error('Booking hold has no offering or session')
@@ -392,6 +395,9 @@ async function saveCheckoutBooking(db: DbClient, env: CloudflareEnv, payment: Pa
   if(!isStayPurchase(purchase)||purchase.product_id!==hold.product_id||!isStayInstallments(snapshot.installments)||stayCheckoutAmount(purchase,snapshot.installments)!==payment.amount)throw new Error('Stay payment has no valid stay purchase')
   const buyerUserId=payment.buyer_user_id??hold.buyer_user_id
   if(!buyerUserId)throw new Error('Stay payment has no guest account')
+  const ledger={owner:'app' as const,channel:'direct' as const,check_in_date:purchase.check_in_date,check_out_date:purchase.check_out_date,total_minor:purchase.total_minor,timezone:purchase.timezone}
+  owed.push(...stayPaymentTaskQueries({organizationId:payment.organization_id,now,stay:{...ledger,id:bookingId,product_id:purchase.product_id,status:'confirmed'},
+   money:stayMoney(ledger,{offline_payments_json:'[]',online_payments_json:JSON.stringify([{period_start:null,captured_minor:payment.amount,refunded_minor:0}]),installments_json:snapshot.installments?JSON.stringify(snapshot.installments):null})}))
   if (approval) {
    if (!hold.conversation_id || hold.buyer_user_id !== buyerUserId || !hold.location_id || !hold.booking_ends_at) throw new Error('Approved stay payment has no guest conversation')
    claim = [
@@ -425,6 +431,7 @@ async function saveCheckoutBooking(db: DbClient, env: CloudflareEnv, payment: Pa
      params: [bookingId, now, payment.id, payment.organization_id] },
    assertWrite({ query: `changes()=1 AND EXISTS (SELECT 1 FROM conversations WHERE organization_id=? AND booking_id=? AND kind='booking'
      AND (? IS NULL OR id=?))`, params: [payment.organization_id, bookingId, hold.conversation_id, hold.conversation_id] }),
+   ...owed,
    ...captureQueries,
    ...receiptQueries,
    ...(capturedVisit ? [capturedVisit] : []),

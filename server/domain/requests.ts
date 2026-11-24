@@ -567,6 +567,7 @@ export async function cancelBookingRequest(db: DbClient, input: GuestCancellatio
       guard: { sql: "EXISTS (SELECT 1 FROM bookings cancelled WHERE cancelled.id = c.booking_id AND cancelled.status = 'cancelled' AND cancelled.cancelled_at = ?)", params: [input.now] } }).queries,
     ...refund.queries,
     ...(await import('~/server/domain/guest-threads/repository')).conversationTaskQueries(input.id, input.now),
+    (await import('~/server/domain/unpaid')).closedBookingPaymentTasksQuery(input.organizationId, record.id, input.now),
   ], { operation: 'Cancel booking request' })
 
   const row = (consumed?.results?.[0] ?? null) as Record<string, unknown> | null

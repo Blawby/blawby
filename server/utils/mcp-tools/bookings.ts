@@ -20,6 +20,7 @@ import { publishConversationEvent } from '~/server/cloudflare/guest-inbox-events
 import { NOT_HANDLED, requiredString, optionalString, resolveUserUploadedMediaFile, toolFileReference, type McpExecutorContext } from './execution'
 import { MAX_AGREEMENT_BYTES, readBookingAgreement, sendAgreement } from '~/server/domain/agreements'
 import { deleteDepositEntry, recordDepositEntry, setBookingDeposit } from '~/server/domain/deposits'
+import { readUnpaid } from '~/server/domain/unpaid'
 import { generateAgreementFromTemplate } from '~/server/domain/agreement-templates'
 import type { ConversationRow } from '~/server/domain/conversations'
 import { BOOKING_STATUSES, isBookingComplete, type BookingStatus } from '~/shared/bookings'
@@ -52,6 +53,16 @@ function mcpBookingProvenance(provenance: ThreadPayload['provenance'] | null) {
 
 const depositOutput = { type: ['object', 'null'], description: 'The booking’s refundable deposit: what the business asks for (required_minor), holds now (held_minor), returned and kept, and each recorded entry. Null when it asks for none.' }
 const depositEntryKinds = ['received', 'returned', 'withheld']
+const unpaidItem = { type: 'object', properties: {
+  reason: { type: 'string', enum: ['rent', 'balance', 'deposit'] }, label: { ...text, description: 'What it is for: "Rent for Dec 1 – Jan 1", "Stay balance", or the deposit’s label (Security deposit, Retainer in trust).' },
+  period_start: { ...nullableText, description: 'For rent, the month’s first night (YYYY-MM-DD).' }, period_end: { ...nullableText, description: 'For rent, the next month’s first night or checkout.' },
+  owed_minor: { type: 'integer', minimum: 1 }, owed_since: { ...text, description: 'The local day it fell due (YYYY-MM-DD).' },
+}, required: ['reason', 'label', 'period_start', 'period_end', 'owed_minor', 'owed_since'] }
+const unpaidBooking = { type: 'object', properties: {
+  booking_id: text, unit: { type: 'string', enum: ['nights', 'slot'] }, conversation_id: nullableText, guest_name: nullableText, product_id: text, product_kind: productKind, product_name: text,
+  location_id: nullableText, location_title: nullableText, currency: text, owed_minor: { type: 'integer', minimum: 1, description: 'Everything owed now, in the smallest unit of currency.' },
+  owed_since: { ...text, description: 'The local day the oldest of it fell due (YYYY-MM-DD).' }, items: { type: 'array', items: unpaidItem },
+}, required: ['booking_id', 'unit', 'conversation_id', 'guest_name', 'product_id', 'product_kind', 'product_name', 'location_id', 'location_title', 'currency', 'owed_minor', 'owed_since', 'items'] }
 
 export const BOOKINGS_TOOLS: McpToolDefinition[] = [
   organizationTool({ name: 'create_product_session', domain: 'bookings', minimumRole: 'member', description: 'Add a dated time at a location for an existing bookable offering using its actual start and end. Online offerings take no dated sessions: they are booked in their provider\'s working hours. A restaurant\'s tables take none either: they are seated through their location\'s opening hours.',
@@ -142,6 +153,11 @@ export const BOOKINGS_TOOLS: McpToolDefinition[] = [
     description: 'Remove a deposit entry recorded by mistake. A receipt already partly returned or withheld stays until those entries are removed.',
     inputSchema: { booking_id: bookingId, entry_id: { ...text, description: 'ID from get_product_booking → deposit.entries[].id.' } },
     required: ['booking_id', 'entry_id'], outputSchema: { type: 'object', properties: { deposit: depositOutput }, required: ['deposit'] },
+  }),
+  organizationTool({ name: 'list_unpaid_bookings', domain: 'bookings', minimumRole: 'admin',
+    description: 'Who owes the business money, oldest first: each booking with a month of rent past its first day unpaid, a stay begun with less paid than its total, or a deposit or retainer asked for and not received. Channel reservations (Airbnb collects) and cancelled bookings never appear. Open the booking’s conversation to ask for payment; record money received with record_product_booking_payment or record_booking_deposit.',
+    inputSchema: {}, required: [],
+    outputSchema: { type: 'object', properties: { bookings: { type: 'array', items: unpaidBooking } }, required: ['bookings'] },
   }),
   organizationTool({ name: 'update_product_booking', outputSchema: { type: 'object', anyOf: [nightBookingReceipt,
     { type: 'object', properties: { booking_id: text, unit: { const: 'slot' }, version, private_notes: nullableText }, required: ['booking_id', 'unit', 'version', 'private_notes'] }] }, domain: 'bookings', minimumRole: 'member',
@@ -254,13 +270,14 @@ export async function handleBookingsTools(ctx: McpExecutorContext): Promise<unkn
     if (!actorRow) throw new HTTPError({ statusCode: 401, message: 'The signed-in account was not found' })
     return { userId: organization.userId, name: actorRow.name }
   }
+  if (toolName === 'list_unpaid_bookings') return readUnpaid(db, principal)
   if (toolName === 'set_booking_deposit' || toolName === 'record_booking_deposit' || toolName === 'delete_booking_deposit_entry') {
     await assertRoleAllows({ ...principal, permissions: { payments: ['refund'] } })
     const id = requiredString(args, 'booking_id')
     const actor = { organizationId, actorId: organization.userId }
-    if (toolName === 'set_booking_deposit') return { deposit: await setBookingDeposit(db, actor, id, args.deposit_minor ?? null) }
-    if (toolName === 'record_booking_deposit') return await recordDepositEntry(db, actor, id, args)
-    return { deposit: await deleteDepositEntry(db, actor, id, requiredString(args, 'entry_id')) }
+    if (toolName === 'set_booking_deposit') return { deposit: await setBookingDeposit(db, env, actor, id, args.deposit_minor ?? null) }
+    if (toolName === 'record_booking_deposit') return await recordDepositEntry(db, env, actor, id, args)
+    return { deposit: await deleteDepositEntry(db, env, actor, id, requiredString(args, 'entry_id')) }
   }
   if (toolName === 'send_booking_agreement') {
     const id = requiredString(args, 'booking_id')

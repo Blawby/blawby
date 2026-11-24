@@ -6,6 +6,6 @@ import { deleteDepositEntry } from '~/server/domain/deposits'
 
 /** Remove a deposit entry recorded by mistake. */
 export default defineHandler(async event => {
-  const { db, actor } = await depositRequest(event)
-  return jsonResponse({ deposit: await deleteDepositEntry(db, actor, getRouterParam(event, 'booking_id') ?? '', getRouterParam(event, 'entry_id') ?? '') })
+  const { db, env, actor } = await depositRequest(event)
+  return jsonResponse({ deposit: await deleteDepositEntry(db, env, actor, getRouterParam(event, 'booking_id') ?? '', getRouterParam(event, 'entry_id') ?? '') })
 })

@@ -275,9 +275,9 @@ export async function handleBookingsTools(ctx: McpExecutorContext): Promise<unkn
     await assertRoleAllows({ ...principal, permissions: { payments: ['refund'] } })
     const id = requiredString(args, 'booking_id')
     const actor = { organizationId, actorId: organization.userId }
-    if (toolName === 'set_booking_deposit') return { deposit: await setBookingDeposit(db, actor, id, args.deposit_minor ?? null) }
-    if (toolName === 'record_booking_deposit') return await recordDepositEntry(db, actor, id, args)
-    return { deposit: await deleteDepositEntry(db, actor, id, requiredString(args, 'entry_id')) }
+    if (toolName === 'set_booking_deposit') return { deposit: await setBookingDeposit(db, env, actor, id, args.deposit_minor ?? null) }
+    if (toolName === 'record_booking_deposit') return await recordDepositEntry(db, env, actor, id, args)
+    return { deposit: await deleteDepositEntry(db, env, actor, id, requiredString(args, 'entry_id')) }
   }
   if (toolName === 'send_booking_agreement') {
     const id = requiredString(args, 'booking_id')

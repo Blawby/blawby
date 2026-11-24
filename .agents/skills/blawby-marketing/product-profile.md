@@ -43,14 +43,21 @@ permissions either way.
 
 Claims to avoid unless checked against the product first: identical file
 attachments in every MCP client (ChatGPT's file handling is what is supported),
-automatic social sync, ranking or sales results, measured time savings, and
-public ChatGPT directory approval.
+automatic social sync, measured time savings, and public ChatGPT directory
+approval.
 
 ## Customers and proof
 
 Kikuzuki, Pottery House Krabi and North Carolina Legal Services may be named,
-with their approved logos and screenshots. Testimonial wording and any metric
-need the customer's approval first.
+with their approved logos and screenshots. Testimonial wording needs the
+customer's approval first.
+
+Customer results are facts and are stated as facts: North Carolina Legal
+Services ranks first on Google for many of its terms, Kikuzuki's reservations
+keep growing, and ChatGPT names Kikuzuki for "best Japanese food in Krabi".
+State each one from its source, read when you write it (Search Console or the
+search itself for a ranking, Insights for reservations, the AI app's answer for
+a mention), with the date it was read.
 
 ## Voice
 

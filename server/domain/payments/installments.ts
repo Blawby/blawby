@@ -8,7 +8,7 @@ import { localDateAt, localDateTimeToInstant } from '~/utils/timezone'
 import { quotePaymentsBillingFx, paymentsBillingBasis } from './fx'
 import type { Payment } from './index'
 import { paymentUsageEventQuery } from './usage'
-import { readStayMoney, stayMoneyTaskQueries } from '~/server/domain/unpaid'
+import { readStayMoney, receiptsAre, stayMoneyTaskQueries } from '~/server/domain/unpaid'
 
 /**
  * A long stay's later months (#1907). Stripe collects them: each is a draft
@@ -88,10 +88,10 @@ export async function recordInstallmentPayment(db: DbClient, stripe: Stripe, env
   await recordPaidInvoice(db, stripe, env, invoice, {
     organizationId, stripeAccount, livemode: first.livemode, subjectType: 'booking', subjectId: bookingId, buyerUserId: first.buyer_user_id, locationId: first.location_id, currency: first.currency,
     snapshot: { title: invoice.description, checkout_payment_id: first.id, installment: { period_start: periodStart, period_end: invoice.metadata?.blawby_period_end } },
-  }, paymentId => stayMoneyTaskQueries(organizationId, {
+  }, paymentId => [receiptsAre(organizationId, bookingId, JSON.parse(stay.offline_payments_json)), ...stayMoneyTaskQueries(organizationId, {
     // The month this invoice paid is paid on Today, once, with the payment that records it.
     ...stay, online_payments_json: JSON.stringify([...JSON.parse(stay.online_payments_json) as unknown[], { period_start: periodStart, captured_minor: invoice.amount_paid, refunded_minor: 0 }]),
-  }, new Date().toISOString(), { query: 'EXISTS (SELECT 1 FROM payments WHERE id = ?)', params: [paymentId] }))
+  }, new Date().toISOString(), { query: 'EXISTS (SELECT 1 FROM payments WHERE id = ?)', params: [paymentId] })])
 }
 
 /**

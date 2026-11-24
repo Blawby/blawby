@@ -25,7 +25,7 @@ import { calculateMapUrl, coordinatesFailure } from '~/utils/location-map'
 import { visitRefundPaymentQuery, visitRefundQueries } from '~/server/domain/payments/visit-refund'
 import { cancelStayInstallments, settleInstallmentOutside } from '~/server/domain/payments/installments'
 import { enteredStayInstallments } from '~/shared/stay-installments'
-import { bookingDues, closedBookingPaymentTasksQuery, depositTaskQuery, stayMoney, stayMoneyColumns, stayPaymentTaskQueries, type StayMoneyRow } from '~/server/domain/unpaid'
+import { bookingDues, closedBookingPaymentTasksQuery, receiptsAre, receiptsChanged, depositTaskQuery, stayMoney, stayMoneyColumns, stayPaymentTaskQueries, type StayMoneyRow } from '~/server/domain/unpaid'
 import { bookedPolicyFor, LONG_TERM_STAY_NIGHTS, stayCancellationRefund, type StayBookedPolicy, type StayCancellationInput } from '~/shared/stay-cancellation'
 import { executeRefund, requirePayment, type Payment } from '~/server/domain/payments'
 import { paymentsStripe } from '~/server/utils/stripe-connect'
@@ -2144,11 +2144,13 @@ export async function updateStay(db: DbClient, env: StayMutationEnv, inputAccess
       ...(nightsChanged ? reconcileNightsQueries(access.organizationId, stayId, { updated_at: now, version: next, product_id: current.product_id, ...window,
         check_in_date: fields.check_in_date, check_out_date: fields.check_out_date }) : []),
       ...turnovers.queries,
+      receiptsAre(access.organizationId, stayId, current.payments),
       ...owed,
       ...ari,
       stayDetailQuery(access, stayId),
     ], { operation: 'Update stay' })
   } catch (error) {
+    if (receiptsChanged(error)) fail(409, 'PAYMENT_CHANGED', 'A payment on this stay changed while it was being edited. Reload the stay and try again.', 'version')
     if (isStayNightConflict(error) || bookingBatchWriteRefused(error)) fail(409, 'STAY_OVERLAP', 'Another stay already holds one of these nights', 'check_in_date')
     throw error
   }
@@ -2716,13 +2718,6 @@ function stayPaymentInsert(access: StayAccess, stay: { id: string; currency: str
   ]
 }
 
-/** The batch stops unless the stay's receipts are exactly the ones its tasks were computed from: a receipt written at the same time is reloaded, not lost. */
-function receiptsAre(organizationId: string, stayId: string, receipts: readonly Pick<StayPayment, 'amount_minor'>[]): BatchQuery {
-  return assertBookingBatchWrite({
-    query: "(SELECT count(*) = ? AND COALESCE(SUM(amount_minor), 0) = ? FROM offline_payments WHERE organization_id = ? AND booking_id = ? AND purpose = 'payment')",
-    params: [receipts.length, receipts.reduce((sum, receipt) => sum + receipt.amount_minor, 0), organizationId, stayId],
-  })
-}
 
 export async function recordStayPayment(db: DbClient, env: CloudflareEnv, access: StayAccess, stayId: string, input: Record<string, unknown>): Promise<{ stay: StayDetail; payment: StayPayment }> {
   requireManager(access)
@@ -2765,7 +2760,7 @@ export async function recordStayPayment(db: DbClient, env: CloudflareEnv, access
     await executeBatch(db, [...stayPaymentInsert(access, stay, payment, key, now), receiptsAre(access.organizationId, stayId, paid.payments),
       ...stayPaymentTaskQueries({ organizationId: access.organizationId, stay: paid, money: paid, now })], { operation: 'Record stay payment' })
   } catch (error) {
-    if (bookingBatchWriteRefused(error)) fail(409, 'PAYMENT_CHANGED', 'Another payment was recorded on this stay at the same time. Reload the stay and record this payment again.', 'payment_id')
+    if (receiptsChanged(error)) fail(409, 'PAYMENT_CHANGED', 'Another payment was recorded on this stay at the same time. Reload the stay and record this payment again.', 'payment_id')
     if (/UNIQUE constraint failed: offline_payments\.organization_id, offline_payments\.idempotency_key/.test(error instanceof Error ? error.message : String(error))) {
       const concurrent = await replay()
       if (concurrent) return settle(concurrent)
@@ -2797,7 +2792,7 @@ export async function deleteStayPayment(db: DbClient, env: CloudflareEnv, access
       ...stayPaymentTaskQueries({ organizationId: access.organizationId, stay: without, money: without, now: new Date().toISOString() }),
     ], { operation: 'Delete stay payment' })
   } catch (error) {
-    if (bookingBatchWriteRefused(error)) fail(409, 'PAYMENT_CHANGED', 'The payments on this stay changed at the same time. Reload the stay and try again.', 'payment_id')
+    if (receiptsChanged(error)) fail(409, 'PAYMENT_CHANGED', 'The payments on this stay changed at the same time. Reload the stay and try again.', 'payment_id')
     throw error
   }
   await publishStayInvalidation(env, { type: 'stay.changed', organization_id: access.organizationId, location_id: stay.location_id, product_id: stay.product_id, booking_id: stayId }, { version: stay.version })

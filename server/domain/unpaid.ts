@@ -139,9 +139,16 @@ export function stayDues(stay: LedgerStay & { status: DueBooking['status'] }, mo
       period_start: period.period_start, period_end: period.period_end, owed_minor: period.amount_minor - period.paid_minor,
       due_at: dayStart(period.period_start, stay.timezone), due_on: period.period_start, owed: period.period_start < today,
     }))
-    // A total raised past the plan the checkout froze (a longer stay agreed later) owes the difference as the stay's balance.
+    // A total raised past the plan the checkout froze (a longer stay agreed later) owes the difference as the stay's balance;
+    // one lowered below it owes no more than the new total leaves, the latest months first forgiven.
     const planned = money.installments.reduce((sum, period) => sum + period.amount_minor, 0)
-    return [...months, ...balance(Math.min(stay.total_minor - planned, stay.total_minor - money.paid_minor))]
+    let left = Math.max(stay.total_minor - money.paid_minor, 0)
+    const capped = months.flatMap((due) => {
+      const owed = Math.min(due.owed_minor, left)
+      left -= owed
+      return owed > 0 ? [{ ...due, owed_minor: owed }] : []
+    })
+    return [...capped, ...balance(Math.min(stay.total_minor - planned, left))]
   }
   return balance(stay.total_minor - money.paid_minor)
 }
@@ -209,6 +216,22 @@ export function stayPaymentTaskQueries(input: {
     params: [prefix.length + 1, known, now, now, organizationId, stay.id, prefix + DEPOSIT_KEY, prefix.length + 1, rows, ...guardParams],
   }]
 }
+
+/**
+ * The batch stops unless the stay's receipts are exactly the ones its tasks
+ * were computed from, compared by what the ledger reads of each (the month it
+ * names and its amount): a receipt written at the same time is reloaded, not lost.
+ */
+export function receiptsAre(organizationId: string, stayId: string, receipts: readonly Pick<StayPayment, 'amount_minor' | 'period_start'>[]): BatchQuery {
+  const keys = receipts.map(receipt => `${receipt.period_start ?? '-'}:${receipt.amount_minor}`).sort()
+  return {
+    query: `SELECT CASE WHEN (SELECT group_concat(k, '|') FROM (SELECT COALESCE(period_start, '-') || ':' || amount_minor AS k FROM offline_payments
+        WHERE organization_id = ? AND booking_id = ? AND purpose = 'payment' ORDER BY k)) IS ? THEN 1 ELSE json_extract('{}', '${RECEIPTS_CHANGED}') END`,
+    params: [organizationId, stayId, keys.length ? keys.join('|') : null],
+  }
+}
+const RECEIPTS_CHANGED = 'RECEIPTS_CHANGED'
+export const receiptsChanged = (error: unknown) => error instanceof Error && error.message.includes(RECEIPTS_CHANGED)
 
 /** A stay's money as a write that changes it reads it first. */
 export type StayMoneyFacts = LedgerStay & StayMoneyRow & { id: string; product_id: string; status: DueBooking['status'] }

@@ -3,6 +3,7 @@ import type { ConnectPayoutMethod } from '~/server/api/dashboard/connect/index.g
 import { isKnownBillingPlan, isNewSalePlan, type billingPlanActions } from '~/shared/billing-model'
 import { isCurrencyCode } from '~/shared/currencies'
 import { isUnpaidList } from '~/shared/unpaid'
+import { businessChanged, useDashboardInvalidations } from '~/composables/useDashboardInvalidations'
 import type { PaymentMethodRow } from '~/server/utils/billing-customer'
 import type { HomesQuote } from '~/server/utils/billing'
 
@@ -119,7 +120,10 @@ export function useConnectAccount() {
 export function useUnpaid() {
   const route = useRoute()
   const dashboardApi = useDashboardApi()
-  const { data, error, status } = useAsyncData(`dashboard-unpaid:${String(route.params.org_slug)}`, () => dashboardApi('/api/dashboard/payments/unpaid', { validate: isUnpaidList }), { server: false, lazy: true })
+  const { data, error, status, refresh } = useAsyncData(`dashboard-unpaid:${String(route.params.org_slug)}`, () => dashboardApi('/api/dashboard/payments/unpaid', { validate: isUnpaidList }), { server: false, lazy: true })
+  // A receipt, a refund or a stay change made elsewhere is read again, as Today is.
+  const realtime = useDashboardInvalidations()
+  watch(realtime.event, (event) => { if (event && businessChanged(event)) void refresh() })
   return { unpaid: computed(() => data.value?.bookings ?? null), unpaidError: error, unpaidPending: computed(() => status.value === 'idle' || status.value === 'pending') }
 }
 

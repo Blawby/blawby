@@ -757,6 +757,7 @@
   "order.tracking_number": "운송장 번호",
   "order.track": "배송 조회",
   "shop.add_to_cart": "장바구니에 담기",
+  "shop.buy_now": "바로 구매",
   "shop.cart": "장바구니",
   "shop.cart_empty": "장바구니가 비어 있습니다",
   "shop.checkout": "결제하기",

@@ -757,6 +757,7 @@
   "order.tracking_number": "หมายเลขติดตามพัสดุ",
   "order.track": "ติดตามคำสั่งซื้อ",
   "shop.add_to_cart": "เพิ่มลงรถเข็น",
+  "shop.buy_now": "ซื้อเลย",
   "shop.cart": "รถเข็น",
   "shop.cart_empty": "รถเข็นของคุณว่างอยู่",
   "shop.checkout": "ชำระเงิน",

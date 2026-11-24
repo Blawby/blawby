@@ -3,6 +3,7 @@ import { executeBatch, queryFirst, type BatchQuery, type DbClient } from '~/serv
 import { organizationEventQuery } from '~/server/utils/organization-events'
 import { DEPOSIT_ENTRY_KINDS, DEPOSIT_METHODS, depositLabel, type BookingDeposit, type DepositEntry, type DepositEntryKind, type DepositMethod } from '~/shared/deposits'
 import type { ProductKind } from '~/shared/product-details'
+import { depositTaskQuery } from '~/server/domain/unpaid'
 
 /**
  * A booking's refundable deposit (#1908): the amount the business asks for
@@ -19,8 +20,13 @@ export interface DepositTarget {
 }
 
 const ENTRY_PURPOSES = `('deposit', 'deposit_withheld')`
-const HELD_SQL = `(SELECT COALESCE(SUM(CASE WHEN purpose = 'deposit' THEN amount_minor ELSE -amount_minor END), 0)
-  FROM offline_payments WHERE organization_id = ? AND booking_id = ? AND purpose IN ${ENTRY_PURPOSES})`
+/** What the business holds of a booking's deposit: received less returned and kept. `organization` and `booking` are SQL terms. */
+const depositHeldSql = (organization: string, booking: string) => `(SELECT COALESCE(SUM(CASE WHEN purpose = 'deposit' THEN amount_minor ELSE -amount_minor END), 0)
+  FROM offline_payments WHERE organization_id = ${organization} AND booking_id = ${booking} AND purpose IN ${ENTRY_PURPOSES})`
+const HELD_SQL = depositHeldSql('?', '?')
+/** Everything received toward a booking's deposit, whatever was later returned or kept: what is compared with what was asked for. */
+export const depositReceivedSql = (organization: string, booking: string) => `(SELECT COALESCE(SUM(amount_minor), 0)
+  FROM offline_payments WHERE organization_id = ${organization} AND booking_id = ${booking} AND purpose = 'deposit' AND amount_minor > 0)`
 
 /** One statement: the booking's deposit terms and every entry, for a booking read's own batch. */
 export function depositQuery(target: DepositTarget): BatchQuery {
@@ -91,6 +97,7 @@ export async function setBookingDeposit(db: DbClient, actor: DepositActor, booki
   await executeBatch(db, [
     { query: `UPDATE bookings SET deposit_minor = ?, version = version + 1, updated_at = ? WHERE organization_id = ? AND id = ? AND deposit_minor IS NOT ?`, params: [depositMinor, now, actor.organizationId, bookingId, depositMinor] },
     organizationEventQuery({ organizationId: actor.organizationId, locationId: booking.location_id, actorId: actor.actorId, eventType: 'booking.deposit_set', entityType: 'booking', entityId: bookingId, metadata: { deposit_minor: depositMinor }, onlyIfPreviousChangedOneRow: true }),
+    depositTaskQuery(actor.organizationId, { sql: '?', params: [bookingId] }, now),
   ], { operation: 'Set booking deposit' })
   const saved = await readBookingDeposit(db, actor.organizationId, bookingId)
   if ((saved?.required_minor ?? null) !== depositMinor) fail(409, 'DEPOSIT_CHANGED', 'The deposit changed before it could be read back. Reload the booking.', 'deposit_minor')
@@ -156,6 +163,7 @@ export async function recordDepositEntry(db: DbClient, actor: DepositActor, book
         actor.organizationId, key, kind, actor.organizationId, bookingId, amount],
     },
     organizationEventQuery({ organizationId: actor.organizationId, locationId: booking.location_id, actorId: actor.actorId, eventType: 'booking.deposit_recorded', entityType: 'booking', entityId: bookingId, metadata: { entry_id: id, kind, amount_minor: amount }, onlyIfPreviousChangedOneRow: true }),
+    depositTaskQuery(actor.organizationId, { sql: '?', params: [bookingId] }, now),
   ], { operation: 'Record deposit entry' })
   if ((inserted?.meta.changes ?? 0) === 0) {
     const concurrent = await replay()
@@ -177,6 +185,7 @@ export async function deleteDepositEntry(db: DbClient, actor: DepositActor, book
       params: [actor.organizationId, bookingId, entryId, actor.organizationId, bookingId],
     },
     organizationEventQuery({ organizationId: actor.organizationId, locationId: booking.location_id, actorId: actor.actorId, eventType: 'booking.deposit_deleted', entityType: 'booking', entityId: bookingId, metadata: { entry_id: entryId }, onlyIfPreviousChangedOneRow: true }),
+    depositTaskQuery(actor.organizationId, { sql: '?', params: [bookingId] }, new Date().toISOString()),
   ], { operation: 'Delete deposit entry' })
   const deposit = await readBookingDeposit(db, actor.organizationId, bookingId)
   if ((deleted?.meta.changes ?? 0) === 0) {

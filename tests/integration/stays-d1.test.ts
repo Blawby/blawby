@@ -10,6 +10,7 @@ import { createProduct, deleteProduct, getProduct, removeProductLocation, setPro
 import { deleteDepositEntry, readBookingDeposit, recordDepositEntry, setBookingDeposit } from '../../server/domain/deposits.ts'
 import { applyChannelBooking, cancelStay, createStay, deleteStayPayment, getStay, readHomeCalendar, readStayCalendar, readStayHome, recordStayPayment, importStayNights, quoteStay, setStayNights, stayCheckoutPolicy, updateStay, updateStayHome, type GuestStay, type StayAccess, cancelStayAsGuest, createStayRequest, dispatchStayCheckoutDeadlines, readPublicStayHome, type PublicStayCalendar  } from '../../server/domain/stays.ts'
 import { listTasks, parseTaskListQuery, taskViewer } from '../../server/domain/tasks.ts'
+import { readUnpaid } from '../../server/domain/unpaid.ts'
 import { writeMemberScheduling } from '../../server/domain/member-scheduling.ts'
 import { getRequestDataMetrics } from '../../server/utils/request-metrics.ts'
 import { H3Event } from 'h3'
@@ -281,10 +282,18 @@ test('a channel stay is read-only here and is paid through its channel; an app s
     assert.equal((await getStay(db, manager, channelStayId)).channel_booking_url, airbnb)
 
     const stay = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'p', check_in_date: '2026-11-01', check_out_date: '2026-11-04', ...guest })
+    // Who owes (#2079): the stay's Today task is written and closed with each receipt, and the Unpaid read says the same.
+    const balanceTask = () => db.prepare('SELECT status FROM tasks WHERE dedupe_key = ?').bind(`payment:${stay.id}:balance`).first<string>('status')
+    const depositTask = () => db.prepare('SELECT status FROM tasks WHERE dedupe_key = ?').bind(`payment:${stay.id}:deposit`).first<string>('status')
+    const owes = async () => (await readUnpaid(db, { organizationId: ORG, role: 'owner' })).bookings.find(row => row.booking_id === stay.id)?.items.map(item => [item.reason, item.owed_minor]) ?? []
+    assert.deepEqual([await balanceTask(), await owes()], ['open', [['balance', 45_000]]])
+    assert.equal(await db.prepare('SELECT count(*) AS n FROM tasks WHERE subject_id = ? AND kind = ?').bind(channelStayId, 'payment_due').first('n'), 0)
+    await assert.rejects(readUnpaid(db, { organizationId: ORG, role: 'member' }), (error: unknown) => (error as { status?: number }).status === 403)
     await assert.rejects(recordStayPayment(db, env, manager, stay.id, { amount_minor: 0, method: 'cash', paid_on: '2026-11-01', idempotency_key: 'pay-2' }), code('INVALID_AMOUNT'))
     await assert.rejects(recordStayPayment(db, env, manager, stay.id, { amount_minor: 100, method: 'crypto', paid_on: '2026-11-01', idempotency_key: 'pay-3' }), code('INVALID_STAY_FIELD'))
     const partial = await recordStayPayment(db, env, manager, stay.id, { amount_minor: 20_000, method: 'cash', paid_on: '2026-11-01', reference: 'deposit', idempotency_key: 'pay-4' })
     assert.deepEqual([partial.stay.paid_minor, partial.stay.payment_status, partial.stay.payments.length], [20_000, 'partial', 1])
+    assert.deepEqual([await balanceTask(), await owes()], ['open', [['balance', 25_000]]])
     // Money is recorded in USD: the business currency no longer changes.
     assert.deepEqual(await updateOrganizationSettingsFields(db, env, ORG, { default_currency: 'EUR' }, OWNER),
       { status: 409, data: { error: 'The business currency cannot change once money has been recorded or a channel is connected', code: 'CURRENCY_FIXED' } })
@@ -302,16 +311,21 @@ test('a channel stay is read-only here and is paid through its channel; an app s
     await assert.rejects(recordStayPayment(db, env, manager, stay.id, { amount_minor: 1, method: 'cash', paid_on: '2026-11-01', idempotency_key: 'pay-4' }), code('IDEMPOTENCY_CONFLICT'))
     const paid = await recordStayPayment(db, env, manager, stay.id, { amount_minor: 25_000, method: 'bank_transfer', paid_on: '2026-11-02', idempotency_key: 'pay-5' })
     assert.deepEqual([paid.stay.paid_minor, paid.stay.payment_status], [45_000, 'paid'])
+    assert.deepEqual([await balanceTask(), await owes()], ['done', []])
     const refunded = await recordStayPayment(db, env, manager, stay.id, { amount_minor: -5_000, method: 'cash', paid_on: '2026-11-03', note: 'Early checkout', idempotency_key: 'pay-6' })
     assert.equal(refunded.stay.payment_status, 'partial')
+    assert.deepEqual([await balanceTask(), await owes()], ['open', [['balance', 5_000]]])
     const removed = await deleteStayPayment(db, env, manager, stay.id, refunded.payment.id)
     assert.deepEqual([removed.paid_minor, removed.payment_status], [45_000, 'paid'])
+    assert.deepEqual([await balanceTask(), await owes()], ['done', []])
     await assert.rejects(deleteStayPayment(db, env, manager, stay.id, 'missing'), code('PAYMENT_NOT_FOUND'))
 
     // The deposit is a liability: it never counts as paid, and only what is held can go back or be kept.
     const depositor = { organizationId: ORG, actorId: OWNER }
     assert.equal((await setBookingDeposit(db, depositor, stay.id, 50_000))?.required_minor, 50_000)
+    assert.deepEqual([await depositTask(), await owes()], ['open', [['deposit', 50_000]]])
     const received = await recordDepositEntry(db, depositor, stay.id, { kind: 'received', amount_minor: 50_000, method: 'bank_transfer', paid_on: '2026-11-01', idempotency_key: 'dep-1' })
+    assert.deepEqual([await depositTask(), await owes()], ['done', []])
     assert.deepEqual([received.deposit.held_minor, (await getStay(db, manager, stay.id)).paid_minor], [50_000, 45_000])
     await assert.rejects(recordDepositEntry(db, depositor, stay.id, { kind: 'withheld', amount_minor: 10_000, paid_on: '2026-11-05', idempotency_key: 'dep-x' }), code('VALIDATION_ERROR'))
     await assert.rejects(recordDepositEntry(db, depositor, stay.id, { kind: 'withheld', amount_minor: 60_000, paid_on: '2026-11-05', note: 'Too much', idempotency_key: 'dep-y' }), code('DEPOSIT_INSUFFICIENT'))
@@ -328,6 +342,8 @@ test('a channel stay is read-only here and is paid through its channel; an app s
     await assert.rejects(deleteDepositEntry(db, depositor, stay.id, received.entry.id), code('DEPOSIT_IN_USE'))
     const readBack = await readBookingDeposit(db, ORG, stay.id)
     assert.deepEqual([readBack?.required_minor, readBack?.held_minor], [50_000, 0])
+    // A deposit received and given back at checkout was paid; it is not owed again.
+    assert.deepEqual([await depositTask(), await owes()], ['done', []])
 
     // A guest who already paid: the stay and its first payment are one write, and a replay adds no second payment.
     const withPayment = { product_id: cabin.id, idempotency_key: 'paid-up-front', check_in_date: '2026-12-10', check_out_date: '2026-12-12', ...guest, payment: { amount_minor: 45_000, method: 'cash', paid_on: '2026-12-01', reference: 'cash at the door' } }

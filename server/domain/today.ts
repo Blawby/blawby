@@ -12,7 +12,8 @@ import { ownerPicture } from '~/server/notifications/hero'
 import { bookingConversationOrRecordPath, guestConversationPath } from '~/shared/messages-contract'
 import { guestGroup, UPCOMING_RESERVATION_DAYS, type BusinessToday, type TodayItem } from '~/shared/dashboard-today'
 import { isChannelManagedStay, STAY_CHANNEL_LABELS } from '~/shared/bookings'
-import { currencyFractionDigits } from '~/shared/currencies'
+import { currencyFractionDigits, type CurrencyCode } from '~/shared/currencies'
+import { bookingDues, PAYMENT_TASK_KIND, unpaidQuery, type UnpaidRow } from '~/server/domain/unpaid'
 import { formatMinorAmount } from '~/shared/prices'
 import { addLocalDays, formatCalendarDate, formatCalendarRange, formatTimestamp, localDateAt } from '~/utils/timezone'
 import { resolveBookingPresentation } from '~/utils/booking-presentation'
@@ -37,7 +38,7 @@ const NOUNS = {
   reservation: ['reservation', 'reservations'], consultation: ['consultation', 'consultations'], class: ['class', 'classes'],
   clean: ['home to clean', 'homes to clean'], follow_up: ['follow-up', 'follow-ups'], request: ['request', 'requests'],
   change: ['change request', 'change requests'], message: ['message that didn’t send', 'messages that didn’t send'],
-  task: ['task', 'tasks'],
+  task: ['task', 'tasks'], payment: ['payment to collect', 'payments to collect'],
   // Setup is listed but never counted in the heading.
   setup: ['', ''],
 } as const
@@ -73,6 +74,9 @@ export function prepareToday(db: DbClient, input: TodayReadInput & ({ userId: st
     membership,
     withViewer(membership, bookedRecordsInRange(BATCH_VIEWER, { from, to, pending: range === 'today', includePayments: true })),
     withViewer(membership, openWorkQuery(BATCH_VIEWER, to)),
+    // What the bookings with a payment due today owe, for the people who manage the business.
+    withViewer(membership, unpaidQuery(range === 'today' ? management : { sql: 'NULL' }, {
+      sql: `SELECT subject_id FROM tasks WHERE organization_id = ${org} AND kind = '${PAYMENT_TASK_KIND}' AND status = 'open' AND due_at <= ?`, params: [wideTo] })),
     withViewer(membership, mediaPlacementsQuery({ organizationId: { sql: org }, ownerType: 'product', owners: {
       sql: `SELECT product_id FROM bookings WHERE organization_id = ${org} AND status <> 'cancelled' AND ${window}
         UNION SELECT product_id FROM tasks WHERE organization_id = ${org} AND status = 'open' AND product_id IS NOT NULL`, params: [wideTo, wideFrom] } })),
@@ -90,7 +94,7 @@ export function prepareToday(db: DbClient, input: TodayReadInput & ({ userId: st
 
 async function presentToday(
   db: DbClient,
-  [viewerResult, recordResult, workResult, productResult, locationResult, welcomeResult, factResult, unpricedResult, assigneeResult, listingResult]: D1Result[],
+  [viewerResult, recordResult, workResult, unpaidResult, productResult, locationResult, welcomeResult, factResult, unpricedResult, assigneeResult, listingResult]: D1Result[],
   input: TodayReadInput,
 ) {
   const { range, now, native, staffAccessWrites = true } = input
@@ -196,7 +200,13 @@ async function presentToday(
     held.card.line = [record.location_id === null ? 'Online' : record.location_title, `${held.party} ${held.party === 1 ? 'guest' : 'guests'}`].filter(Boolean).join(' · ')
   }
 
+  const payments = new Map<string, OpenWorkRow[]>()
   for (const work of workResult!.results as OpenWorkRow[]) {
+    if (work.kind === PAYMENT_TASK_KIND) {
+      // One card for everything a booking has to pay, built below once every task is read.
+      if (range === 'today' && administration && work.booking_id) payments.set(work.booking_id, [...payments.get(work.booking_id) ?? [], work])
+      continue
+    }
     const job = work.kind === 'turnover' || work.kind === 'consultation_follow_up' || work.kind === 'consultation_prep' || work.kind === 'maintenance'
     const bookingZone = work.booking_timezone ?? work.timezone
     const at = work.starts_at ?? work.due_at
@@ -309,6 +319,39 @@ async function presentToday(
       // The job's conversation is written with the job; a job read before it exists is not linked anywhere else.
       to: team ? guestConversationPath(viewer.slug, team) : null, draft: null,
     })
+  }
+
+  // Who has to pay: a booking whose rent, balance or deposit fell due on or before today, as its tasks say,
+  // in the amounts its stored payments leave owing. A cancelled booking, or one a channel took over, owes nothing.
+  const owing = new Map((unpaidResult!.results as UnpaidRow[]).map(row => [row.id, row]))
+  for (const [bookingId, tasks] of payments) {
+    const work = tasks[0]!
+    if (work.booking_status !== 'confirmed') continue
+    const row = owing.get(bookingId)
+    if (!row) continue
+    const dues = bookingDues(row, row, now)
+    const due = tasks.filter(task => task.due_at && localDateAt(new Date(task.due_at), row.timezone) <= today(row.timezone)).map((task) => {
+      const found = dues.find(entry => task.dedupe_key === `payment:${bookingId}:${entry.key}`)
+      if (!found) throw new Error(`Payment task ${task.id} is open but booking ${bookingId} owes nothing for it`)
+      return found
+    }).sort((left, right) => left.due_at.localeCompare(right.due_at))
+    if (!due.length) continue
+    if (!row.currency) throw new Error(`Booking ${bookingId} owes money and has no currency`)
+    const oldest = due[0]!
+    const guest = first(row.guest_name)
+    const zone = row.timezone
+    const late = oldest.due_on < today(zone)
+    const what = oldest.reason === 'rent' ? `rent is ${late ? 'overdue' : 'due today'}` : oldest.reason === 'balance' ? 'stay balance is unpaid' : `${oldest.label.toLowerCase()} hasn’t been received`
+    const total = due.reduce((sum, entry) => sum + entry.owed_minor, 0)
+    const amount = formatMinorAmount(total, row.currency as CurrencyCode, 'en-US', total % (10 ** currencyFractionDigits(row.currency)) === 0 ? 0 : undefined)
+    const place = [row.product_name, row.unit === 'nights' ? null : row.location_id === null ? 'Online' : row.location_title].filter(Boolean).join(' · ')
+    const opens = Boolean(work.guest_conversation_id && work.viewer_seated)
+    add({ id: `unpaid:${bookingId}`, noun: 'payment', order: [1, oldest.due_at], bookings: [], day: today(zone),
+      when: late ? `Overdue since ${formatCalendarDate(oldest.due_on, 'en', { month: 'short', day: 'numeric' })}` : 'Due today',
+      image_url: null, icon: 'i-lucide-credit-card', headline: guest ? `${guest}’s ${what}` : `${what.charAt(0).toUpperCase()}${what.slice(1)}`,
+      line: [place, amount].filter(Boolean).join(' · '),
+      action: opens && guest ? { title: `Message ${guest}`, detail: `${amount} to collect` } : { title: 'Open the reservation', detail: `${amount} to collect` },
+      to: recordPath(bookingId, work.guest_conversation_id, work.viewer_seated), draft: null })
   }
 
   // The business's unfinished setup, after the day's cards: each opens the editor or settings that finishes it.

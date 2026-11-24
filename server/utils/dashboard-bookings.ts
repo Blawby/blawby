@@ -218,7 +218,7 @@ function timedBookings(records: BookedRecordInRange[], { productId, from, to }: 
 
 /** The booked records of the window the caller may see, in one statement: a member's are those of the offerings and homes they are named on. */
 async function readBookedRecords({ db, organization, userId }: DashboardBookingsContext, window: BookingWindow) {
-  const [records] = await executeBatch(db, [withViewer(membershipBySlugQuery(organization.slug, userId), bookedRecordsInRange(BATCH_VIEWER, { ...window, cancelled: window.includeCancelled, includeAssignedStays: true }))], { operation: 'Read booked records' })
+  const [records] = await executeBatch(db, [withViewer(membershipBySlugQuery(organization.slug, userId), bookedRecordsInRange(BATCH_VIEWER, { ...window, cancelled: window.includeCancelled, includeAssignedStays: true, includePayments: true }))], { operation: 'Read booked records' })
   return (records!.results as BookedRecordInRange[])
 }
 

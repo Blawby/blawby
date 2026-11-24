@@ -312,11 +312,31 @@
             <h2 class="text-lg font-semibold text-highlighted">Payment info</h2>
             <template v-if="detail">
               <!-- Airbnb's payment rows: the label on the left, the amount on the right, both in the body colour. A channel's guest pays the channel, so its total is the booking's. -->
-              <p class="mt-5 flex items-baseline justify-between gap-4 text-base font-semibold text-highlighted">
-                <span>{{ channelManaged ? 'Total' : 'Amount paid' }}</span>
-                <span data-testid="stay-amount-paid">{{ money(channelManaged ? detail.total_minor : detail.paid_minor) }}</span>
-              </p>
-              <p v-if="channelManaged" class="mt-1 text-sm text-muted">Payments, changes and cancellations are managed on {{ channelName }}.</p>
+              <template v-if="channelManaged">
+                <p class="mt-5 flex items-baseline justify-between gap-4 text-base font-semibold text-highlighted">
+                  <span>Total</span>
+                  <span data-testid="stay-amount-paid">{{ money(detail.total_minor) }}</span>
+                </p>
+                <p class="mt-1 text-sm text-muted">Payments, changes and cancellations are managed on {{ channelName }}.</p>
+              </template>
+              <!-- Hostaway's booking money: total, paid and balance, with where it stands. -->
+              <template v-else>
+                <p class="mt-5 flex items-center justify-between gap-4 text-base text-highlighted">
+                  <span>Total</span>
+                  <span class="flex items-center gap-2">
+                    <UBadge v-if="detail.payment_status" :color="PAYMENT_STATUS_COLORS[detail.payment_status]" variant="subtle" size="sm" :label="PAYMENT_STATUS_LABELS[detail.payment_status]" data-testid="stay-payment-status" />
+                    <span>{{ money(detail.total_minor) }}</span>
+                  </span>
+                </p>
+                <p class="mt-2 flex items-baseline justify-between gap-4 text-base text-highlighted">
+                  <span>Paid</span>
+                  <span data-testid="stay-amount-paid">{{ money(detail.paid_minor) }}</span>
+                </p>
+                <p class="mt-2 flex items-baseline justify-between gap-4 text-base font-semibold text-highlighted">
+                  <span>Balance</span>
+                  <span data-testid="stay-balance">{{ money(Math.max(detail.total_minor - detail.paid_minor, 0)) }}</span>
+                </p>
+              </template>
               <!-- A stay paid monthly: each month, what it is due and where it stands. -->
               <ul v-if="detail.installments" class="mt-4 divide-y divide-default border-y border-default" data-testid="stay-monthly-ledger">
                 <li v-for="period in detail.installments" :key="period.period_start" class="flex items-start justify-between gap-4 py-3 text-sm">
@@ -1129,6 +1149,8 @@ function money(minor: number): string {
 }
 function methodLabel(method: StayPaymentMethod) { return STAY_PAYMENT_METHOD_LABELS[method] }
 const LEDGER_LABELS = { paid: 'Paid', partial: 'Partial', due: 'Due', overdue: 'Overdue', upcoming: 'Upcoming' } as const
+const PAYMENT_STATUS_LABELS = { paid: 'Paid', overpaid: 'Paid', partial: 'Partly paid', unpaid: 'Unpaid' } as const
+const PAYMENT_STATUS_COLORS = { paid: 'success', overpaid: 'success', partial: 'warning', unpaid: 'error' } as const
 const LEDGER_COLORS = { paid: 'success', partial: 'warning', due: 'neutral', overdue: 'error', upcoming: 'neutral' } as const
 /** A period's last night: the day before the next one starts. */
 function previousDay(date: string) {

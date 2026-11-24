@@ -768,6 +768,7 @@ export const EXPECTED_TOOL_ANNOTATIONS = {
   create_product_booking: { ...D, openWorldHint: true, idempotentHint: true },
   get_product_booking: R,
   list_product_bookings: R,
+  list_unpaid_bookings: R,
   list_product_booking_sessions: R,
   confirm_product_booking: { ...D, openWorldHint: true, idempotentHint: true },
   update_product_booking: { ...D, openWorldHint: true },

@@ -1,6 +1,7 @@
 import { PLATFORM_MESSAGE_AUTHOR_KINDS_SQL } from '~/shared/messages-contract'
 import { listingGrantSql, staffAccessWritesEnabled } from '~/server/domain/listing-access'
-import { assignedOperationsRoles, isOrganizationRole, organizationRoleCards, roleMatchesSql, rolesAllowing } from '~/utils/organization-access'
+import { assignedOperationsRoles, isOrganizationRole, organizationRoleCards, roleMatchesSql, rolesAllowing, workspaceManagementRoles } from '~/utils/organization-access'
+import { PAYMENT_TASK_KIND } from '~/server/domain/unpaid'
 import { publishChangedJobs } from '~/server/events'
 import { HTTPError } from 'nitro'
 import type { ProductKind } from '~/shared/product-details'
@@ -986,7 +987,8 @@ export async function listTasks(db: DbClient, viewer: TaskViewer, query: TaskLis
 
 /** An open task as Today reads it: what it is about, who has it, and the conversation it is done in. */
 export interface OpenWorkRow {
-  id: string; kind: TaskKind; version: number; subject_type: TaskRow['subject_type']; subject_id: string | null
+  id: string; kind: TaskKind | typeof PAYMENT_TASK_KIND; version: number; subject_type: TaskRow['subject_type']; subject_id: string | null; dedupe_key: string
+  booking_status: 'pending' | 'confirmed' | 'cancelled' | null
   product_id: string | null; location_id: string | null; title: string | null; timezone: string; starts_at: string | null; due_at: string | null
   claim_role: string | null; notes: string | null; assigned_member_id: string | null; assignee_name: string | null; assigned_to_viewer: number
   /** Who added a task by hand; 1 when it was the viewer. */
@@ -1016,9 +1018,10 @@ export interface OpenWorkRow {
 const UNTIMED_JOB_DAY_SQL = 'b.ends_at'
 
 export function openWorkQuery(viewer: ViewerTerms, to: string): BatchQuery {
+  // What a booking still has to pay is read only by the people who manage the business, as its payments are.
   const wideTo = `${addLocalDays(to, 1)}T23:59:59.999Z`
   return {
-    query: `SELECT x.*, b.starts_at AS booking_starts_at, b.ends_at AS booking_ends_at, b.timezone AS booking_timezone,
+    query: `SELECT x.*, b.starts_at AS booking_starts_at, b.ends_at AS booking_ends_at, b.timezone AS booking_timezone, b.status AS booking_status,
         CASE WHEN b.id IS NULL THEN NULL WHEN b.product_session_id IS NULL THEN 'nights' ELSE 'slot' END AS booking_unit, b.party_size,
         json_extract(r.payload_json, '$.guest.name') AS guest_name, p.kind AS product_kind, COALESCE(sc.internal_name, p.name) AS product_name, l.title AS location_title,
         r.id AS guest_conversation_id,
@@ -1027,7 +1030,7 @@ export function openWorkQuery(viewer: ViewerTerms, to: string): BatchQuery {
           WHERE c.organization_id = x.organization_id AND c.kind = 'team' AND c.booking_id IS x.booking_id
             AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND instr(json_extract(m.payload_json, '$.key'), 'job:' || x.id || ':') = 1)
           ORDER BY c.created_at DESC, c.id LIMIT 1) AS team_conversation_id
-      FROM (SELECT t.id, t.organization_id, t.kind, t.version, t.subject_type, t.subject_id, t.product_id, t.location_id, t.title, t.timezone, t.starts_at, t.due_at, t.claim_role, t.assigned_member_id,
+      FROM (SELECT t.id, t.organization_id, t.kind, t.version, t.subject_type, t.subject_id, t.product_id, t.location_id, t.title, t.timezone, t.starts_at, t.due_at, t.claim_role, t.assigned_member_id, t.dedupe_key,
           CASE WHEN t.kind IN ('custom', 'maintenance') AND t.assigned_member_id = ${viewer.member} THEN t.notes END AS notes,
           (SELECT u.name FROM member am JOIN user u ON u.id = am.userId WHERE am.id = t.assigned_member_id AND am.organizationId = t.organization_id) AS assignee_name,
           t.assigned_member_id IS NOT NULL AND t.assigned_member_id = ${viewer.member} AS assigned_to_viewer,
@@ -1041,8 +1044,9 @@ export function openWorkQuery(viewer: ViewerTerms, to: string): BatchQuery {
         LEFT JOIN scheduled_guest_messages g ON t.kind = 'message_delivery' AND g.organization_id = t.organization_id AND g.id = t.subject_id
         LEFT JOIN orders o ON t.kind = 'order_fulfillment' AND o.organization_id = t.organization_id AND o.id = t.subject_id
         WHERE t.organization_id = ${viewer.organization} AND t.status = 'open'
-          AND t.kind IN ('turnover', 'consultation_follow_up', 'consultation_prep', 'message_delivery', 'booking_change', 'custom', 'maintenance', 'order_fulfillment')
-          AND ${taskScopeSql('t', () => viewer)}) x
+          AND ((t.kind IN ('turnover', 'consultation_follow_up', 'consultation_prep', 'message_delivery', 'booking_change', 'custom', 'maintenance', 'order_fulfillment')
+            AND ${taskScopeSql('t', () => viewer)})
+            OR (t.kind = '${PAYMENT_TASK_KIND}' AND ${viewer.role ? roleMatchesSql(viewer.role, workspaceManagementRoles) : '0'}))) x
       LEFT JOIN bookings b ON b.organization_id = x.organization_id AND b.id = x.booking_id
       LEFT JOIN products p ON p.organization_id = x.organization_id AND p.id = COALESCE(b.product_id, x.product_id)
       LEFT JOIN product_stay_configs sc ON (b.id IS NULL OR b.product_session_id IS NULL) AND sc.organization_id = x.organization_id AND sc.product_id = COALESCE(b.product_id, x.product_id)

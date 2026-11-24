@@ -15,6 +15,8 @@ import { addLocalDays } from '~/utils/timezone'
 import { execute, executeBatch, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import { bookingPolicy, formatBookingPolicySummary } from '~/server/utils/booking-policy-summary'
 import { timedBookingPriceFrom, timedBookingPricesQuery } from '~/server/domain/bookings'
+import { depositReceivedSql } from '~/server/domain/deposits'
+import { stayMoneyColumns } from '~/server/domain/unpaid'
 import type { Price } from '~/shared/prices'
 import { isCurrencyCode } from '~/shared/currencies'
 import { getSourceLocale } from '~/server/utils/organization-locales'
@@ -798,6 +800,13 @@ export interface BookedRecordInRange {
   currency: string | null
   /** Recorded payments and captured online payments, net of refunds, in the booking's currency. */
   paid_minor: number
+  /** Read with `includePayments` by someone who manages the business: what `bookingDues` needs. Null otherwise. */
+  created_at?: string
+  deposit_minor?: number | null
+  deposit_received_minor?: number
+  offline_payments_json?: string | null
+  online_payments_json?: string | null
+  installments_json?: string | null
   /** The offering's responsible member, and how the team names them. */
   assigned_member_id: string | null
   assigned_member_name: string | null
@@ -829,10 +838,15 @@ export function bookedRecordsInRange(viewer: ViewerTerms, range: {
   const known = `(${viewer.organizationWide} = 1 OR ${assigned}${viewer.role ? ` OR ${listingGrantSql('b.organization_id', 'b.product_id', viewer.member, 'details', viewer.role)}` : ''})`
   const calendar = range.includeCalendarGrants && viewer.role ? listingGrantSql('b.organization_id', 'b.product_id', viewer.member, 'calendar', viewer.role) : '0'
   const privateColumn = (expression: string) => range.guest ? expression : `CASE WHEN ${known} THEN ${expression} END`
-  const paid = range.includePayments && viewer.role ? `CASE WHEN ${roleMatchesSql(viewer.role, workspaceManagementRoles)} THEN
-    (SELECT COALESCE(SUM(o.amount_minor), 0) FROM offline_payments o WHERE o.organization_id = b.organization_id AND o.booking_id = b.id AND o.purpose <> 'deposit')
+  // What was paid toward the booking's total, and what it owes, only for the people who manage the business.
+  // A deposit, held or kept for damage, is not payment for the booking.
+  const management = range.includePayments && viewer.role ? roleMatchesSql(viewer.role, workspaceManagementRoles) : null
+  const paid = management ? `CASE WHEN ${management} THEN
+    (SELECT COALESCE(SUM(o.amount_minor), 0) FROM offline_payments o WHERE o.organization_id = b.organization_id AND o.booking_id = b.id AND o.purpose = 'payment')
       + (SELECT COALESCE(SUM(pay.captured_amount - pay.refunded_amount), 0) FROM payments pay WHERE pay.organization_id = b.organization_id AND pay.subject_type = 'booking' AND pay.subject_id = b.id)
     ELSE 0 END` : '0'
+  const owed = management ? `, b.created_at, CASE WHEN ${management} THEN b.deposit_minor END AS deposit_minor,
+    CASE WHEN ${management} THEN ${depositReceivedSql('b.organization_id', 'b.id')} ELSE 0 END AS deposit_received_minor, ${stayMoneyColumns('b', management)}` : ''
   const whose = range.guest
     ? `r.user_id = ${viewer.user} AND ${CURRENT_GUEST_SQL('r')} AND (b.product_session_id IS NOT NULL OR (b.owner = 'app' AND b.user_id = r.user_id))`
     : `b.organization_id = ${viewer.organization} AND (${known} OR ${calendar})`
@@ -842,7 +856,7 @@ export function bookedRecordsInRange(viewer: ViewerTerms, range: {
         b.starts_at, b.ends_at, b.actual_check_out_date, b.timezone, b.party_size, b.adults, b.children, b.party_size_is_minimum, ${privateColumn("json_extract(r.payload_json, '$.guest.name')")} AS guest_name,
         ${privateColumn('(SELECT u.image FROM user u WHERE u.id = r.user_id)')} AS guest_image_url, b.owner, b.channel, b.overbooked, b.total_minor,
         CASE WHEN b.total_minor IS NULL THEN org.default_currency ELSE b.currency END AS currency,
-        ${paid} AS paid_minor,
+        ${paid} AS paid_minor${owed},
         c.assigned_member_id, (SELECT ${MEMBER_NAME_SQL} FROM member m JOIN user u ON u.id = m.userId LEFT JOIN member_scheduling ms ON ms.member_id = m.id AND ms.organization_id = m.organizationId
           WHERE m.id = c.assigned_member_id AND m.organizationId = b.organization_id) AS assigned_member_name, r.id AS conversation_id,
         ${conversationMemberSql('r', viewer.user)} AS viewer_seated, ${range.guest ? '1' : known} AS viewer_can_read_details

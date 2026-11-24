@@ -171,8 +171,8 @@ const isChange = (value: unknown): value is SyncChange =>
   && (value.status !== 'failed' || value.error !== null)
 const isChanges = (value: unknown): value is { listings: SyncChange[] } => isRecord(value) && Array.isArray(value.listings) && value.listings.every(isChange)
 const isDetails = (value: unknown): value is AirbnbListingDetails =>
-  isRecord(value) && typeof value.currency === 'string' && typeof value.maxGuests === 'number' && typeof value.nightlyRate === 'string'
-  && Array.isArray(value.missingFields) && ['checkInTime', 'checkInEndTime', 'checkOutTime'].every(key => value[key] === null || typeof value[key] === 'string')
+  isRecord(value) && typeof value.currency === 'string' && typeof value.max_guests === 'number' && typeof value.nightly_rate === 'string'
+  && Array.isArray(value.missing_fields) && ['check_in_time', 'check_in_end_time', 'check_out_time'].every(key => value[key] === null || typeof value[key] === 'string')
 const isStart = (value: unknown): value is { authorization_url: string } => isRecord(value) && typeof value.authorization_url === 'string'
 const isDisconnect = (value: unknown): value is { disconnected: boolean } => isRecord(value) && typeof value.disconnected === 'boolean'
 
@@ -225,7 +225,8 @@ function priceNote(listing: AirbnbListing): string | null {
   const { price_adjustment_type: type, price_adjustment: value } = listing.import
   if (type === null || value === null) return 'Home’s price'
   const currency = syncedHomes.value.find(home => home.product_id === (listing.import as { product_id: string }).product_id)?.currency
-  const amount = type === 'percent' ? `${Math.abs(value)}%` : currency ? formatMinorAmount(Math.abs(value), currency) : `${Math.abs(value)}`
+  if (type === 'amount' && !currency) return 'Home’s price, adjusted'
+  const amount = type === 'percent' ? `${Math.abs(value)}%` : formatMinorAmount(Math.abs(value), currency!)
   return `Home’s price ${value > 0 ? '+' : '−'} ${amount}`
 }
 const missingListings = computed(() => workspace.value?.inventory?.missing_listings ?? [])
@@ -285,7 +286,7 @@ const details = ref<Record<string, AirbnbListingDetails>>({})
 const needsDetails = (listing: AirbnbListing) => {
   const known = details.value[listing.id]
   return (listing.import.status === 'not_imported' || ownHome.value.includes(listing.id)) && known !== undefined && !entered.value[listing.id] && !assigned.value[listing.id]
-    && known.missingFields.length > 0
+    && known.missing_fields.length > 0
 }
 
 /** "Backup" in the title, or a title already used by an earlier listing on the account. */
@@ -361,10 +362,10 @@ async function choose(id: string, chosen: boolean) {
     if (!checked.value.includes(id)) return
     if (needsDetails(listing)) await addDetails(id)
   } catch (cause) {
-    // A home chosen meanwhile needs none of this listing's own details.
+    // A home chosen meanwhile needs none of this listing's own details: it stays chosen, and the failure is still said.
+    failure.value = getErrorMessage(cause, `Could not read ${listing.title} from Airbnb.`)
     if (assigned.value[id]) return
     checked.value = checked.value.filter(value => value !== id)
-    failure.value = getErrorMessage(cause, `Could not read ${listing.title} from Airbnb.`)
   } finally {
     resolving.value = new Set([...resolving.value].filter(value => value !== id))
   }
@@ -423,7 +424,10 @@ async function setPrice(listing: AirbnbListing) {
   try {
     await dashboardApi(`${api}/listings/${encodeURIComponent(listing.id)}`, { method: 'PATCH', body: chosen,
       validate: (value): value is ListingPriceAdjustment & { listing_id: string } => isRecord(value) && value.listing_id === listing.id })
+    // The price is saved on its own; the checklist keeps the choices not yet applied.
+    const choices = checked.value
     await refreshStatus()
+    checked.value = choices.filter(id => listings.value.some(candidate => candidate.id === id))
   } catch (cause) {
     failure.value = getErrorMessage(cause, `Could not set the price of ${listing.title}.`)
   } finally {
@@ -506,6 +510,8 @@ async function retryFailed() {
       // Listings may have been read again while an earlier dialog was open.
       const listing = listings.value.find(candidate => candidate.id === job.listing_id)
       if (!listing || (job.product_id && !job.own_home) || (listing.import.status !== 'not_imported' && !job.own_home)) continue
+      // A page opened after the request was made holds no own-home choice; the failed job carries it.
+      if (job.own_home && !ownHome.value.includes(listing.id)) ownHome.value = [...ownHome.value, listing.id]
       // A detail the server refused is corrected in the same dialog; details still held are otherwise sent as they are.
       if (entered.value[listing.id] && job.error?.code !== 'INVALID_DETAIL') continue
       try {

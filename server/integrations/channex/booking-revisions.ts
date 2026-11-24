@@ -99,8 +99,9 @@ function importedRevision(revision: Resource): boolean {
  */
 async function soldThrough(db: DbClient, organizationId: string, revision: Resource): Promise<string | null> {
   if (String(revision.attributes.ota_name).toLowerCase() !== 'airbnb' || !Array.isArray(revision.attributes.rooms)) return null
-  const plans = [...new Set(revision.attributes.rooms.map(room => string(object(room, 'room').rate_plan_id, 'rooms.rate_plan_id')))]
-  if (plans.length !== 1) return null
+  // The listing is what the revision's one rate plan says; a room naming none, or rooms naming several, say no listing.
+  const plans = [...new Set(revision.attributes.rooms.map(room => object(room, 'room').rate_plan_id))]
+  if (plans.length !== 1 || typeof plans[0] !== 'string') return null
   const listing = await queryFirst<{ listing_id: string }>(db, `SELECT listing_id FROM ${AIRBNB_MAPPINGS} WHERE organization_id = ? AND rate_plan_id = ?`, [organizationId, plans[0]])
   return listing?.listing_id ?? null
 }

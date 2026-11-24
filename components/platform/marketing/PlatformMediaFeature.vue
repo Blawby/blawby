@@ -32,7 +32,13 @@
         <NuxtLink v-if="label && url && !linkInBody" :to="route(url)" class="kc-media-feature__link">{{ label }}</NuxtLink>
       </div>
 
-      <div class="kc-media-feature__media">
+      <dl v-if="examples.length" class="kc-media-feature__exchange">
+        <template v-for="(example, index) in examples" :key="index">
+          <dt>{{ example.title }}</dt>
+          <dd>{{ example.description }}</dd>
+        </template>
+      </dl>
+      <div v-else class="kc-media-feature__media">
         <MediaPreview
           v-if="media?.kind === 'video' && media.public_url"
           :item="{ url: media.public_url, kind: 'video', poster: media.thumbnail_url || undefined, alt: media.alt_text || undefined }"
@@ -58,7 +64,7 @@ import MediaPreview from '~/components/MediaPreview.vue'
 import { usePreferredReducedMotion } from '@vueuse/core'
 import type { PublicTenantPage } from '~/server/utils/public-tenant-pages'
 import type { TenantPageBlock } from '~/utils/tenant-page-blocks'
-import { blockMedia, blockTextOrNull, isInternalRoute } from '~/utils/tenant-page-block-data'
+import { blockMedia, blockRecords, blockTextOrNull, isInternalRoute } from '~/utils/tenant-page-block-data'
 import { mediaStillUrl } from '~/shared/media-placement-contract'
 
 const props = defineProps<{ block: TenantPageBlock; page: PublicTenantPage }>()
@@ -77,6 +83,12 @@ const body = computed(() => blockTextOrNull(props.block.data.body))
 const label = computed(() => blockTextOrNull(props.block.data.label))
 const url = computed(() => blockTextOrNull(props.block.data.url))
 const media = computed(() => blockMedia(props.block, 'media')[0] ?? null)
+const examples = computed(() => props.page.path === '/'
+  ? blockRecords(props.block.data.items).map(item => ({
+    title: blockTextOrNull(item.title),
+    description: blockTextOrNull(item.description),
+  })).filter(item => item.title && item.description)
+  : [])
 
 /** The link's words, where the body already says them, become the link. */
 const linkInBody = computed(() => Boolean(label.value && url.value && body.value?.includes(label.value)))
@@ -176,6 +188,30 @@ const bodyParts = computed(() => {
 .kc-media-feature__link:hover {
   color: #fff;
 }
+
+.kc-media-feature__exchange {
+  display: grid;
+  gap: .65rem;
+  margin: 0;
+  padding: clamp(1.25rem, 4vw, 3rem);
+  border-radius: 1.5rem;
+  background: #f4ebdc;
+  color: #202535;
+}
+
+.kc-media-feature__exchange dt {
+  color: #765248;
+  font-size: .85rem;
+  font-weight: 700;
+}
+
+.kc-media-feature__exchange dd {
+  margin: 0 0 1rem;
+  font-size: clamp(1rem, 1.55vw, 1.25rem);
+  line-height: 1.5;
+}
+
+.kc-media-feature__exchange dd:last-child { margin-bottom: 0; }
 
 .kc-media-feature__media {
   position: relative;

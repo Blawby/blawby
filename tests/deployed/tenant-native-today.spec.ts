@@ -1,10 +1,42 @@
 import { expect, test } from '@playwright/test'
 import { z } from 'zod'
+import { isThreadListResponse } from '../../lib/components/workspace/messages/guest-thread-client'
 
 const text = z.string()
 const nullableText = text.nullable()
 const assignee = z.object({ type: z.literal('member'), id: text, name: text, initial: text, you: z.boolean() })
 const feed = z.object({ assignees: z.array(assignee), resolved_at: text })
+
+test('the deployed dashboard reconnects and refreshes its inbox without a global warning', async ({ page, baseURL }) => {
+  test.setTimeout(90_000)
+  if (!baseURL) throw new Error('Set PLAYWRIGHT_PREVIEW_URL for the deployed environment')
+  const email = process.env.CANARY_LOGIN_EMAIL
+  const password = process.env.CANARY_LOGIN_PASSWORD
+  if (!email || !password) throw new Error('Configure the deployed canary login')
+  const signIn = await page.request.post('/api/auth/sign-in/email', {
+    headers: { origin: new URL(baseURL).origin }, data: { email, password, rememberMe: false },
+  })
+  expect(signIn.status(), 'Browser canary sign-in').toBe(200)
+  const connected = page.waitForEvent('websocket', { predicate: socket => new URL(socket.url()).pathname === '/api/dashboard/guest-inbox/socket' })
+  const heartbeat = connected.then(socket => socket.waitForEvent('framereceived', { predicate: frame => frame.payload === 'pong', timeout: 25_000 }))
+  const document = await page.goto('/dashboard/saltleaf-stays-demo/messages')
+  expect(document?.status()).toBe(200)
+  await heartbeat
+  await expect(page.getByTestId('dashboard-top-nav')).toBeVisible()
+  const closed = (await connected).waitForEvent('close')
+  await page.context().setOffline(true)
+  await closed
+  await expect(page.getByTestId('dashboard-status-banner')).toHaveCount(0)
+  const reconnected = page.waitForEvent('websocket', { predicate: socket => new URL(socket.url()).pathname === '/api/dashboard/guest-inbox/socket' })
+  const recoveredHeartbeat = reconnected.then(socket => socket.waitForEvent('framereceived', { predicate: frame => frame.payload === 'pong', timeout: 25_000 }))
+  const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/messages' && response.request().method() === 'GET')
+  await page.context().setOffline(false)
+  const inbox = await refreshed
+  expect(inbox.status()).toBe(200)
+  expect(isThreadListResponse(await inbox.json())).toBe(true)
+  await recoveredHeartbeat
+  await expect(page.getByTestId('dashboard-status-banner')).toHaveCount(0)
+})
 
 // TodayWork in App Store build 39 (iOS commit d0d572b148e3c18f28b8e0422873ed85b3e88644).
 const website = z.object({

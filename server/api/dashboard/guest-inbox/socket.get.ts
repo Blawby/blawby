@@ -12,7 +12,7 @@ export default defineHandler(async (event) => {
   const env = cloudflareEnv(event)
   const { org, scope } = getQuery(event)
   const personal = scope === 'account' && org === undefined
-  const slug = scope === undefined && typeof org === 'string' && /^[a-z0-9-]+$/.test(org) ? org : null
+  const slug = scope === undefined && typeof org === 'string' && org.length > 0 ? org : null
   const startup = slug ? await readDashboardSocketScope(event, env, slug) : null
   const session = startup?.session ?? await createAuth(env).api.getSession({ headers: event.req.headers, query: { disableCookieCache: true, disableRefresh: true } })
   if (!session) throw new HTTPError({ statusCode: 401, message: 'Authentication required', data: { code: 'UNAUTHORIZED', field: 'session' } })

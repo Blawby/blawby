@@ -4,13 +4,16 @@ import { openTenantPage } from './helpers'
 import { acceptOrganizationInvitation, authRequestHeaders, loginAs, sendOrganizationInvitation } from './helpers/auth'
 
 test('a signed-in reader sees an empty inbox until a message arrives and loses workspace inbox access when removed', async ({ browser, playwright, baseURL }) => {
+  test.setTimeout(90_000)
   test.skip(!['localhost', '127.0.0.1'].includes(new URL(baseURL!).hostname), 'Creates and removes an isolated local workspace')
   const origin = baseURL!
   const headers = authRequestHeaders(origin)
   const fixture = findE2eAuthFixture('user-e2e-demo-role-owner')
   const owner = await playwright.request.newContext({ baseURL: origin })
   const reader = await playwright.request.newContext({ baseURL: origin })
-  const slug = `e2e-inbox-access-${crypto.randomUUID().slice(0, 8)}`
+  // Better Auth accepts case-sensitive organization slugs; realtime must use
+  // the same saved identity as the dashboard and membership lookup.
+  const slug = `e2e-inbox-Access-${crypto.randomUUID().slice(0, 8)}`
   let organizationId: string | undefined
   try {
     await loginAs(owner, origin)
@@ -40,6 +43,7 @@ test('a signed-in reader sees an empty inbox until a message arrives and loses w
     expect(conversation.status(), await conversation.text()).toBe(201)
     const { conversation_id: conversationId } = await conversation.json() as { conversation_id: string }
     const message = 'The member can read this before removal.'
+    const missedMessage = 'This message arrived while the reader was offline.'
     const sent = await owner.post(`/api/messages/${conversationId}`, { headers, data: { body: message, idempotency_key: crypto.randomUUID() } })
     expect(sent.status(), await sent.text()).toBe(200)
     const seeded = await inbox(reader)
@@ -57,12 +61,26 @@ test('a signed-in reader sees an empty inbox until a message arrives and loses w
       const socketReady = page.waitForEvent('websocket', { predicate: socket => new URL(socket.url()).pathname === '/api/dashboard/guest-inbox/socket' })
       await openTenantPage(page, `${origin}/dashboard/${slug}/messages/${conversationId}`, {})
       const socket = await socketReady
+      await socket.waitForEvent('framereceived', { predicate: frame => frame.payload === 'pong', timeout: 25_000 })
       const listRow = page.locator(`[data-thread-row="${conversationId}"]`)
       await expect(listRow).toContainText(message)
+      const offlineClosed = socket.waitForEvent('close')
+      await page.context().setOffline(true)
+      await offlineClosed
+      await expect(page.getByTestId('dashboard-status-banner')).toHaveCount(0)
+      const missed = await owner.post(`/api/messages/${conversationId}`, {
+        headers, data: { body: missedMessage, idempotency_key: crypto.randomUUID() },
+      })
+      expect(missed.status(), await missed.text()).toBe(200)
+      const reconnected = page.waitForEvent('websocket', { predicate: socket => new URL(socket.url()).pathname === '/api/dashboard/guest-inbox/socket' })
+      await page.context().setOffline(false)
+      const activeSocket = await reconnected
+      await expect(listRow).toContainText(missedMessage)
+      await expect(page.getByTestId('dashboard-status-banner')).toHaveCount(0)
       const nav = page.getByTestId('dashboard-top-nav')
       await nav.getByRole('link', { name: 'Calendar', exact: true }).click()
       await expect(listRow).toHaveCount(0)
-      const closed = socket.waitForEvent('close')
+      const closed = activeSocket.waitForEvent('close')
       const revoked = await owner.post('/api/auth/organization/remove-member', { headers, data: { organizationId, memberIdOrEmail: member.id } })
       expect(revoked.status(), await revoked.text()).toBe(200)
       await closed
@@ -98,14 +116,14 @@ test('a signed-in reader sees an empty inbox until a message arrives and loses w
     expect(await stillSignedIn.json()).toMatchObject({ session: { id: sessionId }, user: { id: fixture.id } })
     const retained = await inbox(owner)
     expect(retained.status(), await retained.text()).toBe(200)
-    expect(await retained.json()).toMatchObject({ threads: [{ id: conversationId, preview: message }] })
+    expect(await retained.json()).toMatchObject({ threads: [{ id: conversationId, preview: missedMessage }] })
     const ownerPage = await browser.newPage({ baseURL: origin, storageState: await owner.storageState() })
     try {
       const connected = ownerPage.waitForEvent('websocket', { predicate: socket => new URL(socket.url()).pathname === '/api/dashboard/guest-inbox/socket' })
       await ownerPage.goto(`/dashboard/${slug}/messages/${conversationId}`)
       const ownerSocket = await connected
       const ownerRow = ownerPage.locator(`[data-thread-row="${conversationId}"]`)
-      await expect(ownerRow).toContainText(message)
+      await expect(ownerRow).toContainText(missedMessage)
       const disconnected = ownerSocket.waitForEvent('close')
       const deleted = await owner.post('/api/auth/organization/delete', { headers, data: { organizationId } })
       expect(deleted.status(), await deleted.text()).toBe(200)

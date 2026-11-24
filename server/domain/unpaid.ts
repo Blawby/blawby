@@ -57,7 +57,7 @@ export function stayMoney(stay: LedgerStay, row: StayMoneyRow, now = new Date())
   // Counting what was kept from a deposit turned a stay paid in full into an overpaid one.
   const paid = payments.reduce((sum, payment) => sum + payment.amount_minor, 0) + online.reduce((sum, payment) => sum + payment.captured_minor - payment.refunded_minor, 0)
   const status = isChannelManagedStay(stay) ? null
-    : paid === 0 ? 'unpaid' : paid < stay.total_minor ? 'partial' : paid === stay.total_minor ? 'paid' : 'overpaid'
+    : paid === stay.total_minor ? 'paid' : paid === 0 ? 'unpaid' : paid < stay.total_minor ? 'partial' : 'overpaid'
   return { payments, online_payments: online, installments: stayLedger(stay, row.installments_json, online, payments, now), paid_minor: paid, payment_status: status }
 }
 
@@ -130,16 +130,19 @@ const shortDay = (day: string) => formatCalendarDate(day, 'en', { month: 'short'
 export function stayDues(stay: LedgerStay & { status: DueBooking['status'] }, money: Pick<StayMoney, 'installments' | 'paid_minor'>, now = new Date()): Due[] {
   if (stay.status !== 'confirmed' || isChannelManagedStay(stay)) return []
   const today = localDateAt(now, stay.timezone)
+  const balance = (owed: number): Due[] => owed > 0 ? [{ key: 'balance', reason: 'balance', label: 'Stay balance', period_start: null, period_end: null, owed_minor: owed,
+    due_at: dayStart(stay.check_in_date, stay.timezone), due_on: stay.check_in_date, owed: stay.check_in_date <= today }] : []
   if (money.installments) {
-    return money.installments.filter(period => period.paid_minor < period.amount_minor).map(period => ({
+    const months: Due[] = money.installments.filter(period => period.paid_minor < period.amount_minor).map(period => ({
       key: `rent:${period.period_start}`, reason: 'rent', label: `Rent for ${shortDay(period.period_start)} – ${shortDay(period.period_end)}`,
       period_start: period.period_start, period_end: period.period_end, owed_minor: period.amount_minor - period.paid_minor,
       due_at: dayStart(period.period_start, stay.timezone), due_on: period.period_start, owed: period.period_start < today,
     }))
+    // A total raised past the plan the checkout froze (a longer stay agreed later) owes the difference as the stay's balance.
+    const planned = money.installments.reduce((sum, period) => sum + period.amount_minor, 0)
+    return [...months, ...balance(Math.min(stay.total_minor - planned, stay.total_minor - money.paid_minor))]
   }
-  if (money.paid_minor >= stay.total_minor) return []
-  return [{ key: 'balance', reason: 'balance', label: 'Stay balance', period_start: null, period_end: null, owed_minor: stay.total_minor - money.paid_minor,
-    due_at: dayStart(stay.check_in_date, stay.timezone), due_on: stay.check_in_date, owed: stay.check_in_date <= today }]
+  return balance(stay.total_minor - money.paid_minor)
 }
 
 /** The deposit or retainer still to be received. Required minus received: a deposit returned at checkout was paid, not owed again. */
@@ -186,7 +189,7 @@ export function stayPaymentTaskQueries(input: {
   // What the stay is paid in now: its months, or its total at once. A task for anything else was for dates it no longer has,
   // and every task of a stay cancelled or paid through its channel is cancelled.
   const standing = stay.status === 'confirmed' && !isChannelManagedStay(stay)
-  const known = JSON.stringify(!standing ? [] : input.money.installments ? input.money.installments.map(period => `rent:${period.period_start}`) : ['balance'])
+  const known = JSON.stringify(!standing ? [] : [...input.money.installments?.map(period => `rent:${period.period_start}`) ?? [], 'balance'])
   const guard = input.guard ? ` AND (${input.guard.query})` : ''
   const guardParams = input.guard?.params ?? []
   const prefix = `payment:${stay.id}:`

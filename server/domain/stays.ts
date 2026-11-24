@@ -2715,6 +2715,14 @@ function stayPaymentInsert(access: StayAccess, stay: { id: string; currency: str
   ]
 }
 
+/** The batch stops unless the stay's receipts are exactly the ones its tasks were computed from: a receipt written at the same time is reloaded, not lost. */
+function receiptsAre(organizationId: string, stayId: string, receipts: readonly Pick<StayPayment, 'amount_minor'>[]): BatchQuery {
+  return assertBookingBatchWrite({
+    query: "(SELECT count(*) = ? AND COALESCE(SUM(amount_minor), 0) = ? FROM offline_payments WHERE organization_id = ? AND booking_id = ? AND purpose = 'payment')",
+    params: [receipts.length, receipts.reduce((sum, receipt) => sum + receipt.amount_minor, 0), organizationId, stayId],
+  })
+}
+
 export async function recordStayPayment(db: DbClient, env: CloudflareEnv, access: StayAccess, stayId: string, input: Record<string, unknown>): Promise<{ stay: StayDetail; payment: StayPayment }> {
   requireManager(access)
   const { query, params } = stayDetailQuery(access, stayId)
@@ -2753,8 +2761,10 @@ export async function recordStayPayment(db: DbClient, env: CloudflareEnv, access
   const paid = stayDetailFrom(access, { ...row!, offline_payments_json: JSON.stringify([...JSON.parse(row!.offline_payments_json) as StayPayment[], { amount_minor: payment.amount_minor, period_start: payment.period_start }]) })
   const now = new Date().toISOString()
   try {
-    await executeBatch(db, [...stayPaymentInsert(access, stay, payment, key, now), ...stayPaymentTaskQueries({ organizationId: access.organizationId, stay: paid, money: paid, now })], { operation: 'Record stay payment' })
+    await executeBatch(db, [...stayPaymentInsert(access, stay, payment, key, now), receiptsAre(access.organizationId, stayId, paid.payments),
+      ...stayPaymentTaskQueries({ organizationId: access.organizationId, stay: paid, money: paid, now })], { operation: 'Record stay payment' })
   } catch (error) {
+    if (bookingBatchWriteRefused(error)) fail(409, 'PAYMENT_CHANGED', 'Another payment was recorded on this stay at the same time. Reload the stay and record this payment again.', 'payment_id')
     if (/UNIQUE constraint failed: offline_payments\.organization_id, offline_payments\.idempotency_key/.test(error instanceof Error ? error.message : String(error))) {
       const concurrent = await replay()
       if (concurrent) return settle(concurrent)
@@ -2777,12 +2787,18 @@ export async function deleteStayPayment(db: DbClient, env: CloudflareEnv, access
   // in place and the same delete retries the same Stripe writes; the delete commits only once Stripe holds the month.
   const without = stayDetailFrom(access, { ...row!, offline_payments_json: JSON.stringify((JSON.parse(row!.offline_payments_json!) as StayPayment[]).filter(payment => payment.id !== paymentId)) })
   await settleMonthsOutside(db, env, access, without, removed, `delete:${paymentId}`)
-  await executeBatch(db, [
-    { query: 'DELETE FROM offline_payments WHERE organization_id = ? AND booking_id = ? AND id = ?', params: [access.organizationId, stayId, paymentId] },
-    organizationEventQuery({ organizationId: access.organizationId, locationId: stay.location_id, actorId: access.actorId, eventType: 'stay.payment_deleted', entityType: 'stay', entityId: stayId, metadata: { payment_id: paymentId }, onlyIfPreviousChangedOneRow: true }),
-    // What the receipt paid is owed again.
-    ...stayPaymentTaskQueries({ organizationId: access.organizationId, stay: without, money: without, now: new Date().toISOString() }),
-  ], { operation: 'Delete stay payment' })
+  try {
+    await executeBatch(db, [
+      { query: 'DELETE FROM offline_payments WHERE organization_id = ? AND booking_id = ? AND id = ?', params: [access.organizationId, stayId, paymentId] },
+      organizationEventQuery({ organizationId: access.organizationId, locationId: stay.location_id, actorId: access.actorId, eventType: 'stay.payment_deleted', entityType: 'stay', entityId: stayId, metadata: { payment_id: paymentId }, onlyIfPreviousChangedOneRow: true }),
+      receiptsAre(access.organizationId, stayId, without.payments),
+      // What the receipt paid is owed again.
+      ...stayPaymentTaskQueries({ organizationId: access.organizationId, stay: without, money: without, now: new Date().toISOString() }),
+    ], { operation: 'Delete stay payment' })
+  } catch (error) {
+    if (bookingBatchWriteRefused(error)) fail(409, 'PAYMENT_CHANGED', 'The payments on this stay changed at the same time. Reload the stay and try again.', 'payment_id')
+    throw error
+  }
   await publishStayInvalidation(env, { type: 'stay.changed', organization_id: access.organizationId, location_id: stay.location_id, product_id: stay.product_id, booking_id: stayId }, { version: stay.version })
   return getStay(db, access, stayId)
 }

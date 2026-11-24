@@ -9,8 +9,8 @@
         <NuxtLink v-if="secondaryLabel && secondaryUrl" :to="secondaryUrl" class="kc-mcp-hero__link">{{ secondaryLabel }} <span aria-hidden="true">↗</span></NuxtLink>
       </div>
     </div>
-    <figure class="kc-mcp-hero__art">
-      <img src="/platform/blawby-agent-desk.webp" alt="" width="1200" height="800" fetchpriority="high" decoding="async">
+    <figure v-if="pluginImage && mediaStillUrl(pluginImage)" class="kc-mcp-hero__art">
+      <img :src="mediaStillUrl(pluginImage)!" :alt="pluginImage.alt_text || ''" :width="pluginImage.width ?? undefined" :height="pluginImage.height ?? undefined" fetchpriority="high" decoding="async">
     </figure>
   </section>
   <PlatformCoastalScene v-else-if="page.recipe === 'products'" :block="block" :page="page" :illustration="solutionIllustration" />
@@ -113,7 +113,8 @@ import PlatformCoastalScene from '~/components/platform/marketing/PlatformCoasta
 import type { PlatformIconName } from '~/components/platform/PlatformIcon.vue'
 import type { PublicTenantPage } from '~/server/utils/public-tenant-pages'
 import type { TenantPageBlock } from '~/utils/tenant-page-blocks'
-import { blockStrings, blockText, blockTextOrNull } from '~/utils/tenant-page-block-data'
+import { blockMedia, blockStrings, blockText, blockTextOrNull } from '~/utils/tenant-page-block-data'
+import { mediaStillUrl } from '~/shared/media-placement-contract'
 
 /**
  * Each marketing page renders its authored headline and media in its own
@@ -170,12 +171,14 @@ onBeforeUnmount(() => {
   if (homeHeroFrame !== null) window.cancelAnimationFrame(homeHeroFrame)
 })
 
+const pluginImage = computed(() => blockMedia(props.block, 'media')[0])
+
 const solutionArt: Record<string, string> = {
-  '/products': 'blawby-at-work',
-  '/restaurants': 'blawby-restaurant',
-  '/experiences': 'blawby-experiences',
-  '/lodging': 'blawby-lodging',
-  '/legal': 'blawby-legal',
+  '/products': 'blawby-website-plan',
+  '/restaurants': 'blawby-restaurant-menu',
+  '/experiences': 'blawby-workshop-schedule',
+  '/lodging': 'blawby-guest-keys',
+  '/legal': 'blawby-consultation-folder',
 }
 const solutionIllustration = computed(() => {
   const asset = solutionArt[props.page.path]

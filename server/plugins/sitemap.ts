@@ -333,7 +333,7 @@ export default definePlugin((nitroApp) => {
     entries.push(
       ...locationPages.map(location => ({ loc: `/locations/${location.slug}`, lastmod: location.updated_at as string | undefined })),
       ...locationPages.flatMap(location => [...new Set(products.filter(product => product.location_id === location.id).map(product => productSurfaceOf(organization.vertical, { kind: product.kind as ProductKind })))]
-        .filter(surface => surface !== 'stays')
+        .filter((surface): surface is ProductSurface => Boolean(surface) && surface !== 'stays')
         .map(surface => ({ loc: locationSurfacePath(String(location.slug), surface), lastmod: location.updated_at as string | undefined }))),
       ...(productPresentation
         ? products

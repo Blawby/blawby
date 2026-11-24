@@ -1,7 +1,7 @@
 <template>
-  <!-- Home: full-bleed picture under the site's own words -->
+  <!-- Home or page with a background image: full-bleed picture under the site's own words -->
   <section
-    v-if="isHome"
+    v-if="isHome || backgroundSrc"
     data-tenant-critical-hero
     :data-has-background="backgroundSrc ? 'true' : undefined"
     class="relative isolate flex min-h-160 items-center overflow-hidden bg-zinc-900"

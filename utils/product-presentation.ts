@@ -8,8 +8,15 @@ export function isExperience(product: Pick<Product, 'kind'>): boolean {
   return product.kind === 'experience'
 }
 
-export function productSurfaceOf(_vertical: string | null | undefined, product: Pick<Product, 'kind'>): ProductSurface {
-  return product.kind === 'experience' ? 'experiences' : product.kind === 'dish' ? 'menu' : product.kind === 'stay' ? 'stays' : 'products'
+const KIND_SURFACES: Partial<Record<Product['kind'], ProductSurface>> = {
+  dish: 'menu',
+  stay: 'stays',
+  experience: 'experiences',
+  service: 'products',
+}
+
+export function productSurfaceOf(_vertical: string | null | undefined, product: Pick<Product, 'kind'>): ProductSurface | null {
+  return KIND_SURFACES[product.kind] ?? null
 }
 
 /**
@@ -189,6 +196,7 @@ export interface CatalogCounts {
   experiences: number
   dishes: number
   stays: number
+  products: number
 }
 
 export function countCatalog(products: ReadonlyArray<Pick<Product, 'kind'>>): CatalogCounts {
@@ -197,6 +205,7 @@ export function countCatalog(products: ReadonlyArray<Pick<Product, 'kind'>>): Ca
     experiences: products.filter(isExperience).length,
     dishes: products.filter(product => product.kind === 'dish').length,
     stays: products.filter(product => product.kind === 'stay').length,
+    products: products.filter(product => product.kind === 'service').length,
   }
 }
 
@@ -253,7 +262,7 @@ export function catalogSurfaces(vertical: string | null | undefined, counts: Cat
   const own = requireProductPresentation(vertical).locationCollectionSegment
   const surfaces: ProductSurface[] = []
   if (counts.dishes > 0) surfaces.push('menu')
-  if (counts.total > counts.experiences + counts.dishes + counts.stays) surfaces.push('products')
+  if (counts.products > 0) surfaces.push('products')
   if (counts.stays > 0) surfaces.push('stays')
   if (counts.experiences > 0) surfaces.push('experiences')
   return surfaces.length > 0 ? surfaces : [own]
@@ -275,7 +284,7 @@ export function catalogSummary(vertical: string | null | undefined, counts: Cata
   if (counts.total === 0) return `Add your first ${presentationForSurface(vertical, surfaces[0]!).itemLabel.toLowerCase()}`
   return surfaces.map((surface) => {
     const words = presentationForSurface(vertical, surface)
-    const total = surface === 'experiences' ? counts.experiences : surface === 'menu' ? counts.dishes : surface === 'stays' ? counts.stays : counts.total - counts.experiences - counts.dishes - counts.stays
+    const total = surface === 'experiences' ? counts.experiences : surface === 'menu' ? counts.dishes : surface === 'stays' ? counts.stays : counts.products
     return `${total} ${(total === 1 ? words.itemLabel : words.itemLabelPlural).toLowerCase()}`
   }).join(' · ')
 }

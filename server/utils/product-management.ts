@@ -753,7 +753,8 @@ export function prepareLocationProductSummary(organization: string | { sql: stri
     SELECT count(*) AS total,
            count(CASE WHEN p.kind = 'experience' THEN 1 END) AS experiences,
            count(CASE WHEN p.kind = 'dish' THEN 1 END) AS dishes,
-           count(CASE WHEN p.kind = 'stay' THEN 1 END) AS stays
+           count(CASE WHEN p.kind = 'stay' THEN 1 END) AS stays,
+           count(CASE WHEN p.kind = 'service' THEN 1 END) AS products
       FROM products p
       JOIN product_locations pl ON pl.product_id = p.id AND pl.organization_id = p.organization_id
      WHERE p.organization_id = ${typeof organization === 'string' ? '?' : organization.sql} AND pl.location_id = ${typeof location === 'string' ? '?' : location.sql}
@@ -761,7 +762,7 @@ export function prepareLocationProductSummary(organization: string | { sql: stri
     read([counts]: D1Result[]): CatalogCounts {
       const row = counts!.results[0] as CatalogCounts | undefined
       if (!row) throw new Error('Location catalog counts were not read')
-      return { total: Number(row.total), experiences: Number(row.experiences), dishes: Number(row.dishes), stays: Number(row.stays) }
+      return { total: Number(row.total), experiences: Number(row.experiences), dishes: Number(row.dishes), stays: Number(row.stays), products: Number(row.products ?? 0) }
     },
   }
 }

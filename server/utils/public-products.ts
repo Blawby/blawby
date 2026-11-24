@@ -310,7 +310,9 @@ export async function loadPublicPageProductDetail(
   const product = await queryFirst<{ kind: string }>(db, 'SELECT kind FROM products WHERE organization_id = ? AND id = ?', [organizationId, page.product_id])
   if (!product) throw new HTTPError({ statusCode: 404, statusMessage: 'Product not found' })
   const localizations = locale === sourceLocale ? undefined : await loadExactPublicLocalizations(env, db, organizationId, locale)
-  const collection = await loadPublicProductCollection(db, organizationId, productSurfaceOf(null, { kind: assertProductKind(product.kind) }), previewAuthorized, undefined, env, localizations, { id: page.product_id })
+  const surface = productSurfaceOf(null, { kind: assertProductKind(product.kind) })
+  if (!surface) return null
+  const collection = await loadPublicProductCollection(db, organizationId, surface, previewAuthorized, undefined, env, localizations, { id: page.product_id })
   const found = collection?.products.find(product => product.id === page.product_id)
   if (!collection || !found) return null
   return projectPublicOffering(env, db, collection, found, '', previewAuthorized, localizations, requestedScope, found.page?.path ?? pagePath)
@@ -424,7 +426,9 @@ export async function loadPublicProductApiDetail(
   // other Product's.
   const product = await queryFirst<{ kind: string }>(db, 'SELECT kind FROM products WHERE organization_id = ? AND slug = ?', [organizationId, productSlug])
   if (!product) return null
-  return loadPublicProductDetail(env, db, organizationId, productSurfaceOf(organization.vertical, { kind: assertProductKind(product.kind) }), previewAuthorized, locationSlug, productSlug, locale)
+  const surface = productSurfaceOf(organization.vertical, { kind: assertProductKind(product.kind) })
+  if (!surface) return null
+  return loadPublicProductDetail(env, db, organizationId, surface, previewAuthorized, locationSlug, productSlug, locale)
 }
 
 /** Put the first page of the same availability feed in the server-rendered product. */

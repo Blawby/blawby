@@ -613,16 +613,19 @@ export class ChannexConnection {
       if (primary.length !== 1 || typeof primary[0]!.occupancy !== 'number') throw new ChannexDataError('The home’s rate plan must have one primary occupancy')
       return primary[0]!.occupancy
     })
-    const earlier = matches[0]
-    if (earlier && (earlier.attributes.parent_rate_plan_id !== parentId || earlier.attributes.inherit_rate !== true || earlier.attributes.inherit_min_stay_arrival !== true)) {
-      fail(409, 'PROVIDER_STATE_AMBIGUOUS', `Channex rate plan ${earlier.id} for this listing does not follow the home’s rate plan.`)
-    }
-    const plan = earlier ?? await channexCreate(this.env, '/rate_plans', { rate_plan: {
-      property_id: propertyId, room_type_id: roomId, title, currency: details.currency, parent_rate_plan_id: parentId,
-      rate_mode: 'derived', sell_mode: 'per_room', options: [{ occupancy, is_primary: true, rate: 0 }],
+    const derived = {
+      parent_rate_plan_id: parentId, rate_mode: 'derived',
       inherit_rate: true, inherit_stop_sell: true, inherit_closed_to_arrival: true, inherit_closed_to_departure: true,
       inherit_min_stay_arrival: true, inherit_min_stay_through: true, inherit_max_stay: true,
       inherit_max_sell: true, inherit_max_availability: true, inherit_availability_offset: true,
+    } as const
+    const earlier = matches[0]
+    if (earlier && Object.entries(derived).some(([key, value]) => earlier.attributes[key] !== value)) {
+      fail(409, 'PROVIDER_STATE_AMBIGUOUS', `Channex rate plan ${earlier.id} for this listing does not follow the home’s rate plan.`)
+    }
+    const plan = earlier ?? await channexCreate(this.env, '/rate_plans', { rate_plan: {
+      property_id: propertyId, room_type_id: roomId, title, currency: details.currency, sell_mode: 'per_room',
+      options: [{ occupancy, is_primary: true, rate: 0 }], ...derived,
     } }, 'rate_plan')
     // The new plan takes its values from the home's plan as they are sent: the listing's mapping step sends the whole calendar.
     await forgetConfirmedNights(this.db, productId)

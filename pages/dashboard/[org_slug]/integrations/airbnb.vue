@@ -195,7 +195,7 @@ function accountsListingName(channelId: string) {
 const listings = computed(() => workspace.value?.inventory?.listings ?? [])
 type SyncedHome = { product_id: string; internal_name: string; channel: { status: string } | null }
 /** Homes a listing can share: those that already sync, as iOS lists them. */
-const { data: stayHomes, refresh: refreshHomes } = await useAsyncData(
+const { data: stayHomes, error: homesError, refresh: refreshHomes } = await useAsyncData(
   () => `integration-airbnb-homes:${integrations.organizationId}`,
   () => connected.value && canManage.value ? dashboardApi('/api/dashboard/stay-homes', {
     validate: (value): value is { homes: SyncedHome[] } => isRecord(value) && Array.isArray(value.homes) && value.homes.every(home => isRecord(home)
@@ -321,6 +321,7 @@ const failure = ref('')
 const panelError = computed(() => failure.value
   || (statusError.value ? getErrorMessage(statusError.value, 'Could not load the Airbnb connection.') : '')
   || (changesError.value ? getErrorMessage(changesError.value, 'Could not read the sync’s progress.') : '')
+  || (homesError.value ? getErrorMessage(homesError.value, 'Could not load your homes to link a listing to.') : '')
   || integrations.failure.value)
 
 /**
@@ -339,6 +340,8 @@ async function choose(id: string, chosen: boolean) {
     if (!checked.value.includes(id)) return
     if (needsDetails(listing)) await addDetails(id)
   } catch (cause) {
+    // A home chosen meanwhile needs none of this listing's own details.
+    if (assigned.value[id]) return
     checked.value = checked.value.filter(value => value !== id)
     failure.value = getErrorMessage(cause, `Could not read ${listing.title} from Airbnb.`)
   } finally {

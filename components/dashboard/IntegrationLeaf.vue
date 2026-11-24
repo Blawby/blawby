@@ -60,7 +60,7 @@
                   <span v-if="item.note" class="mt-0.5 block" :class="item.status === 'attention' ? 'text-error' : ''">{{ item.note }}</span>
                 </template>
               </UCheckbox>
-              <UButton v-if="item.action" color="neutral" variant="link" class="shrink-0 px-0" :disabled="applying" @click="emit('act', item.id)">{{ item.action }}</UButton>
+              <UButton v-for="action in item.actions ?? []" :key="action" color="neutral" variant="link" class="shrink-0 px-0" :disabled="applying" @click="emit('act', item.id, action)">{{ action }}</UButton>
               <NuxtLink v-if="item.to" :to="item.to" class="group -me-1 flex size-8 shrink-0 items-center justify-center rounded-full hover:bg-elevated" :aria-label="`Open ${item.title}`">
                 <UIcon name="i-lucide-chevron-right" class="size-5 text-muted transition-transform group-hover:translate-x-0.5" />
               </NuxtLink>
@@ -140,8 +140,8 @@ export interface IntegrationLeafItem {
   note?: string | null
   /** Its detail here, when it has one: an imported listing's home. */
   to?: string
-  /** A step the host takes on this row before it can be chosen, emitted through `act`. */
-  action?: string
+  /** Steps the host takes on this row, each emitted through `act` with its label. */
+  actions?: string[]
 }
 
 // Each organization has one connection per provider. Disconnect before connecting again.
@@ -167,8 +167,8 @@ const emit = defineEmits<{
   disconnect: []
   /** The page asks for the failed changes again. */
   retryFailed: []
-  /** A row's own step: the host presses its action and the page decides what it opens. */
-  act: [id: string]
+  /** A row's own step: the host presses one of its actions and the page decides what it opens. */
+  act: [id: string, action: string]
   /** A row is being checked; the page may need the item's details before it stays checked. */
   choose: [id: string, chosen: boolean]
 }>()

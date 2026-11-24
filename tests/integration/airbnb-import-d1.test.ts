@@ -912,8 +912,12 @@ test('a connected backup merges into the same room across accounts and keeps bil
     backup.channel.active = true
     backup.channel.properties = ['old-property']
     backup.channel.ratePlans = [{ id: 'old-mapping', rate_plan_id: 'old-rate', settings: { listing_id: 'backup' } }]
-    const arrival = addDays(today(), 10)
+    // The primary listing's imported calendar closed these nights: the backup's reservation, as Airbnb showed it.
+    const arrival = addDays(today(), 6)
     const departure = addDays(arrival, 3)
+    const importClosed = () => db.prepare("SELECT COUNT(*) AS closed FROM product_nights WHERE product_id = ? AND source = 'import' AND closed = 1 AND date >= ? AND date < ?")
+      .bind(targetId, arrival, departure).first<number>('closed')
+    assert.ok(await importClosed())
     const stay = await applyChannelBooking(db, env, ORG, source.id, {
       provider: 'channex', channel: 'airbnb', external_booking_id: 'old-booking', channel_booking_id: 'HMBACKUP', revision_id: 'old-revision',
       provider_updated_at: '2026-10-30T00:00:00Z', check_in_date: arrival, check_out_date: departure, cancelled: false,
@@ -927,11 +931,15 @@ test('a connected backup merges into the same room across accounts and keeps bil
     const ratePlan = backup.channel.ratePlans[0]!.rate_plan_id
     assert.equal(primary.ratePlans.get(ratePlan)?.room_type_id, inventory.room_type_id)
     assert.equal(primary.ratePlans.get(ratePlan)?.property_id, inventory.property_id)
+    // The listing's plan derives price, stay rules and stop-sell from the home's: only the home's plan is ever sent values.
+    const plan = primary.ratePlans.get(ratePlan)!
     assert.deepEqual(
-      [primary.ratePlans.get(ratePlan)?.parent_rate_plan_id, primary.ratePlans.get(ratePlan)?.inherit_stop_sell, primary.ratePlans.get(ratePlan)?.inherit_rate],
-      [inventory.rate_plan_id, true, false],
+      [plan.parent_rate_plan_id, plan.rate_mode, plan.inherit_rate, plan.inherit_stop_sell, plan.inherit_min_stay_arrival, plan.inherit_max_stay, plan.inherit_closed_to_arrival, plan.inherit_closed_to_departure],
+      [inventory.rate_plan_id, 'derived', true, true, true, true, true, true],
     )
-    assert.equal(primary.restrictionsByRate.get(ratePlan)?.get(addDays(today(), 1)), '129.00')
+    assert.equal(primary.restrictionsByRate.get(ratePlan), undefined)
+    // The backup's reservation now holds the nights the import closed for it, so its cancellation frees them.
+    assert.equal(await importClosed(), 0)
     assert.equal(primary.availability[arrival], 0)
     assert.equal(await countActiveHomes(db, ORG), 2)
     assert.equal(await db.prepare('SELECT active FROM products WHERE id = ?').bind(source.id).first('active'), 0)

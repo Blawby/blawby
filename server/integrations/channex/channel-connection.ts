@@ -25,7 +25,7 @@ import { PHOTO_WIDTH, minorUnits, listingCalendar, listingContent, listingDetail
 import { DETAIL_FIELDS, IMPORT_STAGES, type DetailField, type ImportStage } from '~/shared/airbnb-import'
 export type { ImportStage } from '~/shared/airbnb-import'
 import { installChannexMessages, uninstallChannexMessages } from './messages'
-import { ariRefusals, ariTask, calendarMinimumDefaults, configureStayCalendar, forgetConfirmedNights, logAriCall, type ChannexMapping } from './ari'
+import { calendarMinimumDefaults, configureStayCalendar, forgetConfirmedNights, type ChannexMapping } from './ari'
 import type { SuccessfulChannelPush } from '~/shared/channel-push'
 import { backfillChannexMessages } from '~/server/domain/guest-threads/channel-messages'
 import { publishBusinessInvalidation, publishStayInvalidation } from '~/server/cloudflare/guest-inbox-events'
@@ -576,7 +576,14 @@ export class ChannexConnection {
     return { product_id: home.product_id, stage: 'property', waiting: false }
   }
 
-  /** Connect a listing to a home that already has its provider room. The home's content stays its own. */
+  /**
+   * Connect a listing to a home that already has its provider room. The home's content stays its own.
+   * The listing sells the home's one unit through its own rate plan under the home's room type. That
+   * plan derives everything from the home's plan (Channex rate-plan inheritance): price, stay rules and
+   * stop-sell follow the home, so the home's one calendar push reaches every listing on it. A listing
+   * on another connected Airbnb account maps the same way: Channex attaches the home's property to that
+   * account's connection when the listing is mapped.
+   */
   async attach(listingId: string, productId: string): Promise<void> {
     await this.requireChannelSync()
     const row = await this.accountForListing(listingId)
@@ -585,7 +592,7 @@ export class ChannexConnection {
     if (existing && (existing.organization_id !== this.organizationId || existing.channel_id !== row.channel_id || !['complete', 'draft'].includes(existing.import_stage))) {
       fail(409, 'LISTING_ALREADY_MAPPED', 'Finish the existing listing’s setup before merging its home.')
     }
-    if (existing && await this.hasOtherChannel(existing)) fail(409, 'HOME_HAS_OTHER_LISTINGS', 'Disconnect the source home’s other listings before merging it.')
+    if (existing) await this.refuseOtherListings(existing)
     const inventory = await queryFirst<InventoryMapping>(this.db, `SELECT * FROM product_channel_mappings WHERE organization_id = ? AND product_id = ?
       AND provider = 'channex' AND import_stage = 'complete' AND enabled = 1`, [this.organizationId, productId])
     if (!inventory) fail(409, 'CHANNEL_PROPERTY_NOT_READY', 'Choose a home that already syncs with Channex.')
@@ -594,31 +601,27 @@ export class ChannexConnection {
     if (details.currency !== home.currency) fail(422, 'CURRENCY_MISMATCH', 'This listing is priced in a different currency from the home.')
     const propertyId = string(inventory.property_id, 'property_id')
     const roomId = string(inventory.room_type_id, 'room_type_id')
+    const parentId = string(inventory.rate_plan_id, 'rate_plan_id')
     const title = `Airbnb ${listingId}`
     const plans = await channexList(this.env, '/rate_plans', 'rate_plan', { 'filter[property_id]': propertyId })
     const matches = plans.filter(plan => plan.attributes.title === title && relationship(plan, 'room_type') === roomId)
     if (matches.length > 1) fail(409, 'PROVIDER_STATE_AMBIGUOUS', 'More than one Channex rate plan matches this listing.')
+    const parent = plans.find(plan => plan.id === parentId)
+    if (!parent) fail(409, 'CHANNEL_PROPERTY_NOT_READY', 'The home’s Channex rate plan is missing.')
+    const occupancy = provided(() => {
+      const primary = (Array.isArray(parent.attributes.options) ? parent.attributes.options : []).map(option => object(option, 'rate_plan.options')).filter(option => option.is_primary === true)
+      if (primary.length !== 1 || typeof primary[0]!.occupancy !== 'number') throw new ChannexDataError('The home’s rate plan must have one primary occupancy')
+      return primary[0]!.occupancy
+    })
     const plan = matches[0] ?? await channexCreate(this.env, '/rate_plans', { rate_plan: {
-      property_id: propertyId, room_type_id: roomId, title, currency: details.currency,
-      parent_rate_plan_id: string(inventory.rate_plan_id, 'rate_plan_id'),
-      inherit_stop_sell: true, inherit_rate: false, inherit_closed_to_arrival: false, inherit_closed_to_departure: false,
-      inherit_min_stay_arrival: false, inherit_min_stay_through: false, inherit_max_stay: false,
-      inherit_max_sell: false, inherit_max_availability: false, inherit_availability_offset: false,
-      rate_mode: 'manual', sell_mode: 'per_room', min_stay_arrival: details.minimum_nights,
-      options: [{ occupancy: details.default_occupancy, is_primary: true, rate: details.nightly_rate }],
+      property_id: propertyId, room_type_id: roomId, title, currency: details.currency, parent_rate_plan_id: parentId,
+      rate_mode: 'derived', sell_mode: 'per_room', options: [{ occupancy, is_primary: true, rate: 0 }],
+      inherit_rate: true, inherit_stop_sell: true, inherit_closed_to_arrival: true, inherit_closed_to_departure: true,
+      inherit_min_stay_arrival: true, inherit_min_stay_through: true, inherit_max_stay: true,
+      inherit_max_sell: true, inherit_max_availability: true, inherit_availability_offset: true,
     } }, 'rate_plan')
-    const calendar = await listingCalendar(this.env, row.channel_id, listingId, home.timezone)
-    const digits = currencyFractionDigits(details.currency)
-    const receipt = await channexRequest(this.env, '/restrictions', 'POST', { values: calendar.map(night => ({
-      property_id: propertyId, rate_plan_id: plan.id, date_from: night.date, date_to: night.date,
-      rate: (minorUnits(night.rate, details.currency) / 10 ** digits).toFixed(digits), min_stay_arrival: night.minStay, max_stay: night.maxStay,
-      closed_to_arrival: night.closedToArrival, closed_to_departure: night.closedToDeparture,
-    })) })
-    const refused = ariRefusals(receipt, 'restrictions', calendar.map(night => night.date))
-    const detail = refused.values().next().value ?? `Seeded the rates for Airbnb listing ${listingId}`
-    await logAriCall(this.db, { organizationId: this.organizationId, productId, propertyId, kind: 'restrictions',
-      status: refused.size ? 'needs_review' : 'pushed', detail, taskId: ariTask(receipt, refused.size > 0) })
-    if (refused.size) fail(502, 'PROVIDER_VERIFICATION_FAILED', detail)
+    // The new plan takes its values from the home's plan as they are sent: the listing's mapping step sends the whole calendar.
+    await forgetConfirmedNights(this.db, productId)
     if (!existing) {
       await execute(this.db, `INSERT INTO product_airbnb_listings (listing_id, organization_id, product_id, channel_id, rate_plan_id, import_stage)
         VALUES (?, ?, ?, ?, ?, 'draft')`, [listingId, this.organizationId, productId, row.channel_id, plan.id])
@@ -651,10 +654,9 @@ export class ChannexConnection {
           eventType: 'stay.updated', entityType: 'product', entityId: productId, metadata: { listing_id: listingId, merged_product_id: sourceId } }),
       ], { operation: 'Merge an Airbnb listing’s home' })
     } catch (cause) {
-      if (bookingBatchWriteRefused(cause)) fail(409, 'HOME_MERGE_CONFLICT', 'The source home changed, has a pending booking, or has an overlapping direct stay. Resolve it before merging.')
+      if (bookingBatchWriteRefused(cause)) fail(409, 'HOME_MERGE_CONFLICT', 'A booking or listing on the home being merged changed while it merged. Sync the listing again to see what is in the way.')
       throw cause
     }
-    await forgetConfirmedNights(this.db, productId)
     await publishBusinessInvalidation(this.env, this.organizationId)
   }
 
@@ -1128,6 +1130,17 @@ export class ChannexConnection {
       WHERE organization_id = ? AND listing_id = ? AND import_stage = ?`, [...entries.map(([, value]) => value), now(), this.organizationId, mapping.listing_id, mapping.listing_stage])
     if (!result.meta.changes) fail(409, 'IMPORT_CHANGED', 'The listing changed. Refresh and try again.')
     Object.assign(mapping, values, values.import_stage ? { listing_stage: values.import_stage } : {})
+  }
+
+  /** A home merges into another only with this listing alone on it: the others are named so the host can stop or move them first. */
+  private async refuseOtherListings(mapping: MappingRow): Promise<void> {
+    const others = await queryAll<{ listing_id: string; enabled: number }>(this.db, 'SELECT listing_id, enabled FROM product_airbnb_listings WHERE organization_id = ? AND product_id = ? AND listing_id <> ? ORDER BY listing_id',
+      [this.organizationId, mapping.product_id, mapping.listing_id])
+    if (others.length) {
+      fail(409, 'HOME_HAS_OTHER_LISTINGS', `This listing’s home also carries Airbnb ${others.length === 1 ? 'listing' : 'listings'} ${others.map(other => `${other.listing_id}${other.enabled ? '' : ' (stopped)'}`).join(', ')}. Move ${others.length === 1 ? 'it' : 'them'} to the chosen home too, or stop ${others.length === 1 ? 'it' : 'them'}, then merge again.`,
+        { listing_ids: others.map(other => other.listing_id) })
+    }
+    if (await this.hasVrbo(mapping)) fail(409, 'HOME_HAS_OTHER_LISTINGS', 'This listing’s home also syncs with Vrbo. Disconnect Vrbo from it, then merge again.')
   }
 
   private async hasOtherChannel(mapping: MappingRow): Promise<boolean> {

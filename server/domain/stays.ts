@@ -2177,6 +2177,7 @@ export async function mergeStayHomeQueries(db: DbClient, access: StayAccess, sou
   const org = access.organizationId
   const source = await readStayHome(db, access, sourceId)
   if (source.timezone !== target.timezone) fail(409, 'HOME_TIMEZONE_MISMATCH', 'The homes must use the same time zone before merging.', 'product_id')
+  await refuseMergeConflict(db, org, sourceId, target.product_id)
   const claims = await queryAll<{ booking_id: string; date: string }>(db, 'SELECT booking_id, date FROM stay_nights WHERE organization_id = ? AND product_id = ? ORDER BY booking_id, date', [org, sourceId])
   const json = JSON.stringify(claims)
   const turnover = await mergedHomeTurnovers(db, org, sourceId, target.product_id, homeToday(target.timezone, new Date(now)), now)
@@ -2198,6 +2199,15 @@ export async function mergeStayHomeQueries(db: DbClient, access: StayAccess, sou
           ON dst.organization_id = src.organization_id AND dst.product_id = ? AND dst.date = src.date AND dst.booking_id <> src.booking_id
           WHERE src.organization_id = bookings.organization_id AND src.booking_id = bookings.id)`,
       params: [org, sourceId, target.product_id],
+    },
+    {
+      // The kept home's calendar was imported from its own listing, which showed the merged listing's reservations as
+      // closed nights. Those reservations now hold the nights themselves, so the imported closures go: a cancellation
+      // then frees the night on both listings, as it does for a reservation Channex loads (applyChannelBooking).
+      query: `UPDATE product_nights SET closed = 0, updated_at = ? WHERE organization_id = ? AND product_id = ? AND source = 'import' AND closed = 1
+        AND date IN (SELECT n.date FROM stay_nights n JOIN bookings b ON b.organization_id = n.organization_id AND b.id = n.booking_id
+          WHERE n.organization_id = ? AND n.product_id = ? AND b.owner = 'channel' AND b.status = 'confirmed')`,
+      params: [now, org, target.product_id, org, sourceId],
     },
     { query: 'DELETE FROM stay_nights WHERE organization_id = ? AND product_id = ?', params: [org, sourceId] },
     {
@@ -2239,6 +2249,34 @@ export async function mergeStayHomeQueries(db: DbClient, access: StayAccess, sou
     ...reconcileGuestListingParticipants(org, { query: 'c.location_id = ?', params: [target.location_id] }),
     publicResourceCacheInvalidationQuery(org, 'stay-home-merge'),
   ]
+}
+
+/**
+ * The booking that stops a merge, named so the host can resolve it: a request
+ * still awaiting a decision on the source home, or a direct stay overlapping a
+ * stay on the other home. Two channel reservations on the same nights are kept
+ * and flagged overbooked instead; the batch guard repeats these checks for a
+ * booking that lands after this read.
+ */
+async function refuseMergeConflict(db: DbClient, org: string, sourceId: string, targetId: string): Promise<void> {
+  const booking = `json_extract(r.payload_json, '$.guest.name') AS guest_name, s.id, s.channel, s.starts_at, s.ends_at, s.timezone FROM bookings s
+    LEFT JOIN conversations r ON r.organization_id = s.organization_id AND r.booking_id = s.id AND r.kind = 'booking'`
+  type Named = { id: string; guest_name: string | null; channel: string; starts_at: string; ends_at: string; timezone: string }
+  const describe = (stay: Named) => `${stay.guest_name?.trim() || 'A guest'}’s ${stay.channel === 'direct' ? 'direct' : stay.channel === 'airbnb' ? 'Airbnb' : stay.channel} stay, ${bookingDay(stay.starts_at, stay.timezone)} to ${bookingDay(stay.ends_at, stay.timezone)} (booking ${stay.id})`
+  const pending = await queryFirst<Named>(db, `SELECT ${booking}
+    WHERE s.organization_id = ? AND (s.product_id = ? OR s.booked_product_id = ?) AND s.status = 'pending' ORDER BY s.starts_at LIMIT 1`, [org, sourceId, sourceId])
+  if (pending) fail(409, 'HOME_MERGE_CONFLICT', `${describe(pending)} is a request awaiting your decision on the home being merged. Accept or decline it, then merge again.`, 'product_id', { booking_id: pending.id })
+  const overlap = await queryFirst<{ source_id: string; target_id: string }>(db, `SELECT a.id AS source_id, b.id AS target_id FROM stay_nights src
+    JOIN occupied_stay_nights dst ON dst.organization_id = src.organization_id AND dst.product_id = ? AND dst.date = src.date
+    JOIN bookings a ON a.id = src.booking_id JOIN bookings b ON b.id = dst.booking_id
+    WHERE src.organization_id = ? AND src.product_id = ? AND (a.owner <> 'channel' OR b.owner <> 'channel') ORDER BY src.date LIMIT 1`, [targetId, org, sourceId])
+  if (!overlap) return
+  const [moving, staying] = await Promise.all([overlap.source_id, overlap.target_id].map(async id => {
+    const stay = await queryFirst<Named>(db, `SELECT ${booking} WHERE s.organization_id = ? AND s.id = ?`, [org, id])
+    if (!stay) throw new Error(`Booking ${id} overlapping a home merge has no row`)
+    return stay
+  }))
+  fail(409, 'HOME_MERGE_CONFLICT', `${describe(moving!)} on the home being merged overlaps ${describe(staying!)}. Change or cancel one of them, then merge again.`, 'product_id', { booking_id: moving!.id, conflicting_booking_id: staying!.id })
 }
 
 export function canReleaseStayNights(stay: Stay, now = new Date()): boolean {

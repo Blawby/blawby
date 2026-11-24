@@ -38,8 +38,7 @@
 
     <div v-else>
     <!--
-      Status that belongs to the whole dashboard — the live connection, a
-      background refresh — is one banner above the navigation, never a box
+      A failed background refresh is one banner above the navigation, never a box
       repeated inside each screen. The shell insets everything below by its height.
     -->
     <UBanner
@@ -289,12 +288,9 @@ const realtimePersonal = computed(() => !stoppingImpersonation.value && !realtim
   && /^\/dashboard\/account\/(messages|activity)(\/|$)/.test(router.currentRoute.value.path))
 const realtime = provideDashboardInvalidations(realtimeOrganizationSlug, realtimePersonal, computed(() => sessionData.value?.user.id), computed(() => session.value.isPending))
 
-// A failed background refetch leaves the shell on what it had and says so;
-// a dropped live connection leaves every screen on its last read. Either is
-// the dashboard's state, not one screen's, so it is the one banner.
-const banner = computed((): { color: 'error' | 'warning'; icon: string; title: string; action: () => void } | null => {
+// A failed shell read is actionable; socket recovery happens in the background.
+const banner = computed((): { color: 'error'; icon: string; title: string; action: () => void } | null => {
   if (shellRefetchError.value) return { color: 'error', icon: 'i-lucide-circle-alert', title: shellRefetchError.value, action: () => void retryDashboardContext() }
-  if (realtime.status.value === 'failed') return { color: 'warning', icon: 'i-lucide-wifi-off', title: 'Live updates are unavailable. What you see may be out of date.', action: realtime.connect }
   return null
 })
 

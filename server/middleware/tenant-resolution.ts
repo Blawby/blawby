@@ -828,7 +828,7 @@ export default defineHandler(async (event) => {
   const requestedSlug = previewSlug ?? aliasSlug
   const isPlatformRequest = requestedSlug === null && isPlatformHost(host, env)
   const workspaceSlug = isPlatformRequest && event.method === 'GET'
-    ? /^\/dashboard\/([a-z0-9-]+)(?:\/|$)/.exec(tenantPath)?.[1] : undefined
+    ? /^\/dashboard\/([^/]+)(?:\/|$)/.exec(tenantPath)?.[1] : undefined
   const workspaceDocument = workspaceSlug && !['account', 'app', 'onboarding', 'select-organization'].includes(workspaceSlug)
   const workspaceTenant = workspaceDocument
     ? await resolveDashboardTenant(event, workspaceSlug, tenantPath.slice(`/dashboard/${workspaceSlug}`.length)) : undefined

@@ -18,7 +18,6 @@ export interface DashboardInvalidationConnection {
   /** Heads being read before their conversation opens; an opening conversation takes its read from here. */
   conversationReads: Map<string, Promise<ConversationPage | undefined>>
   held: HeldReads
-  connect: () => void
 }
 
 export interface HeldRead {
@@ -99,7 +98,7 @@ function useInvalidationSocket(path: Readonly<Ref<string | null>>, organizationI
   // `yarn dev:worker`, staging and production; here the dashboard stays on its
   // reads instead of retrying a connection that cannot open and reporting it.
   if (import.meta.dev) {
-    return { status, readyForReuse, event: shallowRef(null), reconnectEpoch: ref(0), accessEnded: ref(0), savedReservation, conversationReads, held, connect: () => {} }
+    return { status, readyForReuse, event: shallowRef(null), reconnectEpoch: ref(0), accessEnded: ref(0), savedReservation, conversationReads, held }
   }
 
   const event = shallowRef<DashboardInvalidation | null>(null)
@@ -148,6 +147,7 @@ function useInvalidationSocket(path: Readonly<Ref<string | null>>, organizationI
 
   function scheduleHeartbeat(activeSocket: WebSocket) {
     clearHealthTimer()
+    if (document.hidden) return
     healthTimer = setTimeout(() => {
       if (socket !== activeSocket || activeSocket.readyState !== WebSocket.OPEN) return
       activeSocket.send('ping')
@@ -156,7 +156,7 @@ function useInvalidationSocket(path: Readonly<Ref<string | null>>, organizationI
   }
 
   function connect() {
-    if (!import.meta.client || stopped || !path.value) return
+    if (!import.meta.client || stopped || !path.value || !window.navigator.onLine) return
     if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return
 
     clearReconnectTimer()
@@ -167,7 +167,7 @@ function useInvalidationSocket(path: Readonly<Ref<string | null>>, organizationI
     const nextSocket = new WebSocket(url)
     socket = nextSocket
     status.value = 'connecting'
-    healthTimer = setTimeout(() => failConnection(nextSocket), CONNECT_TIMEOUT_MS)
+    if (!document.hidden) healthTimer = setTimeout(() => failConnection(nextSocket), CONNECT_TIMEOUT_MS)
 
     nextSocket.addEventListener('open', () => {
       if (socket !== nextSocket) return
@@ -256,6 +256,17 @@ function useInvalidationSocket(path: Readonly<Ref<string | null>>, organizationI
     if (!stopped && path.value) connect()
   }
 
+  function handleVisibilityChange() {
+    // Hidden pages can be suspended. Their timers cannot measure socket health.
+    clearHealthTimer()
+    if (document.hidden || stopped || !path.value) return
+    if (socket?.readyState === WebSocket.OPEN) scheduleHeartbeat(socket)
+    else if (socket?.readyState === WebSocket.CONNECTING) {
+      const activeSocket = socket
+      healthTimer = setTimeout(() => failConnection(activeSocket), CONNECT_TIMEOUT_MS)
+    } else connect()
+  }
+
   watch(path, () => { savedReservation.value = null; resetConnection() }, { flush: 'sync' })
   watch(status, value => {
     if (value !== 'open') reads.clear()
@@ -271,6 +282,7 @@ function useInvalidationSocket(path: Readonly<Ref<string | null>>, organizationI
     mounted = true
     window.addEventListener('offline', handleOffline)
     window.addEventListener('online', handleOnline)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     connect()
   })
 
@@ -278,6 +290,7 @@ function useInvalidationSocket(path: Readonly<Ref<string | null>>, organizationI
     stopped = true
     window.removeEventListener('offline', handleOffline)
     window.removeEventListener('online', handleOnline)
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
     clearReconnectTimer()
     clearHealthTimer()
     socket?.close(1000, 'Dashboard closed')
@@ -285,7 +298,7 @@ function useInvalidationSocket(path: Readonly<Ref<string | null>>, organizationI
     status.value = 'closed'
   })
 
-  return { status, readyForReuse, event, reconnectEpoch, accessEnded, savedReservation, conversationReads, held, connect }
+  return { status, readyForReuse, event, reconnectEpoch, accessEnded, savedReservation, conversationReads, held }
 }
 
 export function provideDashboardInvalidations(organizationSlug: Readonly<Ref<string | null>>, personal: Readonly<Ref<boolean>>, reader: Readonly<Ref<string | undefined>>, sessionPending: Readonly<Ref<boolean>>): DashboardInvalidationConnection {

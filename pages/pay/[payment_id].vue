@@ -273,10 +273,14 @@ const guestsLabel = (count: number) => `${count} ${t(count === 1 ? 'site.experie
 /** The months after today's, from the plan the checkout froze. */
 const laterPayments = computed(() => handoff.value?.stay?.installments?.slice(1) ?? [])
 const stayTotal = computed(() => handoff.value?.stay?.nightly.reduce((sum, price) => sum + price, 0) ?? 0)
-/** What was booked, pictured: a home for a stay, a briefcase for a consultation; a class's and a table's own pieces are still to be made (#2072). */
 function confirmedPicture(kind: string | null) {
-  return kind === 'stay' ? { image: '/images/offers/home.webp' } : kind === 'service' ? { image: '/images/offers/briefcase.webp' }
-    : { icon: kind === 'table' ? 'i-lucide-utensils' : 'i-lucide-calendar-check' }
+  switch (kind) {
+    case 'stay': return '/images/offers/home.webp'
+    case 'service': return '/images/offers/briefcase.webp'
+    case 'table': return '/images/offers/checkout-table.webp'
+    case 'experience': return '/images/offers/checkout-class.webp'
+    default: return null
+  }
 }
 // When a timed booking was made for, in its own clock.
 const bookedWhen = computed(() => {

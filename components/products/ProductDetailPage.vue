@@ -385,26 +385,33 @@
       </div>
 
       <div v-else class="rounded-2xl bg-elevated p-6 sm:p-10 lg:p-12">
-        <div :class="product.image?.public_url ? 'grid gap-10 lg:grid-cols-2 items-start' : 'max-w-3xl'">
-          <div v-if="shownImage?.public_url">
+        <div :class="product.image?.public_url ? ['grid gap-10 items-start', product.kind === 'item' ? 'lg:grid-cols-[minmax(0,1.85fr)_minmax(0,1fr)] lg:gap-12' : 'lg:grid-cols-2'] : 'max-w-3xl'">
+          <!-- An item's photos are its media column, as Shopify's Dawn lays them: the chosen variant's photo first, the rest two across beneath it. -->
+          <div v-if="shownImage?.public_url" :class="product.kind === 'item' ? 'grid grid-cols-2 gap-3' : undefined">
             <img
               :src="shownImage.public_url"
               :alt="shownImage.alt_text || product.name"
               class="aspect-square w-full rounded-2xl object-cover"
+              :class="product.kind === 'item' ? 'col-span-2' : undefined"
             >
+            <template v-if="product.kind === 'item'">
+              <img v-for="asset in otherImages" :key="asset.asset_id" :src="asset.public_url" :alt="asset.alt_text || product.name" class="aspect-square w-full rounded-2xl object-cover">
+            </template>
           </div>
-          <div class="py-2">
+          <div class="py-2" :class="product.kind === 'item' ? 'lg:sticky lg:top-24' : undefined">
             <p class="tenant-kicker">{{ collectionName }}</p>
             <h1 class="tenant-display tenant-italic mt-3 text-3xl sm:text-4xl lg:text-5xl text-default leading-tight">{{ product.name }}</h1>
             <p class="mt-2 text-sm sm:text-base text-muted">{{ location?.title ?? organizationName }}</p>
-            <ProductVariantPrices :product="product" :location-ids="[location?.id ?? null]" :currency="currency" class="mt-6 text-lg" />
-            <div v-if="!offer && priceLabel" class="mt-6 flex items-baseline gap-3 text-2xl font-semibold tabular-nums">
+            <!-- An item is priced as Shopify's product form prices it: the chosen variant's one price, never a list of every combination. -->
+            <ProductVariantPrices v-if="product.kind !== 'item'" :product="product" :location-ids="[location?.id ?? null]" :currency="currency" class="mt-6 text-lg" />
+            <div v-if="(!offer || product.kind === 'item') && priceLabel" class="mt-6 flex items-baseline gap-3 font-semibold tabular-nums" :class="product.kind === 'item' ? 'text-lg' : 'text-2xl'">
               <span v-if="compareAtLabel" class="text-base font-normal text-muted line-through">{{ compareAtLabel }}</span>
               <span>{{ priceLabel }}</span>
             </div>
-            <p v-if="product.description" class="mt-6 text-base sm:text-lg leading-relaxed text-muted">{{ product.description }}</p>
+            <p v-if="product.description && product.kind !== 'item'" class="mt-6 whitespace-pre-line text-base sm:text-lg leading-relaxed text-muted">{{ product.description }}</p>
             <p v-if="!isAvailable" class="mt-6 font-semibold text-muted">{{ t('site.common.temporarily_unavailable') }}</p>
             <ProductBuyPanel v-if="product.kind === 'item' && isAvailable && !product.order_url" :product="product" :location-id="location?.id ?? null" class="mt-8" @variant="value => chosenVariantId = value" />
+            <p v-if="product.description && product.kind === 'item'" class="mt-8 whitespace-pre-line text-base leading-relaxed text-muted">{{ product.description }}</p>
             <MembershipJoinPanel v-if="isMembership && isAvailable && !scopeRequired && (location || !product.locations.length)" :product="product" :location-id="location?.id ?? null" :currency="currency" class="mt-8 max-w-md" />
             <div v-if="product.kind !== 'item' || product.order_url" class="mt-8 flex flex-wrap items-center gap-5">
               <TenantButton v-if="canEnquire" :to="enquiryPath">{{ t('site.experience_detail.enquire') }}</TenantButton>
@@ -455,7 +462,7 @@
 
       <!-- The bookable layout already shows every photograph in its gallery;
            this strip is the card layout's only place for them. -->
-      <section v-if="!booking && !isStay && product.gallery.length" class="mt-16">
+      <section v-if="!booking && !isStay && product.kind !== 'item' && product.gallery.length" class="mt-16">
         <h2 class="tenant-display tenant-italic text-4xl">{{ t('site.footer.gallery') }}</h2>
         <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <img
@@ -686,7 +693,9 @@ const offer = computed<Price | null>(() => {
   const selection = { currency: props.currency, location_id: props.location?.id ?? null, at: new Date().toISOString() }
   // Only variants a customer can actually choose: a disabled variant's price
   // would otherwise headline an amount the selector never offers.
-  const offers = sellableVariants.value.flatMap(variant => selectPrice(variant.prices, selection) ?? [])
+  // An item's buy box has one variant chosen, and the page prices that one.
+  const chosen = props.product.kind === 'item' ? sellableVariants.value.find(variant => variant.id === chosenVariantId.value) : undefined
+  const offers = (chosen ? [chosen] : sellableVariants.value).flatMap(variant => selectPrice(variant.prices, selection) ?? [])
   return offers.reduce<Price | null>((lowest, candidate) => (!lowest || candidate.unit_amount < lowest.unit_amount ? candidate : lowest), null)
 })
 /**
@@ -732,6 +741,8 @@ const shownImage = computed(() => {
   const assetId = props.product.variants.find(variant => variant.id === chosenVariantId.value)?.media_asset_id
   return (assetId ? [props.product.image, ...props.product.gallery].find(image => image?.asset_id === assetId) : null) ?? props.product.image
 })
+const otherImages = computed(() => [props.product.image, ...props.product.gallery]
+  .filter((image, index, all): image is NonNullable<typeof image> => Boolean(image?.public_url) && image!.asset_id !== shownImage.value?.asset_id && all.findIndex(other => other?.asset_id === image!.asset_id) === index))
 
 const isAvailable = computed(() =>
   props.product.active

@@ -145,7 +145,7 @@
                     </div>
                   </template>
                 </div>
-                <p v-if="product.description" class="mt-1.5 max-w-xl text-sm leading-relaxed text-muted">
+                <p v-if="product.description" class="mt-1.5 line-clamp-2 max-w-xl text-sm leading-relaxed text-muted">
                   {{ product.description }}
                 </p>
                 <ProductVariantPrices

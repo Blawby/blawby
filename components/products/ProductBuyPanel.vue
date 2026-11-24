@@ -5,22 +5,25 @@
   -->
   <div class="space-y-6">
     <fieldset v-for="(option, index) in product.options" :key="option.name" class="space-y-2">
-      <legend class="text-sm font-semibold text-default">{{ option.name }}</legend>
+      <legend class="text-sm text-muted">{{ option.name }}</legend>
       <div class="flex flex-wrap gap-2">
         <button
           v-for="value in option.values" :key="value" type="button"
-          class="rounded-xl px-4 py-2 text-sm ring-1 transition"
-          :class="chosen[index] === value ? 'ring-2 ring-[var(--ui-text-highlighted)] text-default' : 'ring-default text-muted hover:text-default'"
+          class="rounded-full px-5 py-2 text-sm ring-1 transition"
+          :class="[chosen[index] === value ? 'bg-[var(--site-action)] text-[var(--site-on-action,#fff)] ring-[var(--site-action)]' : 'ring-default text-default hover:ring-[var(--site-action)]', unavailable(index, value) ? 'line-through opacity-60' : undefined]"
           :aria-pressed="chosen[index] === value"
           @click="choose(index, value)"
         >{{ value }}</button>
       </div>
     </fieldset>
-    <p class="text-sm text-muted">{{ stockLine }}</p>
-    <div class="flex items-center gap-3">
-      <label class="sr-only" :for="quantityId">{{ t('shop.quantity') }}</label>
-      <UInputNumber :id="quantityId" v-model="quantity" :min="1" :max="Math.max(maxQuantity, 1)" class="w-32" />
-      <TenantButton :disabled="!variant || soldOut || maxQuantity === 0" class="flex-1" @click="addToCart">{{ soldOut ? t('shop.sold_out') : t('shop.add_to_cart') }}</TenantButton>
+    <p v-if="stockLine" class="text-sm text-muted">{{ stockLine }}</p>
+    <div class="space-y-2">
+      <label class="block text-sm text-muted" :for="quantityId">{{ t('shop.quantity') }}</label>
+      <UInputNumber :id="quantityId" v-model="quantity" :min="1" :max="Math.max(maxQuantity, 1)" class="w-36" />
+    </div>
+    <div class="space-y-3">
+      <TenantButton block variant="outline" :disabled="!variant || soldOut || maxQuantity === 0" @click="addToCart">{{ soldOut ? t('shop.sold_out') : t('shop.add_to_cart') }}</TenantButton>
+      <TenantButton v-if="!soldOut" block :disabled="!variant || maxQuantity === 0" @click="buyNow">{{ t('shop.buy_now') }}</TenantButton>
     </div>
     <p v-if="added" class="text-sm text-default">
       <NuxtLink :to="localePath('/cart')" class="underline">{{ t('shop.cart') }} ({{ cart.count.value }}) · {{ t('shop.checkout') }} →</NuxtLink>
@@ -39,7 +42,10 @@ const cart = useCart(useTenantOrganization().organization.id)
 const quantityId = useId()
 
 const sellable = computed(() => props.product.variants.filter(variant => variant.active))
-const chosen = ref<string[]>(sellable.value[0]?.option_values.slice() ?? [])
+// The chosen variant is in the address, as Shopify's ?variant= is, so a shared link opens on it.
+const route = useRoute()
+const linked = sellable.value.find(entry => entry.id === route.query.variant)
+const chosen = ref<string[]>((linked ?? sellable.value[0])?.option_values.slice() ?? [])
 const variant = computed(() => props.product.options.length
   ? sellable.value.find(entry => JSON.stringify(entry.option_values) === JSON.stringify(chosen.value)) ?? null
   : sellable.value[0] ?? null)
@@ -48,6 +54,7 @@ function choose(index: number, value: string) {
   const next = chosen.value.slice()
   next[index] = value
   chosen.value = next
+  if (variant.value) void navigateTo({ query: { ...route.query, variant: variant.value.id } }, { replace: true })
 }
 
 // An order is sent from one location, so the most one order can take is the stock at the best-stocked location offering the item (or the one this page is for).
@@ -57,6 +64,15 @@ const available = computed(() => {
   const offering = new Set(props.product.locations.filter(entry => entry.active).map(entry => entry.location_id))
   return Math.max(0, ...current.inventory_levels.filter(level => offering.has(level.location_id) && (props.locationId === null || level.location_id === props.locationId)).map(level => level.available))
 })
+/** A value is struck through, as Shopify strikes it, when choosing it with the other choices kept gives no variant that can be bought. */
+function unavailable(index: number, value: string): boolean {
+  const wanted = chosen.value.map((current, position) => position === index ? value : current)
+  const match = sellable.value.find(entry => JSON.stringify(entry.option_values) === JSON.stringify(wanted))
+  if (!match) return true
+  if (!match.inventory_tracked || match.inventory_policy === 'continue') return false
+  const offering = new Set(props.product.locations.filter(entry => entry.active).map(entry => entry.location_id))
+  return !match.inventory_levels.some(level => offering.has(level.location_id) && (props.locationId === null || level.location_id === props.locationId) && level.available > 0)
+}
 const limit = computed(() => variant.value ? purchasableQuantity({ inventory_tracked: variant.value.inventory_tracked, inventory_policy: variant.value.inventory_policy, available: available.value }) : 0)
 const soldOut = computed(() => limit.value === 0)
 // What is already in the cart counts against the stock.
@@ -84,5 +100,10 @@ function addToCart() {
   if (!variant.value || soldOut.value || maxQuantity.value === 0) return
   cart.add(variant.value.id, quantity.value)
   added.value = true
+}
+// Shopify's "Buy it now": this item, straight to checkout.
+async function buyNow() {
+  addToCart()
+  if (added.value) await navigateTo(localePath('/cart'))
 }
 </script>

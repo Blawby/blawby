@@ -7,7 +7,7 @@
   <DashboardListItemDialog :title="listing.title" save-label="Done" :save-disabled="!complete" @update:open="open => { if (!open) emit('close', null) }" @save="done">
     <div class="space-y-1 text-sm text-muted">
       <p v-if="listing.subtitle">{{ listing.subtitle }}</p>
-      <p>{{ details.maxGuests }} guests · {{ details.nightlyRate }} {{ details.currency }} / night</p>
+      <p>{{ details.max_guests }} guests · {{ details.nightly_rate }} {{ details.currency }} / night</p>
     </div>
     <p class="text-sm text-muted">Airbnb didn’t include these details. Add them once; they’re saved when this listing starts syncing.</p>
 
@@ -38,12 +38,12 @@ import { TIMEZONE_OPTIONS, timezoneLabel } from '~/utils/timezone'
 /** GET …/airbnb/listings/:listingId, the part the form reads. */
 export interface AirbnbListingDetails {
   currency: string
-  maxGuests: number
-  nightlyRate: string
-  missingFields: DetailField[]
-  checkInTime: string | null
-  checkInEndTime: string | null
-  checkOutTime: string | null
+  max_guests: number
+  nightly_rate: string
+  missing_fields: DetailField[]
+  check_in_time: string | null
+  check_in_end_time: string | null
+  check_out_time: string | null
 }
 
 const props = defineProps<{
@@ -62,28 +62,28 @@ const emit = defineEmits<{ close: [values: Record<string, string> | null] }>()
 // The overlay keeps one dialog mounted across opens, so the form is rebuilt for each listing it is given.
 const values = ref<Record<string, string>>({})
 watch(() => [props.details, props.entered] as const, ([details, entered]) => {
-  values.value = Object.fromEntries(details.missingFields.map(field => [field, entered[field] ?? '']))
+  values.value = Object.fromEntries(details.missing_fields.map(field => [field, entered[field] ?? '']))
 }, { immediate: true })
 
 const LOCATION_FIELDS: DetailField[] = ['country', 'state', 'city', 'address', 'zipCode', 'timezone']
 const CONTACT_FIELDS: DetailField[] = ['email', 'phone']
 const groups = computed(() => [
-  { title: 'Location', fields: LOCATION_FIELDS.filter(field => props.details.missingFields.includes(field)) },
-  { title: 'Contact', fields: CONTACT_FIELDS.filter(field => props.details.missingFields.includes(field)) },
+  { title: 'Location', fields: LOCATION_FIELDS.filter(field => props.details.missing_fields.includes(field)) },
+  { title: 'Contact', fields: CONTACT_FIELDS.filter(field => props.details.missing_fields.includes(field)) },
 ].filter(group => group.fields.length))
 
 const timezones = TIMEZONE_OPTIONS.map(zone => ({ value: zone, label: timezoneLabel(zone) }))
 
 /** Airbnb's times as the home will have them, or null when Airbnb is missing one. */
 const stayTimes = computed(() => {
-  const { checkInTime, checkInEndTime, checkOutTime } = props.details
-  if (!checkInTime || !checkOutTime) return null
-  return `Check-in ${checkInTime}${checkInEndTime ? `–${checkInEndTime}` : ' onwards'} · Checkout ${checkOutTime}`
+  const { check_in_time, check_in_end_time, check_out_time } = props.details
+  if (!check_in_time || !check_out_time) return null
+  return `Check-in ${check_in_time}${check_in_end_time ? `–${check_in_end_time}` : ' onwards'} · Checkout ${check_out_time}`
 })
 
-const complete = computed(() => props.details.missingFields.every(field => values.value[field]?.trim()))
+const complete = computed(() => props.details.missing_fields.every(field => values.value[field]?.trim()))
 
 function done() {
-  emit('close', Object.fromEntries(props.details.missingFields.map(field => [field, values.value[field]!.trim()])))
+  emit('close', Object.fromEntries(props.details.missing_fields.map(field => [field, values.value[field]!.trim()])))
 }
 </script>

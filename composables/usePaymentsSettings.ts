@@ -2,6 +2,8 @@ import type { StripeConnectedAccount, StripeConnectStatus, StripeCapabilityStatu
 import type { ConnectPayoutMethod } from '~/server/api/dashboard/connect/index.get'
 import { isKnownBillingPlan, isNewSalePlan, type billingPlanActions } from '~/shared/billing-model'
 import { isCurrencyCode } from '~/shared/currencies'
+import { isUnpaidList } from '~/shared/unpaid'
+import { businessChanged, useDashboardInvalidations } from '~/composables/useDashboardInvalidations'
 import type { PaymentMethodRow } from '~/server/utils/billing-customer'
 import type { HomesQuote } from '~/server/utils/billing'
 
@@ -112,6 +114,17 @@ export function useConnectAccount() {
     data.value = { ...data.value, account: next }
   }
   return { connect: data, connectError: error, connectPending: pending, refreshConnect: refresh, account, payout, setAccount }
+}
+
+/** Who owes the business (#2079): the Payments row and the Unpaid leaf read one record. */
+export function useUnpaid() {
+  const route = useRoute()
+  const dashboardApi = useDashboardApi()
+  const { data, error, status, refresh } = useAsyncData(`dashboard-unpaid:${String(route.params.org_slug)}`, () => dashboardApi('/api/dashboard/payments/unpaid', { validate: isUnpaidList }), { server: false, lazy: true })
+  // A receipt, a refund or a stay change made elsewhere is read again, as Today is.
+  const realtime = useDashboardInvalidations()
+  watch(realtime.event, (event) => { if (event && businessChanged(event)) void refresh() })
+  return { unpaid: computed(() => data.value?.bookings ?? null), unpaidError: error, unpaidPending: computed(() => status.value === 'idle' || status.value === 'pending') }
 }
 
 /** Stripe's status, in the words the payout rows use. */

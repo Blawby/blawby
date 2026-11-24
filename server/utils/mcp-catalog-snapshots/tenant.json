@@ -1,7 +1,7 @@
 {
   "surface": "tenant",
-  "fingerprint": "sha256:a3d69fd2487a4bcef2159f223ff977634228c71385e1c201f1892aa83cfa6de2",
-  "documentationFingerprint": "sha256:378caea7dcf8f88f79c4739adb7a3ec64029f5f6c157f89999283d2d7be42641",
+  "fingerprint": "sha256:ebe16767bf61c785a054e5499e0c2b44f652ffc422180f1431e384f028f97a94",
+  "documentationFingerprint": "sha256:7ce221902c8838aad4b86bb652aec023c2466c5f321aa43afd75195543c6f620",
   "tools": [
     {
       "name": "add_organization_language",
@@ -43735,6 +43735,127 @@
       "uiResourceUri": null
     },
     {
+      "name": "get_airbnb_listing",
+      "title": "Get airbnb listing",
+      "description": "Read one Airbnb listing’s details and missing_fields: the fields Airbnb left out that sync_airbnb_listings needs as details to import it as a new home. This tool makes no changes.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "listing_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "organization_id": {
+            "description": "Internal organization ID from get_workspace_context or list_organizations. If omitted, uses the accessible organization saved by set_workspace_context, or the only accessible organization when no saved selection applies. Otherwise the call fails and requires a selection. Read get_workspace_context before relying on the default. A URL, domain, slug or business name is not an ID.",
+            "minLength": 1,
+            "pattern": "^[\\s\\S]*\\S[\\s\\S]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "listing_id"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "$defs": {},
+        "description": "Success fields for this operation. A failure returns MCP isError: true with text content explaining the reason; execution errors may include status, code and recovery fields. Failed results do not use this success schema.",
+        "properties": {
+          "check_in_end_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "check_in_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "check_out_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "currency": {
+            "type": "string"
+          },
+          "default_occupancy": {
+            "type": "integer"
+          },
+          "fields": {
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "max_guests": {
+            "type": "integer"
+          },
+          "minimum_nights": {
+            "type": "integer"
+          },
+          "missing_fields": {
+            "items": {
+              "enum": [
+                "timezone",
+                "email",
+                "phone",
+                "country",
+                "state",
+                "city",
+                "address",
+                "zipCode",
+                "assigned_member_id"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "nightly_rate": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "currency",
+          "max_guests",
+          "default_occupancy",
+          "nightly_rate",
+          "minimum_nights",
+          "fields",
+          "missing_fields"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Get airbnb listing"
+      },
+      "securitySchemes": [
+        {
+          "scopes": [
+            "tenant"
+          ],
+          "type": "oauth2"
+        }
+      ],
+      "domain": "airbnb",
+      "minimumRole": "admin",
+      "requiredEntitlement": null,
+      "fileParams": [],
+      "uiResourceUri": null
+    },
+    {
       "name": "get_blog_post",
       "title": "Get blog post",
       "description": "Read one blog or documentation article by ID or slug, including its ordered content_blocks and updated_at token. Use that token when editing or publishing the article.",
@@ -67342,6 +67463,271 @@
       "uiResourceUri": null
     },
     {
+      "name": "list_airbnb_listings",
+      "title": "List airbnb listings",
+      "description": "Read the listings on every connected Airbnb account, each with the home it syncs with (import.product_id), homes whose Airbnb listing has gone, and where each sync or stop asked for stands. Two listings of the same unit (a backup listing, even on a second Airbnb account) share one calendar when the backup is synced onto the primary listing’s home with sync_airbnb_listings. This tool makes no changes.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "organization_id": {
+            "description": "Internal organization ID from get_workspace_context or list_organizations. If omitted, uses the accessible organization saved by set_workspace_context, or the only accessible organization when no saved selection applies. Otherwise the call fails and requires a selection. Read get_workspace_context before relying on the default. A URL, domain, slug or business name is not an ID.",
+            "minLength": 1,
+            "pattern": "^[\\s\\S]*\\S[\\s\\S]*$",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "outputSchema": {
+        "$defs": {},
+        "description": "Success fields for this operation. A failure returns MCP isError: true with text content explaining the reason; execution errors may include status, code and recovery fields. Failed results do not use this success schema.",
+        "properties": {
+          "jobs": {
+            "items": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "sync",
+                    "stop"
+                  ],
+                  "type": "string"
+                },
+                "error": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "listing_id": {
+                  "type": "string"
+                },
+                "own_home": {
+                  "type": "boolean"
+                },
+                "product_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "stage": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "property",
+                        "room",
+                        "rate",
+                        "inventory",
+                        "verify_inventory",
+                        "content",
+                        "draft",
+                        "mapping",
+                        "activate",
+                        "reservations",
+                        "messages",
+                        "complete"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "status": {
+                  "enum": [
+                    "queued",
+                    "running",
+                    "done",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "listing_id",
+                "product_id",
+                "action",
+                "own_home",
+                "status",
+                "stage",
+                "error",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "listings": {
+            "items": {
+              "properties": {
+                "channel_id": {
+                  "description": "The connected Airbnb account the listing is on.",
+                  "type": "string"
+                },
+                "city": {
+                  "type": "string"
+                },
+                "country_code": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "import": {
+                  "description": "not_imported, or the home it syncs with: product_id, its stage, whether it syncs now, and its price against the home’s.",
+                  "properties": {
+                    "content": {
+                      "type": [
+                        "object",
+                        "null"
+                      ]
+                    },
+                    "own_rate_plan": {
+                      "description": "The listing sells through its own rate plan derived from the home’s, so set_airbnb_listing_price can set its price. False for the listing selling at the home’s own price.",
+                      "type": "boolean"
+                    },
+                    "price_adjustment": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "price_adjustment_type": {
+                      "enum": [
+                        "percent",
+                        "amount",
+                        null
+                      ],
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "product_id": {
+                      "type": "string"
+                    },
+                    "stage": {
+                      "enum": [
+                        "property",
+                        "room",
+                        "rate",
+                        "inventory",
+                        "verify_inventory",
+                        "content",
+                        "draft",
+                        "mapping",
+                        "activate",
+                        "reservations",
+                        "messages",
+                        "complete"
+                      ],
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "not_imported",
+                        "imported"
+                      ],
+                      "type": "string"
+                    },
+                    "syncing": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ],
+                  "type": "object"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "channel_id",
+                "title",
+                "city",
+                "country_code",
+                "import"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "missing_listings": {
+            "items": {
+              "properties": {
+                "internal_name": {
+                  "type": "string"
+                },
+                "listing_id": {
+                  "type": "string"
+                },
+                "product_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "listing_id",
+                "product_id",
+                "internal_name"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "listings",
+          "missing_listings",
+          "jobs"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List airbnb listings"
+      },
+      "securitySchemes": [
+        {
+          "scopes": [
+            "tenant"
+          ],
+          "type": "oauth2"
+        }
+      ],
+      "domain": "airbnb",
+      "minimumRole": "admin",
+      "requiredEntitlement": null,
+      "fileParams": [],
+      "uiResourceUri": null
+    },
+    {
       "name": "list_article_categories",
       "title": "List article categories",
       "description": "List categories and subcategories in one site blog or documentation collection, in public display order, with article and child-category counts. Published articles require a category in their collection.",
@@ -73665,6 +74051,198 @@
       ],
       "domain": "tasks",
       "minimumRole": "member",
+      "requiredEntitlement": null,
+      "fileParams": [],
+      "uiResourceUri": null
+    },
+    {
+      "name": "list_unpaid_bookings",
+      "title": "List unpaid bookings",
+      "description": "Who owes the business money, oldest first: each booking with a month of rent past its first day unpaid, a stay begun with less paid than its total, or a deposit or retainer asked for and not received. Channel reservations (Airbnb collects) and cancelled bookings never appear. Open the booking’s conversation to ask for payment; record money received with record_product_booking_payment or record_booking_deposit.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "organization_id": {
+            "description": "Internal organization ID from get_workspace_context or list_organizations. If omitted, uses the accessible organization saved by set_workspace_context, or the only accessible organization when no saved selection applies. Otherwise the call fails and requires a selection. Read get_workspace_context before relying on the default. A URL, domain, slug or business name is not an ID.",
+            "minLength": 1,
+            "pattern": "^[\\s\\S]*\\S[\\s\\S]*$",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "outputSchema": {
+        "$defs": {},
+        "description": "Success fields for this operation. A failure returns MCP isError: true with text content explaining the reason; execution errors may include status, code and recovery fields. Failed results do not use this success schema.",
+        "properties": {
+          "bookings": {
+            "items": {
+              "properties": {
+                "booking_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "conversation_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "currency": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "guest_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "items": {
+                  "items": {
+                    "properties": {
+                      "label": {
+                        "description": "What it is for: \"Rent for Dec 1 – Jan 1\", \"Stay balance\", or the deposit’s label (Security deposit, Retainer in trust).",
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "owed_minor": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "owed_since": {
+                        "description": "The local day it fell due (YYYY-MM-DD).",
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "period_end": {
+                        "description": "For rent, the next month’s first night or checkout.",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "period_start": {
+                        "description": "For rent, the month’s first night (YYYY-MM-DD).",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "reason": {
+                        "enum": [
+                          "rent",
+                          "balance",
+                          "deposit"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "reason",
+                      "label",
+                      "period_start",
+                      "period_end",
+                      "owed_minor",
+                      "owed_since"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "location_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "location_title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "owed_minor": {
+                  "description": "Everything owed now, in the smallest unit of currency.",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "owed_since": {
+                  "description": "The local day the oldest of it fell due (YYYY-MM-DD).",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "product_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "product_kind": {
+                  "description": "What was booked: an experience, legal consultation, restaurant table or place to stay.",
+                  "enum": [
+                    "dish",
+                    "experience",
+                    "service",
+                    "stay",
+                    "table",
+                    "item"
+                  ],
+                  "type": "string"
+                },
+                "product_name": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "unit": {
+                  "enum": [
+                    "nights",
+                    "slot"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "booking_id",
+                "unit",
+                "conversation_id",
+                "guest_name",
+                "product_id",
+                "product_kind",
+                "product_name",
+                "location_id",
+                "location_title",
+                "currency",
+                "owed_minor",
+                "owed_since",
+                "items"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "bookings"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List unpaid bookings"
+      },
+      "securitySchemes": [
+        {
+          "scopes": [
+            "tenant"
+          ],
+          "type": "oauth2"
+        }
+      ],
+      "domain": "bookings",
+      "minimumRole": "admin",
       "requiredEntitlement": null,
       "fileParams": [],
       "uiResourceUri": null
@@ -101714,6 +102292,97 @@
       "uiResourceUri": null
     },
     {
+      "name": "set_airbnb_listing_price",
+      "title": "Set airbnb listing price",
+      "description": "Set a listing’s price against its home’s, for a listing with own_rate_plan: the home’s nightly price changed by a whole percent (price_adjustment_type percent, e.g. -10) or an amount in minor units (amount, e.g. 1500 for +15.00), or both null to sell at the home’s price. Airbnb gets it from Channex on every price the home sends. Needs the Business plan.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "listing_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "organization_id": {
+            "description": "Internal organization ID from get_workspace_context or list_organizations. If omitted, uses the accessible organization saved by set_workspace_context, or the only accessible organization when no saved selection applies. Otherwise the call fails and requires a selection. Read get_workspace_context before relying on the default. A URL, domain, slug or business name is not an ID.",
+            "minLength": 1,
+            "pattern": "^[\\s\\S]*\\S[\\s\\S]*$",
+            "type": "string"
+          },
+          "price_adjustment": {
+            "description": "Signed and not 0; a percent is above -100 and at most 1000. null with price_adjustment_type null.",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "price_adjustment_type": {
+            "enum": [
+              "percent",
+              "amount",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "listing_id",
+          "price_adjustment_type",
+          "price_adjustment"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "$defs": {},
+        "description": "Success fields for this operation. A failure returns MCP isError: true with text content explaining the reason; execution errors may include status, code and recovery fields. Failed results do not use this success schema.",
+        "properties": {
+          "listing_id": {
+            "type": "string"
+          },
+          "price_adjustment": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "price_adjustment_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "listing_id",
+          "price_adjustment_type",
+          "price_adjustment"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Set airbnb listing price"
+      },
+      "securitySchemes": [
+        {
+          "scopes": [
+            "tenant"
+          ],
+          "type": "oauth2"
+        }
+      ],
+      "domain": "airbnb",
+      "minimumRole": "admin",
+      "requiredEntitlement": null,
+      "fileParams": [],
+      "uiResourceUri": null
+    },
+    {
       "name": "set_booking_deposit",
       "title": "Set booking deposit",
       "description": "Set the refundable deposit a booking asks for — a security deposit, or for a law firm a retainer held in trust — in the booking’s currency, or null for none. It is not part of the booking total and never counts as revenue. Recorded entries stay.",
@@ -105398,6 +106067,199 @@
       ],
       "domain": "conversations",
       "minimumRole": "member",
+      "requiredEntitlement": null,
+      "fileParams": [],
+      "uiResourceUri": null
+    },
+    {
+      "name": "sync_airbnb_listings",
+      "title": "Sync airbnb listings",
+      "description": "Start or stop syncing Airbnb listings; the work runs in the background and list_airbnb_listings reports each listing’s progress. Each sync item imports the listing as a new home (details: the missing_fields from get_airbnb_listing); or, with product_id, puts it on an existing home that already syncs, so the listings share that home’s calendar, price and stay rules; or, with own_home: true, gives a listing that shares a home its own home again (details as for an import). A listing moving off a home it shares takes its reservations that have not ended; when it is the last listing there, that home merges into the chosen one with all its bookings and conversations, so naming every listing of a home with the same product_id merges the home. stop takes homes, stop_listing_ids takes single listings; a stopped listing keeps its home and its reservations stay on that calendar. Syncing needs the Business plan.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "organization_id": {
+            "description": "Internal organization ID from get_workspace_context or list_organizations. If omitted, uses the accessible organization saved by set_workspace_context, or the only accessible organization when no saved selection applies. Otherwise the call fails and requires a selection. Read get_workspace_context before relying on the default. A URL, domain, slug or business name is not an ID.",
+            "minLength": 1,
+            "pattern": "^[\\s\\S]*\\S[\\s\\S]*$",
+            "type": "string"
+          },
+          "stop": {
+            "description": "Homes (product ids) whose Airbnb listings stop syncing.",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "stop_listing_ids": {
+            "description": "Airbnb listings that stop syncing.",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "sync": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "details": {
+                  "additionalProperties": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "description": "Only the missing_fields get_airbnb_listing reports, each as text, for a new home or own_home. Not with product_id.",
+                  "type": "object"
+                },
+                "listing_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "own_home": {
+                  "const": true,
+                  "description": "Give this listing, which shares a home, its own home again. Not with product_id.",
+                  "type": "boolean"
+                },
+                "product_id": {
+                  "description": "An existing home from list_airbnb_listings import.product_id or list_stay_homes. Leave out to import a new home.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "listing_id"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "outputSchema": {
+        "$defs": {},
+        "description": "Success fields for this operation. A failure returns MCP isError: true with text content explaining the reason; execution errors may include status, code and recovery fields. Failed results do not use this success schema.",
+        "properties": {
+          "listings": {
+            "items": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "sync",
+                    "stop"
+                  ],
+                  "type": "string"
+                },
+                "error": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "listing_id": {
+                  "type": "string"
+                },
+                "own_home": {
+                  "type": "boolean"
+                },
+                "product_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "stage": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "property",
+                        "room",
+                        "rate",
+                        "inventory",
+                        "verify_inventory",
+                        "content",
+                        "draft",
+                        "mapping",
+                        "activate",
+                        "reservations",
+                        "messages",
+                        "complete"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "status": {
+                  "enum": [
+                    "queued",
+                    "running",
+                    "done",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "listing_id",
+                "product_id",
+                "action",
+                "own_home",
+                "status",
+                "stage",
+                "error",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "listings"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Sync airbnb listings"
+      },
+      "securitySchemes": [
+        {
+          "scopes": [
+            "tenant"
+          ],
+          "type": "oauth2"
+        }
+      ],
+      "domain": "airbnb",
+      "minimumRole": "admin",
       "requiredEntitlement": null,
       "fileParams": [],
       "uiResourceUri": null

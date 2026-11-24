@@ -29,6 +29,7 @@ import {
 import { formQuestionsRevision, parseStoredFormQuestions, type FormAnswerSnapshot, type FormQuestion } from '~/shared/form-questions'
 import type { StayCancellationPolicy, StayLongTermCancellationPolicy } from '~/shared/stay-listing'
 import { prepareFormQuestionsWrite } from '~/server/domain/form-questions'
+import { depositTaskQuery } from '~/server/domain/unpaid'
 import { addLocalDays, assertCalendarDate, isValidTimezone, localDateAt, localDateTimeToInstant, localNow, MINUTE_TIME_PATTERN } from '~/utils/timezone'
 
 /**
@@ -1736,7 +1737,9 @@ export async function claimSessionCapacity(db: DbClient, input: {
   let writes: Awaited<ReturnType<typeof executeBatch>>
   try {
     writes = await executeBatch(db, [...preceding, claim, assertBookingBatchWrite({ query: 'changes() = 1' }),
-      ...(input.following?.(bookingId) ?? [])], { operation: 'Claim session capacity' })
+      ...(input.following?.(bookingId) ?? []),
+      // The offering's deposit or retainer is owed from the moment the booking stands.
+      depositTaskQuery(input.organizationId, { sql: '?', params: [bookingId] }, now)], { operation: 'Claim session capacity' })
   } catch (error) {
     if (bookingBatchWriteRefused(error)) throw new CapacityUnavailableError()
     throw error

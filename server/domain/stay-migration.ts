@@ -267,8 +267,8 @@ export async function previewStayMigration(db: DbClient, access: StayAccess, val
     }
   }
   const ready = rows.filter(row => row.stay !== null)
-  const claims = ready.length ? await queryAll<{ product_id: string; date: string; booking_id: string }>(db, `SELECT n.product_id, n.date, n.booking_id FROM stay_nights n
-    WHERE n.organization_id = ? AND n.product_id IN (SELECT value FROM json_each(?)) AND n.date >= ? AND n.date < ? AND n.booking_id IS NOT NULL`, [access.organizationId, JSON.stringify([...new Set(ready.map(row => row.product_id))]), ready.map(row => row.stay!.check_in_date).sort()[0], ready.map(row => row.stay!.check_out_date).sort().at(-1)]) : []
+  const claims = ready.length ? await queryAll<{ product_id: string; date: string; booking_id: string }>(db, `SELECT n.product_id, n.date, n.booking_id FROM occupied_stay_nights n
+    WHERE n.organization_id = ? AND n.product_id IN (SELECT value FROM json_each(?)) AND n.date >= ? AND n.date < ?`, [access.organizationId, JSON.stringify([...new Set(ready.map(row => row.product_id))]), ready.map(row => row.stay!.check_in_date).sort()[0], ready.map(row => row.stay!.check_out_date).sort().at(-1)]) : []
   for (const claim of claims) {
     const row = sourceClaims.get(`${claim.product_id}:${claim.date}`)
     if (row && row.state !== 'existing') {

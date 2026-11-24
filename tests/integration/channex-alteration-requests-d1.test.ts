@@ -44,7 +44,7 @@ class FakeChannex {
     this.revisions.set(id, {
       booking_id: booking, property_id: PROPERTY, status, ota_name: 'AirBNB', ota_reservation_code: `HM${booking}`,
       inserted_at: `2026-10-15T0${this.revisionCount}:00:00Z`, arrival_date: stay.arrival, departure_date: stay.departure, amount: stay.amount, currency: 'USD',
-      customer: { name: 'Lee', surname: 'Park', mail: null, phone: null }, occupancy: { adults: stay.adults, children: 0, infants: 0 },
+      customer: { name: 'Lee', surname: 'Park', mail: null, phone: null }, occupancy: { adults: stay.adults, children: 0, infants: 0 }, rooms: [{ rate_plan_id: 'rate-plan' }],
     })
     return id
   }

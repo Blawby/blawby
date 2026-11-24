@@ -23,6 +23,7 @@ import { GOODS_TOOLS, handleGoodsTools } from './goods'
 import { SUBMISSIONS_TOOLS, handleSubmissionsTools } from './submissions'
 import { GOOGLE_ADS_TOOLS, handleGoogleAdsTools } from './google-ads'
 import { META_ADS_TOOLS, handleMetaAdsTools } from './meta-ads'
+import { AIRBNB_TOOLS, handleAirbnbTools } from './airbnb'
 import { HTTPError } from 'nitro';
 import type { H3Event } from 'nitro'
 import { queryFirst } from '~/server/db'
@@ -74,6 +75,7 @@ export const MCP_PUBLIC_TOOLS: McpToolDefinition[] = [
   ...GOODS_TOOLS,
   ...GOOGLE_ADS_TOOLS,
   ...META_ADS_TOOLS,
+  ...AIRBNB_TOOLS,
 ].sort((a, b) => a.name.localeCompare(b.name))
 
 export const MCP_INTERNAL_TOOLS: McpToolDefinition[] = []
@@ -144,6 +146,7 @@ const DOMAIN_HANDLERS: Record<string, (_ctx: McpExecutorContext) => Promise<unkn
   goods: handleGoodsTools,
   google_ads: handleGoogleAdsTools,
   meta_ads: handleMetaAdsTools,
+  airbnb: handleAirbnbTools,
 }
 
 export async function executeMcpToolCall(

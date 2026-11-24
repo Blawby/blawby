@@ -9,5 +9,5 @@ export async function depositRequest(event: H3Event) {
   const { db, env, organization } = await getDashboardMemberContext(event, {})
   const principal = memberAccessPrincipal(organization, { env, event })
   await assertRoleAllows({ ...principal, permissions: { payments: ['refund'] } })
-  return { db, actor: { organizationId: principal.organizationId, actorId: principal.userId } }
+  return { db, env, actor: { organizationId: principal.organizationId, actorId: principal.userId } }
 }

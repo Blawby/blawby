@@ -99,7 +99,10 @@
                 <p class="font-medium text-highlighted">{{ stay.guest_name || 'Guest name not provided' }}</p>
                 <p class="mt-1 text-sm text-muted">{{ formatCalendarDate(stay.check_in_date, 'en', { month: 'short', day: 'numeric' }) }} – {{ formatCalendarDate(stay.check_out_date, 'en', { month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
               </div>
-              <span v-if="stay.channel" class="text-sm text-muted">{{ STAY_CHANNEL_LABELS[stay.channel] }}</span>
+              <span class="flex shrink-0 flex-col items-end gap-1">
+                <span v-if="(stay.owed_minor ?? 0) > 0" class="flex items-center gap-1.5 text-sm font-medium text-error" :data-owed="stay.booking_id"><span class="size-2 rounded-full bg-error" aria-hidden="true" />Payment overdue</span>
+                <span v-if="stay.channel" class="text-sm text-muted">{{ STAY_CHANNEL_LABELS[stay.channel] }}</span>
+              </span>
             </NuxtLink>
           </div>
         </template>

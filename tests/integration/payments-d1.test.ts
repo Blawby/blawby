@@ -42,6 +42,7 @@ import { approveRefundAuthorization, reconcileRefundState, requirePayment } from
 import { paymentTransactionDestination } from '../../server/domain/payments/earnings.ts'
 import { completePaymentReturn, reviewPayment, confirmPayment, paymentHandoff, preparePaymentReturn, requireClaimedPayment } from '../../server/domain/payments/intent.ts'
 import { reconcilePaymentIntent, processPaymentEvent } from '../../server/domain/payments/events.ts'
+import { readUnpaid, writeExistingPaymentTasks } from '../../server/domain/unpaid.ts'
 import { createOrderCheckout, fulfillOrder, quoteOrder, readOrder, saveShippingZone } from '../../server/domain/goods.ts'
 import { mcpFinancialApprovalErrorResult } from '../../server/utils/mcp-financial-handoff.ts'
 import { handlePaymentsTools } from '../../server/utils/mcp-tools/payments.ts'
@@ -1282,6 +1283,52 @@ test('a card is authorized, booked, then captured, and an expired payment window
   await events.drain(env, 'payment.captured')
   assert.deepEqual(calls.billed, ['krabiclaw_captured_volume:10000', 'krabiclaw_captured_volume:10000'], 'each capture is billed on the business’s meter')
   assert.equal(await db.prepare('SELECT count(*) n FROM bookings').first('n'), 2)
+ } finally { await runtime.dispose() }
+})
+
+test('a month Stripe collects closes its Today task and a refund of it reopens it, through the payment webhooks (#2079)', { timeout: 120_000 }, async t => {
+ const { db, runtime, env: bootEnv } = await boot()
+ try {
+  const env = stripeEnv(bootEnv)
+  await db.prepare("INSERT INTO stripe_connected_accounts(id,organization_id,stripe_account_id,livemode,country,status,created_at,updated_at) VALUES('connected',?,'acct_seller',0,'US','ready',?,?)").bind(ORG, NOW, NOW).run()
+  // A two-month stay booked on the site: its checkout froze the plan and paid January; February has begun unpaid.
+  await db.batch([
+   db.prepare("INSERT INTO products(kind,id,organization_id,name,slug,created_by,updated_by) VALUES('stay','home',?,'Garden flat','garden-flat','host','host')").bind(ORG),
+   db.prepare("INSERT INTO product_variants(id,organization_id,product_id,name,created_by,updated_by) VALUES('home-variant',?,'home','Night','host','host')").bind(ORG),
+   db.prepare(`INSERT INTO bookings(id,organization_id,user_id,product_id,product_variant_id,starts_at,ends_at,timezone,party_size,adults,children,infants,status,policy_json,total_minor,currency,channel,owner)
+     VALUES('lease',?,'guest','home','home-variant','2026-01-01','2026-03-01','UTC',1,1,0,0,'confirmed','{}',200000,'USD','direct','app')`).bind(ORG),
+   db.prepare(`INSERT INTO payments(id,organization_id,buyer_user_id,stripe_account_id,livemode,subject_type,subject_id,currency,amount,captured_amount,stripe_payment_intent_id,price_snapshot_json,created_at,updated_at)
+     VALUES('january',?,'guest','acct_seller',0,'booking','lease','USD',100000,100000,'pi_january',?,?,?)`).bind(ORG, JSON.stringify({ title: 'Garden flat', stay: { timezone: 'UTC' }, price: { tax_behavior: 'exclusive' }, automatic_tax: false,
+     installments: [{ period_start: '2026-01-01', period_end: '2026-02-01', amount_minor: 100000 }, { period_start: '2026-02-01', period_end: '2026-03-01', amount_minor: 100000 }] }), '2025-12-20T00:00:00.000Z', '2025-12-20T00:00:00.000Z'),
+  ])
+  // Debts from before payment tasks were stored get theirs, one per thing still to pay.
+  assert.deepEqual(await writeExistingPaymentTasks(db, ORG, { write: true }), { bookings: 1, dues: 1, owed_now: 1, open_tasks: 1 })
+  const february = () => db.prepare('SELECT status FROM tasks WHERE dedupe_key = ?').bind('payment:lease:rent:2026-02-01').first<string>('status')
+  const owes = async () => (await readUnpaid(db, { organizationId: ORG, role: 'owner' })).bookings.flatMap(booking => booking.items.map(item => [booking.booking_id, item.label, item.owed_minor]))
+  assert.deepEqual([await february(), await owes()], ['open', [['lease', 'Rent for Feb 1 – Mar 1', 100000]]])
+
+  const created = Date.parse('2026-02-01T09:00:00.000Z') / 1000
+  fakeStripe(t, (url) => {
+   if (url.pathname === '/v1/invoices/in_february') return Response.json({ id: 'in_february', object: 'invoice', livemode: false, currency: 'usd', amount_paid: 100000, description: 'Garden flat, 2026-02-01 to 2026-03-01',
+    metadata: { blawby_booking_id: 'lease', blawby_payment_id: 'january', blawby_period_start: '2026-02-01', blawby_period_end: '2026-03-01' }, total_taxes: [], status_transitions: { paid_at: created },
+    payments: { object: 'list', data: [{ status: 'paid', payment: { type: 'payment_intent', payment_intent: 'pi_february' } }] } })
+   if (url.pathname === '/v1/payment_intents/pi_february') return Response.json({ id: 'pi_february', object: 'payment_intent', livemode: false, created, currency: 'usd', amount: 100000, amount_received: 100000, status: 'succeeded',
+    latest_charge: { id: 'ch_february', object: 'charge', amount: 100000, created, receipt_url: 'https://pay.stripe.com/receipts/february', billing_details: { email: null } }, metadata: {} })
+   if (url.pathname === '/v1/refunds/re_february') return Response.json({ id: 're_february', object: 'refund', amount: 100000, currency: 'usd', status: 'succeeded', payment_intent: 'pi_february', reason: 'requested_by_customer', metadata: {} })
+   return null
+  }, {})
+  const stripe = getStripe(env)
+  const deliver = (id: string, type: string, object: Record<string, unknown>) => processPaymentEvent(db, stripe, { id, type, account: 'acct_seller', livemode: false, data: { object } } as unknown as Stripe.Event, env)
+
+  // Stripe collects February: its payment is recorded and its Today task closes in the same batch; a redelivery changes nothing.
+  for (const id of ['evt_in_february', 'evt_in_february_again']) await deliver(id, 'invoice.paid', { id: 'in_february', metadata: {} })
+  assert.equal(await db.prepare("SELECT count(*) n FROM payments WHERE subject_id = 'lease'").first('n'), 2)
+  assert.deepEqual([await february(), await owes()], ['done', []])
+
+  // February's money given back is owed again.
+  await deliver('evt_re_february', 'refund.updated', { id: 're_february', metadata: {} })
+  assert.equal(await db.prepare("SELECT refunded_amount FROM payments WHERE stripe_payment_intent_id = 'pi_february'").first('refunded_amount'), 100000)
+  assert.deepEqual([await february(), await owes()], ['open', [['lease', 'Rent for Feb 1 – Mar 1', 100000]]])
  } finally { await runtime.dispose() }
 })
 

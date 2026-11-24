@@ -768,6 +768,7 @@ export const EXPECTED_TOOL_ANNOTATIONS = {
   create_product_booking: { ...D, openWorldHint: true, idempotentHint: true },
   get_product_booking: R,
   list_product_bookings: R,
+  list_unpaid_bookings: R,
   list_product_booking_sessions: R,
   confirm_product_booking: { ...D, openWorldHint: true, idempotentHint: true },
   update_product_booking: { ...D, openWorldHint: true },
@@ -789,6 +790,12 @@ export const EXPECTED_TOOL_ANNOTATIONS = {
   record_stay_payment: { ...D, idempotentHint: true },
   delete_stay_payment: D,
   // A percent price change compounds when repeated, so the tool is not idempotent.
+  list_airbnb_listings: R,
+  get_airbnb_listing: R,
+  // Changes what Airbnb charges for the listing through Channex.
+  set_airbnb_listing_price: { ...D, openWorldHint: true, idempotentHint: true },
+  // Maps listings onto homes in Airbnb through Channex and can merge one home into another.
+  sync_airbnb_listings: { ...D, openWorldHint: true, idempotentHint: false },
   set_stay_nights: { ...D, openWorldHint: true, idempotentHint: false },
   list_message_templates: R,
   create_message_template: { ...D, openWorldHint: true },

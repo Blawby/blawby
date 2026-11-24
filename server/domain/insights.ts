@@ -364,15 +364,16 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => Promise
       { query: `SELECT p.id, p.name, p.created_at FROM products p JOIN product_stay_configs c ON c.organization_id = p.organization_id AND c.product_id = p.id
           WHERE p.organization_id = ? AND p.kind = 'stay' AND p.active = 1 ${locationId ? 'AND c.location_id = ?' : ''}`,
       params: [reader.organizationId, ...homeParams] },
-      { query: `SELECT n.product_id, n.date, n.booking_id IS NOT NULL AS booked FROM stay_nights n ${home}
-          WHERE n.organization_id = ? AND n.date BETWEEN ? AND ? AND n.booking_id IS NOT NULL`,
+      // stay_nights holds each reservation's nights once, on the home it is on; a merged home's reservations moved there with it.
+      { query: `SELECT n.product_id, n.date FROM stay_nights n ${home}
+          WHERE n.organization_id = ? AND n.date BETWEEN ? AND ?`,
       params: [...homeParams, reader.organizationId, context.range.startDate, context.range.endDate] },
       { query: `SELECT n.product_id, n.date FROM product_nights n ${home} WHERE n.organization_id = ? AND n.date BETWEEN ? AND ? AND n.closed = 1`,
       params: [...homeParams, reader.organizationId, context.range.startDate, context.range.endDate] },
     ])
-    // A home's night is open from the day it was listed, unless the calendar closed it or another site's calendar holds it.
-    const booked = new Set(held!.filter(row => num(row.booked) === 1).map(row => `${row.product_id} ${row.date}`))
-    const blocked = new Set([...held!.filter(row => num(row.booked) !== 1), ...closed!].map(row => `${row.product_id} ${row.date}`).filter(key => !booked.has(key)))
+    // A home's night is open from the day it was listed, unless the calendar closed it.
+    const booked = new Set(held!.map(row => `${row.product_id} ${row.date}`))
+    const blocked = new Set(closed!.map(row => `${row.product_id} ${row.date}`).filter(key => !booked.has(key)))
     const nights = homes!.flatMap(row => context.dates
       .filter(date => date >= localDateAt(new Date(String(row.created_at)), reader.timezone))
       .map(date => ({ product_id: String(row.id), product_name: String(row.name), date, key: `${row.id} ${date}` })))

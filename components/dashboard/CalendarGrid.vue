@@ -115,10 +115,12 @@
                   :data-stay="bar.stayId"
                   :data-channel="bar.channel"
                   :data-booked="bar.date"
+                  :data-owed="bar.owed ? 'true' : undefined"
                   @pointerenter="reservationRead.prefetch(bar.stayId)"
                   @focus="reservationRead.prefetch(bar.stayId)"
                 >
                   <ChannelMark v-if="bar.channel" :channel="bar.channel" class="-ml-1.5" />
+                  <span v-if="bar.owed" class="size-2.5 shrink-0 rounded-full bg-error ring-2 ring-white" aria-label="Payment overdue" role="img" />
                   <span class="truncate">{{ bar.label }}</span>
                 </NuxtLink>
               </div>
@@ -186,7 +188,7 @@ type Home = Pick<StayHome, 'product_id' | 'name' | 'internal_name' | 'timezone' 
 type GridStay = StayCalendarStay
 interface HomesPayload { from: string; to: string; homes: { home: Home; nights: StayNight[] }[]; bookings: GridStay[]; manage: boolean }
 interface PlacesPayload { from: string; to: string; places: { place: Place; days: PlaceDay[] }[]; manage: boolean }
-interface GridBar { key: string; date: string; column: number; span: number; label: string; title: string; to: RouteLocationRaw; stayId: string | null; channel: StayChannel | null }
+interface GridBar { key: string; date: string; column: number; span: number; label: string; title: string; to: RouteLocationRaw; stayId: string | null; channel: StayChannel | null; owed?: boolean }
 /** One day on one row as the grid draws it: its label, whether it reads open, and what holds it. */
 interface GridCell { date: string; open: boolean; held: boolean; label: string; strike: boolean; minimumOverride?: number; mark: 'pending' | 'needs_review' | null; title: string }
 interface GridRow { id: string; name: string; to: RouteLocationRaw; cells: GridCell[]; bars: GridBar[]; gaps: Map<number, { text: string; start: number; end: number }>; home?: Home; place?: Place; nights?: StayNight[]; days?: PlaceDay[] }
@@ -256,7 +258,8 @@ const isHomesPayload = (value: unknown): value is HomesPayload => isWindow(value
   && value.homes.every(entry => isRecord(entry) && isHome(entry.home) && Array.isArray(entry.nights) && entry.nights.length === windowDays.value
     && entry.nights.every((night, index) => isStayNight(night) && night.date === requestedDates.value[index]))
   && value.bookings.every(stay => isRecord(stay) && stay.unit === 'nights' && typeof stay.booking_id === 'string' && isText(stay.conversation_id) && typeof stay.product_id === 'string' && isText(stay.guest_name) && isCount(stay.adults) && isCount(stay.children)
-    && (value.manage ? Object.hasOwn(STAY_CHANNEL_LABELS, String(stay.channel)) : !('channel' in stay)) && isValidCalendarDate(stay.check_in_date) && isValidCalendarDate(stay.check_out_date))
+    && (value.manage ? Object.hasOwn(STAY_CHANNEL_LABELS, String(stay.channel)) : !('channel' in stay)) && isValidCalendarDate(stay.check_in_date) && isValidCalendarDate(stay.check_out_date)
+    && (stay.owed_minor === undefined || Number.isSafeInteger(stay.owed_minor)))
 const isPlacesPayload = (value: unknown): value is PlacesPayload => isWindow(value) && Array.isArray(value.places)
   && value.places.every(entry => isRecord(entry) && isPlace(entry.place) && Array.isArray(entry.days) && entry.days.length === windowDays.value && entry.days.every((day, index) => isPlaceDay(day) && day.date === requestedDates.value[index]))
 
@@ -321,9 +324,11 @@ const homeRows = computed<GridRow[]>(() => {
         if (last?.key.startsWith(`${holder}:`) && last.column + last.span === index + 1) { last.span += 1; return }
         const stay = staysById.value.get(holder)
         const label = stay ? `${guestName(stay)} · ${guestCount(stay)}` : 'Reserved'
-        bars.push({ key: `${holder}:${night.date}`, date: night.date, stayId: holder, channel: stay?.channel ?? null, column: index + 1, span: 1, label,
+        // Red only when the stay owes money now; paid is the normal state and carries no mark.
+        const owed = (stay?.owed_minor ?? 0) > 0
+        bars.push({ key: `${holder}:${night.date}`, date: night.date, stayId: holder, channel: stay?.channel ?? null, column: index + 1, span: 1, label, owed,
           to: stayTo(holder),
-          title: stay ? `${[label, ...(stay.channel ? [STAY_CHANNEL_LABELS[stay.channel]] : [])].join(' · ')} · ${formatCalendarDate(stay.check_in_date, 'en', { month: 'short', day: 'numeric' })} – ${formatCalendarDate(stay.check_out_date, 'en', { month: 'short', day: 'numeric' })}` : label })
+          title: stay ? `${[label, ...(stay.channel ? [STAY_CHANNEL_LABELS[stay.channel]] : []), ...(owed ? ['Payment overdue'] : [])].join(' · ')} · ${formatCalendarDate(stay.check_in_date, 'en', { month: 'short', day: 'numeric' })} – ${formatCalendarDate(stay.check_out_date, 'en', { month: 'short', day: 'numeric' })}` : label })
       })
       const gaps = unbookableGaps(nights)
       const compactPrice = new Intl.NumberFormat('en-US', {

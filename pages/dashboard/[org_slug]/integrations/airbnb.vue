@@ -58,19 +58,6 @@
       </template>
       <template #disconnect />
       <template #connected>
-        <section v-if="canManage && linkableListings.length && linkedHomes.length" class="space-y-3">
-          <h2 class="text-sm font-semibold text-muted">Share a home’s calendar</h2>
-          <UFormField label="Airbnb listing">
-            <USelect v-model="linkListing" :items="linkableListings" placeholder="Choose a listing" class="w-full" />
-          </UFormField>
-          <UFormField label="Existing home">
-            <USelect v-model="linkHome" :items="linkedHomes" placeholder="Choose a home" class="w-full" />
-          </UFormField>
-          <UButton :disabled="!linkListing || !linkHome || pending || applying || disconnecting" @click="attachListing">
-            Link listing
-          </UButton>
-        </section>
-
         <section v-if="missingListings.length" class="space-y-3">
           <div>
             <h2 class="text-sm font-semibold text-muted">Missing from Airbnb</h2>
@@ -93,6 +80,10 @@
 <script setup lang="ts">
 import IntegrationLeaf, { type IntegrationLeafConnection, type IntegrationLeafItem, type IntegrationLeafItemsStatus } from '~/components/dashboard/IntegrationLeaf.vue'
 import AirbnbListingDetailsDialog, { type AirbnbListingDetails } from '~/components/dashboard/AirbnbListingDetailsDialog.vue'
+import AirbnbExistingHomeDialog from '~/components/dashboard/AirbnbExistingHomeDialog.vue'
+import AirbnbListingPriceDialog, { type ListingPriceAdjustment } from '~/components/dashboard/AirbnbListingPriceDialog.vue'
+import { isCurrencyCode, type CurrencyCode } from '~/shared/currencies'
+import { formatMinorAmount } from '~/shared/prices'
 import DashboardConfirmDialog from '~/components/dashboard/DashboardConfirmDialog.vue'
 import OfferCard from '~/components/dashboard/OfferCard.vue'
 import { integrationDefinition, itemsApplyLabel } from '~/shared/integrations'
@@ -112,7 +103,9 @@ definePageMeta({ layout: 'dashboard' })
   as a free draft. The changes apply together from one button, after the plan
   check, and Blawby runs them in the background (sync.post, then sync.get
   until nothing is waiting). A listing Airbnb left details out of gets them in
-  its own dialog first.
+  its own dialog first. "Use existing home" syncs a listing onto a home that
+  already syncs instead (a backup listing of the same unit), so both share
+  its calendar; a listing with its own home is merged into the chosen one.
 */
 interface AirbnbAccount {
   channel_id: string | null
@@ -126,15 +119,16 @@ interface AirbnbAccount {
 
 interface AirbnbStatus extends AirbnbAccount { connections: AirbnbAccount[] }
 
-type ListingImport = { status: 'not_imported' } | { status: 'imported'; product_id: string; stage: ImportStage; syncing: boolean }
+type ListingImport = { status: 'not_imported' } | ({ status: 'imported'; product_id: string; stage: ImportStage; syncing: boolean; own_rate_plan: boolean } & ListingPriceAdjustment)
 interface AirbnbListing { id: string; channel_id: string; title: string; city: string; country_code: string; import: ListingImport }
 interface MissingAirbnbListing { listing_id: string; product_id: string; internal_name: string }
-interface SyncRequest { sync?: Array<{ listing_id: string; product_id?: string; details?: Record<string, string> }>; stop_listing_ids: string[] }
+interface SyncRequest { sync?: Array<{ listing_id: string; product_id?: string; own_home?: true; details?: Record<string, string> }>; stop_listing_ids: string[] }
 
 interface SyncChange {
   listing_id: string
   product_id: string | null
   action: 'sync' | 'stop'
+  own_home: boolean
   status: 'queued' | 'running' | 'done' | 'failed'
   stage: ImportStage | null
   error: { code: string; message: string } | null
@@ -152,6 +146,8 @@ const canManage = computed(() => dashboard.organization.value?.role.split(',').s
 const api = `/api/organizations/${integrations.organizationId}/integrations/airbnb`
 const confirmDialog = useOverlay().create(DashboardConfirmDialog)
 const detailsDialog = useOverlay().create(AirbnbListingDetailsDialog)
+const homeDialog = useOverlay().create(AirbnbExistingHomeDialog)
+const priceDialog = useOverlay().create(AirbnbListingPriceDialog)
 
 const isStage = (value: unknown): value is ImportStage => typeof value === 'string' && (IMPORT_STAGES as readonly string[]).includes(value)
 const isAccount = (value: unknown): value is AirbnbAccount =>
@@ -169,14 +165,14 @@ const isListings = (value: unknown): value is { listings: AirbnbListing[]; missi
   && Array.isArray(value.missing_listings) && value.missing_listings.every(listing => isRecord(listing)
     && typeof listing.listing_id === 'string' && typeof listing.product_id === 'string' && typeof listing.internal_name === 'string')
 const isChange = (value: unknown): value is SyncChange =>
-  isRecord(value) && typeof value.listing_id === 'string' && (value.action === 'sync' || value.action === 'stop')
+  isRecord(value) && typeof value.listing_id === 'string' && (value.action === 'sync' || value.action === 'stop') && typeof value.own_home === 'boolean'
   && ['queued', 'running', 'done', 'failed'].includes(String(value.status)) && (value.stage === null || isStage(value.stage))
   && (value.error === null || (isRecord(value.error) && typeof value.error.message === 'string'))
   && (value.status !== 'failed' || value.error !== null)
 const isChanges = (value: unknown): value is { listings: SyncChange[] } => isRecord(value) && Array.isArray(value.listings) && value.listings.every(isChange)
 const isDetails = (value: unknown): value is AirbnbListingDetails =>
-  isRecord(value) && typeof value.currency === 'string' && typeof value.maxGuests === 'number' && typeof value.nightlyRate === 'string'
-  && Array.isArray(value.missingFields) && ['checkInTime', 'checkInEndTime', 'checkOutTime'].every(key => value[key] === null || typeof value[key] === 'string')
+  isRecord(value) && typeof value.currency === 'string' && typeof value.max_guests === 'number' && typeof value.nightly_rate === 'string'
+  && Array.isArray(value.missing_fields) && ['check_in_time', 'check_in_end_time', 'check_out_time'].every(key => value[key] === null || typeof value[key] === 'string')
 const isStart = (value: unknown): value is { authorization_url: string } => isRecord(value) && typeof value.authorization_url === 'string'
 const isDisconnect = (value: unknown): value is { disconnected: boolean } => isRecord(value) && typeof value.disconnected === 'boolean'
 
@@ -202,6 +198,37 @@ function accountsListingName(channelId: string) {
   return workspace.value?.inventory?.listings.find(listing => listing.channel_id === channelId)?.title ?? 'Airbnb account'
 }
 const listings = computed(() => workspace.value?.inventory?.listings ?? [])
+type SyncedHome = { product_id: string; internal_name: string; currency: CurrencyCode; channel: { status: string } | null }
+/** Homes a listing can share: those that already sync, as iOS lists them. */
+const { data: stayHomes, error: homesError, refresh: refreshHomes } = await useAsyncData(
+  () => `integration-airbnb-homes:${integrations.organizationId}`,
+  () => connected.value && canManage.value ? dashboardApi('/api/dashboard/stay-homes', {
+    validate: (value): value is { homes: SyncedHome[] } => isRecord(value) && Array.isArray(value.homes) && value.homes.every(home => isRecord(home)
+      && typeof home.product_id === 'string' && typeof home.internal_name === 'string' && typeof home.currency === 'string' && isCurrencyCode(home.currency) && (home.channel === null || (isRecord(home.channel) && typeof home.channel.status === 'string'))),
+  }) : Promise.resolve(null),
+  { watch: [connected] },
+)
+const syncedHomes = computed(() => stayHomes.value?.homes.filter(home => home.channel?.status === 'connected') ?? [])
+/** The existing home the host chose for a listing, by listing id; sent as its product_id when the change applies. */
+const assigned = ref<Record<string, string>>({})
+/** Listings sharing a home the host chose to give their own home again; sent as own_home. */
+const ownHome = ref<string[]>([])
+const homesFor = (listing: AirbnbListing) => syncedHomes.value.filter(home => listing.import.status !== 'imported' || home.product_id !== listing.import.product_id)
+/** Another listing on the account is on this listing's home. */
+const sharesHome = (listing: AirbnbListing) => listing.import.status === 'imported'
+  && listings.value.some(other => other.id !== listing.id && other.import.status === 'imported' && other.import.product_id === (listing.import as { product_id: string }).product_id)
+const canUseExistingHome = (listing: AirbnbListing) => canManage.value && (homesFor(listing).length > 0 || sharesHome(listing))
+  && (listing.import.status === 'not_imported' || listing.import.stage === 'complete' || listing.import.stage === 'draft')
+/** A listing's price against its home's, as its row reads it. */
+function priceNote(listing: AirbnbListing): string | null {
+  if (listing.import.status !== 'imported' || !listing.import.own_rate_plan) return null
+  const { price_adjustment_type: type, price_adjustment: value } = listing.import
+  if (type === null || value === null) return 'Home’s price'
+  const currency = syncedHomes.value.find(home => home.product_id === (listing.import as { product_id: string }).product_id)?.currency
+  if (type === 'amount' && !currency) return 'Home’s price, adjusted'
+  const amount = type === 'percent' ? `${Math.abs(value)}%` : formatMinorAmount(Math.abs(value), currency!)
+  return `Home’s price ${value > 0 ? '+' : '−'} ${amount}`
+}
 const missingListings = computed(() => workspace.value?.inventory?.missing_listings ?? [])
 const listingsError = computed(() => workspace.value?.inventory_error ?? null)
 
@@ -258,8 +285,8 @@ const entered = ref<Record<string, Record<string, string>>>({})
 const details = ref<Record<string, AirbnbListingDetails>>({})
 const needsDetails = (listing: AirbnbListing) => {
   const known = details.value[listing.id]
-  return listing.import.status === 'not_imported' && known !== undefined && !entered.value[listing.id]
-    && known.missingFields.length > 0
+  return (listing.import.status === 'not_imported' || ownHome.value.includes(listing.id)) && known !== undefined && !entered.value[listing.id] && !assigned.value[listing.id]
+    && known.missing_fields.length > 0
 }
 
 /** "Backup" in the title, or a title already used by an earlier listing on the account. */
@@ -277,12 +304,17 @@ const rows = computed<IntegrationLeafItem[]>(() => listings.value.map((listing) 
     const note = job.action === 'stop' ? 'Stopping sync…' : job.status === 'queued' ? 'Waiting to sync' : job.stage ? importStageTitle(job.stage) : 'Preparing your home…'
     return { id: listing.id, title: listing.title, subtitle, status: 'pending', note, to }
   }
-  const action = fullSyncProduct(listing) ? 'Full sync' : undefined
-  if (action && fullSyncStatus.value?.id === listing.id) return { title: listing.title, subtitle, to, action, ...fullSyncStatus.value }
-  if (job?.status === 'failed') return { id: listing.id, title: listing.title, subtitle, status: 'attention', note: job.error!.message, to, action }
+  const home = syncedHomes.value.find(candidate => candidate.product_id === assigned.value[listing.id])
+  const own = ownHome.value.includes(listing.id)
+  const shares = home ? `Shares the calendar for ${home.internal_name}` : own ? 'Gets its own home' : null
+  const choice = canUseExistingHome(listing) ? [home || own ? 'Change home' : 'Use existing home'] : []
+  const price = canManage.value && entitled.value && priceNote(listing) && !home && !own ? ['Price'] : []
+  const actions = [...choice, ...price, ...(fullSyncProduct(listing) && !home && !own ? ['Full sync'] : [])]
+  if (actions.includes('Full sync') && fullSyncStatus.value?.id === listing.id) return { title: listing.title, subtitle, to, actions, ...fullSyncStatus.value }
+  if (job?.status === 'failed') return { id: listing.id, title: listing.title, subtitle, status: 'attention', note: job.error!.message, to, actions }
   if (interrupted(listing)) return { id: listing.id, title: listing.title, subtitle, status: 'attention', note: 'Setup didn’t finish · it finishes when you apply', to }
-  if (needsDetails(listing)) return { id: listing.id, title: listing.title, subtitle, status: 'not_syncing', note: hint, action: 'Add details' }
-  return { id: listing.id, title: listing.title, subtitle, status: syncing(listing) ? 'syncing' : 'not_syncing', note: listing.import.status === 'imported' && listing.import.stage === 'draft' ? 'Draft' : hint, to, action }
+  if (needsDetails(listing)) return { id: listing.id, title: listing.title, subtitle, status: 'not_syncing', note: hint, actions: [...choice, 'Add details'] }
+  return { id: listing.id, title: listing.title, subtitle, status: syncing(listing) ? 'syncing' : 'not_syncing', note: shares ?? (listing.import.status === 'imported' && listing.import.stage === 'draft' ? 'Draft' : priceNote(listing) ?? hint), to, actions }
 }))
 
 /** Listings whose details are still being read or asked for: nothing applies until each is settled. */
@@ -301,31 +333,8 @@ const itemsStatus = computed<IntegrationLeafItemsStatus | null>(() => {
 })
 
 /** Checked listings that are not syncing yet, or whose sync setup stopped part-way, and have every detail the import asks for. */
-const toSync = computed(() => listings.value.filter(listing => checked.value.includes(listing.id) && (!syncing(listing) || interrupted(listing)) && !needsDetails(listing)))
+const toSync = computed(() => listings.value.filter(listing => checked.value.includes(listing.id) && (!syncing(listing) || interrupted(listing) || assigned.value[listing.id] || ownHome.value.includes(listing.id)) && !needsDetails(listing)))
 /** Syncing listings the host unchecked. */
-const linkListing = ref<string>()
-const linkHome = ref<string>()
-const linkableListings = computed(() => listings.value.filter(listing => listing.import.status === 'not_imported' || listing.import.stage === 'complete' || listing.import.stage === 'draft')
-  .map(listing => ({ label: listing.title, value: listing.id })))
-const linkedHomes = computed(() => {
-  const source = listings.value.find(listing => listing.id === linkListing.value)?.import
-  return [...new Map(listings.value.flatMap(listing =>
-    listing.import.status === 'imported' && listing.import.syncing && (source?.status !== 'imported' || source.product_id !== listing.import.product_id)
-      ? [[listing.import.product_id, { label: listing.title, value: listing.import.product_id }] as const] : [],
-  )).values()]
-})
-watch(linkListing, () => { linkHome.value = undefined })
-async function attachListing() {
-  if (!linkListing.value || !linkHome.value) return
-  const selected = listings.value.find(listing => listing.id === linkListing.value)
-  if (!selected || (selected.import.status === 'imported' && selected.import.product_id === linkHome.value)) return
-  if (selected.import.status === 'imported' && !await confirmDialog.open({
-    title: 'Merge these homes?',
-    description: 'Blawby will move the reservations and guest conversations to the selected home and remove the duplicate home from your calendar and website.',
-    confirmLabel: 'Merge homes', cancelLabel: 'Keep separate',
-  })) return
-  await submitChanges({ sync: [{ listing_id: selected.id, product_id: linkHome.value }], stop_listing_ids: [] })
-}
 const toStop = computed(() => listings.value.filter(listing => !checked.value.includes(listing.id) && syncing(listing)))
 const applyLabel = computed(() => connected.value && !pending.value ? itemsApplyLabel(integrationDefinition('airbnb').items!, toSync.value.length, toStop.value.length) : null)
 
@@ -334,6 +343,7 @@ const failure = ref('')
 const panelError = computed(() => failure.value
   || (statusError.value ? getErrorMessage(statusError.value, 'Could not load the Airbnb connection.') : '')
   || (changesError.value ? getErrorMessage(changesError.value, 'Could not read the sync’s progress.') : '')
+  || (homesError.value ? getErrorMessage(homesError.value, 'Could not load your homes to link a listing to.') : '')
   || integrations.failure.value)
 
 /**
@@ -343,7 +353,7 @@ const panelError = computed(() => failure.value
  */
 async function choose(id: string, chosen: boolean) {
   const listing = listings.value.find(candidate => candidate.id === id)
-  if (!chosen || !listing || listing.import.status !== 'not_imported') return
+  if (!chosen || !listing || (listing.import.status !== 'not_imported' && !ownHome.value.includes(id)) || assigned.value[id]) return
   failure.value = ''
   resolving.value = new Set([...resolving.value, id])
   try {
@@ -352,8 +362,10 @@ async function choose(id: string, chosen: boolean) {
     if (!checked.value.includes(id)) return
     if (needsDetails(listing)) await addDetails(id)
   } catch (cause) {
-    checked.value = checked.value.filter(value => value !== id)
+    // A home chosen meanwhile needs none of this listing's own details: it stays chosen, and the failure is still said.
     failure.value = getErrorMessage(cause, `Could not read ${listing.title} from Airbnb.`)
+    if (assigned.value[id]) return
+    checked.value = checked.value.filter(value => value !== id)
   } finally {
     resolving.value = new Set([...resolving.value].filter(value => value !== id))
   }
@@ -387,11 +399,49 @@ async function addDetails(id: string): Promise<boolean> {
   }
 }
 
-async function actOnListing(id: string) {
+/** "Use existing home": the chosen home is held until the change applies; going back clears it. */
+async function chooseHome(listing: AirbnbListing) {
+  const own = ownHome.value.includes(listing.id)
+  const chosen = await homeDialog.open({ listing: listing.title, homes: homesFor(listing), assigned: own ? 'own' : assigned.value[listing.id] ?? null, imported: listing.import.status === 'imported', shares: sharesHome(listing) })
+  if (chosen === undefined) return
+  const { [listing.id]: _previous, ...others } = assigned.value
+  assigned.value = chosen === null || chosen === 'own' ? others : { ...others, [listing.id]: chosen }
+  ownHome.value = chosen === 'own' ? [...new Set([...ownHome.value, listing.id])] : ownHome.value.filter(id => id !== listing.id)
+  if (chosen !== null && !checked.value.includes(listing.id)) checked.value = [...checked.value, listing.id]
+  // A new home of its own, or back to importing one: a checked listing needs the details Airbnb left out, as when it is first checked.
+  if ((chosen === null || chosen === 'own') && checked.value.includes(listing.id)) await choose(listing.id, true)
+}
+
+/** A second listing's price against its home's, saved straight away. */
+async function setPrice(listing: AirbnbListing) {
+  if (listing.import.status !== 'imported') return
+  const currency = syncedHomes.value.find(home => home.product_id === (listing.import as { product_id: string }).product_id)?.currency
+  if (!currency) { failure.value = 'Could not read this listing’s home currency.'; return }
+  const chosen = await priceDialog.open({ listing: listing.title, currency, adjustment: { price_adjustment_type: listing.import.price_adjustment_type, price_adjustment: listing.import.price_adjustment } })
+  if (!chosen) return
+  applying.value = true
+  failure.value = ''
+  try {
+    await dashboardApi(`${api}/listings/${encodeURIComponent(listing.id)}`, { method: 'PATCH', body: chosen,
+      validate: (value): value is ListingPriceAdjustment & { listing_id: string } => isRecord(value) && value.listing_id === listing.id })
+    // The price is saved on its own; the checklist keeps the choices not yet applied.
+    const choices = checked.value
+    await refreshStatus()
+    checked.value = choices.filter(id => listings.value.some(candidate => candidate.id === id))
+  } catch (cause) {
+    failure.value = getErrorMessage(cause, `Could not set the price of ${listing.title}.`)
+  } finally {
+    applying.value = false
+  }
+}
+
+async function actOnListing(id: string, action: string) {
   if (applying.value || pending.value || disconnecting.value) return
   const listing = listings.value.find(candidate => candidate.id === id)
   if (!listing) return
-  if (needsDetails(listing)) { await addDetails(id); return }
+  if (action === 'Use existing home' || action === 'Change home') { await chooseHome(listing); return }
+  if (action === 'Add details') { await addDetails(id); return }
+  if (action === 'Price') { await setPrice(listing); return }
   const productId = fullSyncProduct(listing)
   if (!productId) return
   applying.value = true
@@ -412,12 +462,21 @@ async function actOnListing(id: string) {
 }
 
 /** Hands the change to Blawby, then follows its progress until nothing is waiting. */
-function apply() {
+async function apply() {
   if (!applyLabel.value) return
-  return submitChanges({
-    sync: toSync.value.map(listing => ({ listing_id: listing.id, ...(entered.value[listing.id] ? { details: entered.value[listing.id] } : {}) })),
-    stop_listing_ids: toStop.value.map(listing => listing.id),
-  })
+  const sync = toSync.value.map(listing => ({ listing_id: listing.id, ...(assigned.value[listing.id] ? { product_id: assigned.value[listing.id] }
+    : { ...(ownHome.value.includes(listing.id) ? { own_home: true as const } : {}), ...(entered.value[listing.id] ? { details: entered.value[listing.id] } : {}) }) }))
+  const linking = toSync.value.some(listing => assigned.value[listing.id])
+  const separating = toSync.value.some(listing => ownHome.value.includes(listing.id))
+  if ((linking || separating) && !await confirmDialog.open({
+    title: linking ? 'Share a home’s calendar?' : 'Give listings their own home?',
+    description: [
+      linking ? 'Listings linked to an existing home share its calendar. If a listing already has a Blawby home, its reservations and conversations move to the selected home and the duplicate is removed from the calendar and website. A listing leaving a home it shares takes only its reservations that have not ended.' : '',
+      separating ? 'A listing given its own home takes its reservations that have not ended, and those nights stay closed on the home it shared until each stay ends. Its past reservations stay with the home it shared.' : '',
+    ].filter(Boolean).join(' '),
+    confirmLabel: applyLabel.value, cancelLabel: 'Cancel',
+  })) return
+  return submitChanges({ sync, stop_listing_ids: toStop.value.map(listing => listing.id) })
 }
 
 async function submitChanges(body: SyncRequest) {
@@ -450,7 +509,9 @@ async function retryFailed() {
     for (const job of batch.sync) {
       // Listings may have been read again while an earlier dialog was open.
       const listing = listings.value.find(candidate => candidate.id === job.listing_id)
-      if (!listing || job.product_id || listing.import.status !== 'not_imported') continue
+      if (!listing || (job.product_id && !job.own_home) || (listing.import.status !== 'not_imported' && !job.own_home)) continue
+      // A page opened after the request was made holds no own-home choice; the failed job carries it.
+      if (job.own_home && !ownHome.value.includes(listing.id)) ownHome.value = [...ownHome.value, listing.id]
       // A detail the server refused is corrected in the same dialog; details still held are otherwise sent as they are.
       if (entered.value[listing.id] && job.error?.code !== 'INVALID_DETAIL') continue
       try {
@@ -471,7 +532,8 @@ async function retryFailed() {
     changes.value = await dashboardApi(`${api}/sync`, {
       method: 'POST',
       body: {
-        sync: current.sync.map(job => ({ listing_id: job.listing_id, ...(job.product_id ? { product_id: job.product_id } : entered.value[job.listing_id] ? { details: entered.value[job.listing_id] } : {}) })),
+        sync: current.sync.map(job => ({ listing_id: job.listing_id, ...(job.product_id && !job.own_home ? { product_id: job.product_id }
+          : { ...(job.own_home ? { own_home: true as const } : {}), ...(entered.value[job.listing_id] ? { details: entered.value[job.listing_id] } : {}) }) })),
         stop_listing_ids: current.stop.map(job => job.listing_id),
       },
       validate: isChanges,
@@ -494,6 +556,11 @@ async function refreshSync() {
   await Promise.all([refreshStatus(), integrations.refresh()])
   // What a listing now syncing was given is spent; a listing still waiting keeps what the host typed.
   entered.value = Object.fromEntries(Object.entries(entered.value).filter(([id]) => !listings.value.some(listing => listing.id === id && syncing(listing))))
+  // A listing now on the home chosen for it has its choice spent; one whose change failed keeps it.
+  assigned.value = Object.fromEntries(Object.entries(assigned.value).filter(([id, productId]) => !listings.value.some(listing => listing.id === id && listing.import.status === 'imported' && listing.import.product_id === productId)))
+  // A listing now alone on its home has its own home.
+  ownHome.value = ownHome.value.filter(id => listings.value.some(listing => listing.id === id && sharesHome(listing)))
+  await refreshHomes()
 }
 
 function follow(delay = 3000) {

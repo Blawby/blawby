@@ -8,6 +8,7 @@ import { localDateAt, localDateTimeToInstant } from '~/utils/timezone'
 import { quotePaymentsBillingFx, paymentsBillingBasis } from './fx'
 import type { Payment } from './index'
 import { paymentUsageEventQuery } from './usage'
+import { readStayMoney, receiptsAre, stayMoneyTaskQueries } from '~/server/domain/unpaid'
 
 /**
  * A long stay's later months (#1907). Stripe collects them: each is a draft
@@ -81,10 +82,16 @@ export async function recordInstallmentPayment(db: DbClient, stripe: Stripe, env
   if (!bookingId) throw new Error(`Invoice ${invoice.id} names no stay`)
   const first = await queryFirst<Payment>(db, "SELECT * FROM payments WHERE id = ? AND organization_id = ? AND subject_type = 'booking' AND subject_id = ?", [invoice.metadata?.blawby_payment_id, organizationId, bookingId])
   if (!first || first.stripe_account_id !== stripeAccount || Boolean(first.livemode) !== invoice.livemode) throw new Error(`Invoice ${invoice.id} names no payment of its stay`)
+  const periodStart = invoice.metadata?.blawby_period_start ?? null
+  const stay = await readStayMoney(db, organizationId, bookingId)
+  if (!stay) throw new Error(`Invoice ${invoice.id} names no stay of its business`)
   await recordPaidInvoice(db, stripe, env, invoice, {
     organizationId, stripeAccount, livemode: first.livemode, subjectType: 'booking', subjectId: bookingId, buyerUserId: first.buyer_user_id, locationId: first.location_id, currency: first.currency,
-    snapshot: { title: invoice.description, checkout_payment_id: first.id, installment: { period_start: invoice.metadata?.blawby_period_start, period_end: invoice.metadata?.blawby_period_end } },
-  })
+    snapshot: { title: invoice.description, checkout_payment_id: first.id, installment: { period_start: periodStart, period_end: invoice.metadata?.blawby_period_end } },
+  }, paymentId => [receiptsAre(organizationId, bookingId, JSON.parse(stay.offline_payments_json)), ...stayMoneyTaskQueries(organizationId, {
+    // The month this invoice paid is paid on Today, once, with the payment that records it.
+    ...stay, online_payments_json: JSON.stringify([...JSON.parse(stay.online_payments_json) as unknown[], { period_start: periodStart, captured_minor: invoice.amount_paid, refunded_minor: 0 }]),
+  }, new Date().toISOString(), { query: 'EXISTS (SELECT 1 FROM payments WHERE id = ?)', params: [paymentId] })])
 }
 
 /**

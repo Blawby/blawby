@@ -323,7 +323,8 @@ export const jwks = sqliteTable("jwks", {
 export const tasks = sqliteTable('tasks', {
   id: text().primaryKey(),
   organization_id: text().notNull().references(() => organization.id, { onDelete: 'cascade' }),
-  kind: text({ enum: ['turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance', 'order_fulfillment'] }).notNull(),
+  // payment_due: something a booking still has to pay (server/domain/unpaid.ts), written and closed by the money writes.
+  kind: text({ enum: ['turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance', 'order_fulfillment', 'payment_due'] }).notNull(),
   // A maintenance job's subject is the guest's message that reported it, when it came from one.
   subject_type: text({ enum: ['scheduled_guest_message', 'booking', 'product_session', 'message', 'order'] }),
   subject_id: text(),
@@ -350,8 +351,9 @@ export const tasks = sqliteTable('tasks', {
   index('tasks_status_due_idx').on(table.organization_id, table.status, table.due_at),
   index('tasks_member_status_due_idx').on(table.organization_id, table.assigned_member_id, table.status, table.due_at),
   index('tasks_subject_idx').on(table.subject_type, table.subject_id),
-  check('tasks_kind_check', sql`kind IN ('turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance', 'order_fulfillment')
+  check('tasks_kind_check', sql`kind IN ('turnover', 'message_delivery', 'booking_review', 'booking_change', 'custom', 'stay_ready', 'consultation_prep', 'consultation_follow_up', 'maintenance', 'order_fulfillment', 'payment_due')
     AND (subject_type IS NULL) = (subject_id IS NULL)
+    AND (kind <> 'payment_due' OR subject_type IS 'booking')
     AND (subject_type IS NULL OR subject_type IN ('scheduled_guest_message', 'booking', 'product_session', 'message', 'order'))
     AND (kind = 'order_fulfillment') = (subject_type IS 'order')
     AND (kind <> 'custom' OR subject_type IS NULL)
@@ -1194,6 +1196,11 @@ export const bookings = sqliteTable("bookings", {
 	provider_updated_at: text(),
 	overbooked: integer({ mode: "boolean" }).default(false).notNull(),
 	booked_product_id: text(),
+	// The Airbnb listing a channel reservation was sold through (the listing
+	// whose rate plan its revision names); null for other channels and for
+	// reservations landed before it was recorded. A listing given its own home
+	// again takes its future reservations with it.
+	channel_listing_id: text(),
 	// How a guest who booked on the website arrived: the attribution channel
 	// (utils/analytics-attribution.ts ATTRIBUTION_CHANNELS) of the visit the
 	// booking was made from, or of the checkout it was paid through. NULL for a
@@ -1439,6 +1446,11 @@ export const product_nights = sqliteTable("product_nights", {
 	closed_to_arrival: integer({ mode: "boolean" }).default(false).notNull(),
 	closed_to_departure: integer({ mode: "boolean" }).default(false).notNull(),
 	source: text().$type<'host' | 'import'>().notNull(),
+	// An imported closed night Airbnb reported as the listing's own reservation
+	// (availability_type 'reservation'), not a block: only these reopen when the
+	// reservation itself lands. Airbnb reports a host's block, and another
+	// listing's reservation shown through linked calendars, alike as 'busy'.
+	closed_for_reservation: integer({ mode: "boolean" }).default(false).notNull(),
 	updated_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
 	updated_by: text().notNull(),
 }, (table) => [
@@ -1631,6 +1643,11 @@ export const product_airbnb_listings = sqliteTable("product_airbnb_listings", {
 	import_content: text(),
 	import_written: text(),
 	enabled: integer({ mode: "boolean" }).default(false).notNull(),
+	// A listing with its own rate plan sells at the home's price changed by this:
+	// 'percent' (whole percent) or 'amount' (minor units), signed; both null is
+	// the home's price. Sent as the rate plan's Channex derived option.
+	price_adjustment_type: text().$type<'percent' | 'amount'>(),
+	price_adjustment: integer(),
 	created_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
 	updated_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
 }, (table) => [
@@ -1658,6 +1675,8 @@ export const airbnb_sync_jobs = sqliteTable("airbnb_sync_jobs", {
 	action: text({ enum: ["sync", "stop"] }).notNull(),
 	// The listing fields the host supplied for a sync, as JSON { field: value }: what Airbnb leaves out and the organization does not fill.
 	details: text(),
+	// A sync that gives a listing sharing a home its own home again.
+	own_home: integer({ mode: "boolean" }).default(false).notNull(),
 	state: text({ enum: ["pending", "done", "failed"] }).default("pending").notNull(),
 	requested_by: text().references(() => user.id, { onDelete: "set null" }),
 	last_error_code: text(),

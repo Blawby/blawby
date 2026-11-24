@@ -10,6 +10,7 @@ import {
   locationSurfacePath,
   parseSiteProductPath,
   presentationForSurface,
+  productSurfaceOf,
   publicLocationPath,
 } from '../../utils/product-presentation.ts'
 
@@ -36,7 +37,16 @@ test('a restaurant that also takes bookings reaches both surfaces, menu first', 
   assert.equal(catalogLabel('restaurant', counts), 'Catalog')
   assert.equal(catalogSummary('restaurant', counts), '2 dishes · 1 experience')
   // summarizeLocationProducts answers in this shape straight from SQL.
-  assert.deepEqual(counts, { total: 3, experiences: 1, dishes: 2, stays: 0 })
+  assert.deepEqual(counts, { total: 3, experiences: 1, dishes: 2, stays: 0, products: 0 })
+})
+
+const table = { kind: 'table' } as Pick<Product, 'kind'>
+
+test('a restaurant with tables reaches the menu surface alone and table has no catalog surface', () => {
+  const counts = countCatalog([dish, dish, table])
+  assert.deepEqual(counts, { total: 3, experiences: 0, dishes: 2, stays: 0, products: 0 })
+  assert.deepEqual(catalogSurfaces('restaurant', counts), ['menu'])
+  assert.equal(productSurfaceOf('restaurant', table), null)
 })
 
 test('an empty catalog invites the vertical\'s own first item', () => {
@@ -56,7 +66,7 @@ const stay = { kind: 'stay' } as Pick<Product, 'kind'>
 
 test('homes are their own surface, counted apart from products', () => {
   const counts = countCatalog([stay, stay, experience])
-  assert.deepEqual(counts, { total: 3, experiences: 1, dishes: 0, stays: 2 })
+  assert.deepEqual(counts, { total: 3, experiences: 1, dishes: 0, stays: 2, products: 0 })
   assert.deepEqual(catalogSurfaces('lodging', counts), ['stays', 'experiences'])
   assert.equal(catalogSummary('lodging', counts), '2 places to stay · 1 experience')
   assert.equal(catalogLabel('lodging', countCatalog([stay])), 'Places to stay')

@@ -24,7 +24,8 @@ import { parsePostalAddress, type PostalAddress } from '~/utils/postal-address'
 import { calculateMapUrl, coordinatesFailure } from '~/utils/location-map'
 import { visitRefundPaymentQuery, visitRefundQueries } from '~/server/domain/payments/visit-refund'
 import { cancelStayInstallments, settleInstallmentOutside } from '~/server/domain/payments/installments'
-import { enteredStayInstallments, type StayInstallment } from '~/shared/stay-installments'
+import { enteredStayInstallments } from '~/shared/stay-installments'
+import { bookingDues, closedBookingPaymentTasksQuery, receiptsAre, receiptsChanged, depositTaskQuery, stayMoney, stayMoneyColumns, stayPaymentTaskQueries, type StayMoneyRow } from '~/server/domain/unpaid'
 import { bookedPolicyFor, LONG_TERM_STAY_NIGHTS, stayCancellationRefund, type StayBookedPolicy, type StayCancellationInput } from '~/shared/stay-cancellation'
 import { executeRefund, requirePayment, type Payment } from '~/server/domain/payments'
 import { paymentsStripe } from '~/server/utils/stripe-connect'
@@ -1342,16 +1343,7 @@ export function stayDetailQuery(access: StayAccess, stayId: string): BatchQuery 
 
 /** `stay` is the stay's ID, or a SQL term for it a batch resolves (the guest's owned stay). */
 export function stayDetailSelection(organization: BatchQuery, stay: string | BatchQuery, manage: boolean, scope: ReturnType<typeof visibleHomes> = { sql: '1 = 1', params: [] }): BatchQuery {
-  const paymentColumns = manage ? `,
-    (SELECT json_group_array(json_object('id', id, 'booking_id', booking_id, 'amount_minor', amount_minor, 'currency', currency,
-      'method', method, 'paid_on', paid_on, 'reference', reference, 'note', note, 'period_start', period_start, 'created_at', created_at, 'created_by', created_by))
-      FROM (SELECT * FROM offline_payments WHERE organization_id = s.organization_id AND booking_id = s.id AND purpose = 'payment' ORDER BY paid_on, created_at)
-    ) AS offline_payments_json,
-    (SELECT json_extract(price_snapshot_json, '$.installments') FROM payments WHERE organization_id = s.organization_id AND subject_type = 'booking' AND subject_id = s.id ORDER BY created_at, id LIMIT 1) AS installments_json,
-    (SELECT json_group_array(json_object('payment_id', id, 'period_start', json_extract(price_snapshot_json, '$.installment.period_start'), 'currency', currency, 'amount_minor', amount, 'captured_minor', captured_amount,
-      'refunded_minor', refunded_amount, 'receipt_url', receipt_url, 'created_at', created_at))
-      FROM (SELECT * FROM payments WHERE organization_id = s.organization_id AND subject_type = 'booking' AND subject_id = s.id ORDER BY created_at, id)
-    ) AS online_payments_json` : ''
+  const paymentColumns = manage ? `, ${stayMoneyColumns('s')}` : ''
   return {
     query: `SELECT ${STAY_COLUMNS}, (SELECT u.image FROM user u WHERE u.id = s.user_id) AS guest_image_url ${paymentColumns}
       FROM ${STAY_FROM}
@@ -1367,41 +1359,8 @@ export function stayDetailFrom<A extends StayAccess>(access: A, row: unknown): S
   const stay = mapStay(record)
   if (!access.manage) return stayTurnover(stay) as StayDetailView<A>
   if (offline === undefined || online === undefined) throw new Error('The stay detail query did not return its payment data')
-  const payments = JSON.parse(offline) as StayPayment[]
-  const onlinePayments = JSON.parse(online) as StayOnlinePayment[]
-  // What the guest paid for the stay. A deposit, held or kept for damage, is not payment for the nights:
-  // counting what was kept turned a stay paid in full into an overpaid one.
-  const paid = payments.reduce((sum, payment) => sum + payment.amount_minor, 0) + onlinePayments.reduce((sum, payment) => sum + payment.captured_minor - payment.refunded_minor, 0)
-  const status = isChannelManagedStay(stay) ? null
-    : paid === 0 ? 'unpaid' : paid < stay.total_minor ? 'partial' : paid === stay.total_minor ? 'paid' : 'overpaid'
-  return { ...stay, guest_image_url, payments, online_payments: onlinePayments, online_payment: onlinePayments[0] ?? null, installments: stayLedger(stay, plan ?? null, onlinePayments, payments), paid_minor: paid, payment_status: status } as StayDetailView<A>
-}
-
-/**
- * Each month of a stay paid monthly against what was paid toward it: its
- * checkout payment pays the first, each Stripe invoice its own, and a receipt
- * recorded outside Stripe the month it names. A month is overdue once its
- * first day has passed in the home's clock without being paid.
- */
-function stayLedger(stay: Stay, plan: string | null, online: StayOnlinePayment[], offline: StayPayment[]): StayLedgerPeriod[] | null {
-  const periods = plan ? JSON.parse(plan) as StayInstallment[] : enteredStayInstallments(stay, online.length > 0)
-  if (!periods) return null
-  const today = localDateAt(new Date(), stay.timezone)
-  // A payment naming no month is the checkout's, which paid the first.
-  const monthOf = (payment: StayOnlinePayment) => payment.period_start ?? periods[0]!.period_start
-  const starts = new Set(periods.map(period => period.period_start))
-  const named = periods.map(period => online.filter(payment => monthOf(payment) === period.period_start)
-    .reduce((sum, payment) => sum + payment.captured_minor - payment.refunded_minor, 0)
-    + offline.filter(payment => payment.period_start === period.period_start).reduce((sum, payment) => sum + payment.amount_minor, 0))
-  // A receipt recorded for the stay as a whole, or for a month its dates no longer have, pays the oldest months first; what is left over (or refunded) is the last month's.
-  let unassigned = offline.filter(payment => payment.period_start === null || !starts.has(payment.period_start)).reduce((sum, payment) => sum + payment.amount_minor, 0)
-  return periods.map((period, index) => {
-    const applied = Math.max(0, Math.min(unassigned, period.amount_minor - named[index]!))
-    unassigned -= applied
-    const paid = named[index]! + applied + (index === periods.length - 1 ? unassigned : 0)
-    const status = paid >= period.amount_minor ? 'paid' : paid > 0 ? 'partial' : period.period_start < today ? 'overdue' : period.period_start === today ? 'due' : 'upcoming'
-    return { ...period, paid_minor: paid, status }
-  })
+  const money = stayMoney(stay, { offline_payments_json: offline, online_payments_json: online, installments_json: plan ?? null })
+  return { ...stay, guest_image_url, ...money, online_payment: money.online_payments[0] ?? null } as StayDetailView<A>
 }
 
 export async function getStay<A extends StayAccess>(db: DbClient, access: A, stayId: string): Promise<StayDetailView<A>> {
@@ -1449,6 +1408,10 @@ export interface StayCalendarStay {
   check_in_date: string
   check_out_date: string
   channel?: StayChannel
+  /** For the people who manage the business: the stay's total, what was paid toward it, and what it owes now (an overdue month, a balance once it began, a deposit not received). */
+  total_minor?: number
+  paid_minor?: number
+  owed_minor?: number
 }
 
 /**
@@ -1468,21 +1431,31 @@ export function stayCalendarQueries(membership: BatchQuery, input: { from: strin
   // The calendar keeps the stays of the homes it shows, so it reads every booked record of the business.
   return [
     ...stayHomeQueries(organization, input.productId, scope).map(query => withViewer(membership, query)),
-    withViewer(membership, bookedRecordsInRange(BATCH_VIEWER, { ...input, includeAssignedStays: true, includeCalendarGrants: true })),
+    withViewer(membership, bookedRecordsInRange(BATCH_VIEWER, { ...input, includeAssignedStays: true, includeCalendarGrants: true, includePayments: true })),
     ...homeNightsQueries(organization, homes, input.from, input.to, true).map(query => withViewer(membership, query)),
   ]
 }
 
 /** The stays among booked records that `keep` keeps and that hold a night of [from, to), as the calendar and the bookings list show them, earliest check-in first. */
-export function calendarStays(records: BookedRecordInRange[], manage: boolean, window: { from: string; to: string }, keep: (record: BookedRecordInRange) => boolean): Array<StayCalendarStay & { name: string }> {
+export function calendarStays(records: BookedRecordInRange[], manage: boolean, window: { from: string; to: string }, keep: (record: BookedRecordInRange) => boolean, now = new Date()): Array<StayCalendarStay & { name: string }> {
   return records.flatMap((record) => {
     if (record.unit !== 'nights' || record.conversation_id === null || !keep(record)) return []
     if (record.adults === null || record.children === null) throw new Error(`Stay ${record.id} has no party breakdown`)
     const stay = { unit: 'nights' as const, booking_id: record.id, conversation_id: record.viewer_seated ? record.conversation_id : null, product_id: record.product_id, status: record.status,
       guest_name: manage ? record.guest_name : stayGuestFirstName(record.guest_name), adults: record.adults, children: record.children,
-      check_in_date: bookingDay(record.starts_at, record.timezone), check_out_date: record.actual_check_out_date ?? bookingDay(record.ends_at, record.timezone), ...(manage ? { channel: record.channel } : {}), name: record.product_name }
+      check_in_date: bookingDay(record.starts_at, record.timezone), check_out_date: record.actual_check_out_date ?? bookingDay(record.ends_at, record.timezone), ...(manage ? { channel: record.channel } : {}), name: record.product_name,
+      ...stayMoneyOnCalendar(record, now) }
     return staysOverlap(stay, window.from, window.to) ? [stay] : []
   }).sort((a, b) => a.check_in_date.localeCompare(b.check_in_date) || a.booking_id.localeCompare(b.booking_id))
+}
+
+/** What the people who manage the business read of a stay's money on the calendar: its total, what was paid and what it owes now. */
+function stayMoneyOnCalendar(record: BookedRecordInRange, now: Date): Pick<StayCalendarStay, 'total_minor' | 'paid_minor' | 'owed_minor'> {
+  const { offline_payments_json: offline, online_payments_json: online, installments_json: plan, created_at: createdAt, deposit_minor: deposit, deposit_received_minor: received } = record
+  if (offline === undefined || offline === null || online === undefined || online === null || createdAt === undefined || record.total_minor === null) return {}
+  const owed = bookingDues({ ...record, created_at: createdAt, deposit_minor: deposit ?? null, deposit_received_minor: received ?? 0 },
+    { offline_payments_json: offline, online_payments_json: online, installments_json: plan ?? null }, now).filter(due => due.owed)
+  return { total_minor: record.total_minor, paid_minor: record.paid_minor, owed_minor: owed.reduce((sum, due) => sum + due.owed_minor, 0) }
 }
 
 /** The host calendar from `stayCalendarQueries`' results. */
@@ -2050,6 +2023,10 @@ export async function createStay(db: DbClient, env: StayMutationEnv & Cloudflare
   const partySize = fields.adults + fields.children
   const turnovers = turnoverTaskQueries({ organizationId: access.organizationId, now, before: null, homes: [home],
     after: { id, product_id: home.product_id, status: 'confirmed', check_in_date: fields.check_in_date, check_out_date: fields.check_out_date } })
+  // What the new stay still owes, with the receipt taken alongside it: each unpaid month of a lease, or the rest of its total.
+  const ledger = { owner: 'app' as const, channel, check_in_date: fields.check_in_date, check_out_date: fields.check_out_date, total_minor: fields.total_minor, timezone: home.timezone }
+  const owed = stayPaymentTaskQueries({ organizationId: access.organizationId, now, stay: { ...ledger, id, product_id: home.product_id, status: 'confirmed' },
+    money: stayMoney(ledger, { offline_payments_json: JSON.stringify(payment ? [{ amount_minor: payment.amount_minor, period_start: payment.period_start }] : []), online_payments_json: '[]', installments_json: null }) })
   let writes: Awaited<ReturnType<typeof executeBatch>>
   try {
     writes = await executeBatch(db, [
@@ -2069,6 +2046,8 @@ export async function createStay(db: DbClient, env: StayMutationEnv & Cloudflare
         context: access.audit, afterState: { ...fields, channel, channel_booking_id: channelBookingId }, ...(imported ? { metadata: { imported } } : {}) }),
       ...(payment ? stayPaymentInsert(access, { id, currency: home.currency, location_id: home.location_id }, payment, `${key}:payment`, now) : []),
       ...turnovers.queries,
+      ...owed,
+      depositTaskQuery(access.organizationId, { sql: '?', params: [id] }, now),
       stayDetailQuery(access, id),
     ], { operation: 'Create stay' })
   } catch (error) {
@@ -2116,7 +2095,8 @@ export async function updateStay(db: DbClient, env: StayMutationEnv, inputAccess
     stayDetailQuery(access, stayId),
     stayTurnoverHomeQuery({ query: '?', params: [access.organizationId] }, stayId, typeof input.check_in_date === 'string' ? input.check_in_date : null),
   ], { operation: 'Read stay for edit' })
-  const current = stayDetailFrom(access, prepared ? prepared.current : currentResult?.results[0])
+  const currentRow = (prepared ? prepared.current : currentResult?.results[0]) as (Record<string, unknown> & StayMoneyRow) | undefined
+  const current = stayDetailFrom(access, currentRow)
   if (current.id !== stayId || (access.listingId && current.product_id !== access.listingId)) fail(404, 'STAY_NOT_FOUND', 'That stay is not in this organization')
   if (isChannelManagedStay(current)) channelOwned(current, 'belongs to')
   if (current.status === 'cancelled') fail(409, 'STAY_NOT_EDITABLE', 'This stay is cancelled')
@@ -2146,6 +2126,10 @@ export async function updateStay(db: DbClient, env: StayMutationEnv, inputAccess
   })] : []
   const turnovers = turnoverTaskQueries({ organizationId: access.organizationId, now, before: current, homes: [home],
     after: { id: stayId, product_id: current.product_id, status: current.status, check_in_date: fields.check_in_date, check_out_date: fields.check_out_date } })
+  // New dates or a new total change what a lease owes each month, and what a stay paid at once still owes.
+  const edited = { ...current, check_in_date: fields.check_in_date, check_out_date: fields.check_out_date, total_minor: fields.total_minor }
+  const owed = stayPaymentTaskQueries({ organizationId: access.organizationId, now, stay: edited, money: stayMoney(edited, currentRow!),
+    guard: { query: 'EXISTS (SELECT 1 FROM bookings WHERE organization_id = ? AND id = ? AND version = ? AND updated_at = ?)', params: [access.organizationId, stayId, next, now] } })
   let results: Awaited<ReturnType<typeof executeBatch>>
   try {
     results = await executeBatch(db, [
@@ -2160,10 +2144,13 @@ export async function updateStay(db: DbClient, env: StayMutationEnv, inputAccess
       ...(nightsChanged ? reconcileNightsQueries(access.organizationId, stayId, { updated_at: now, version: next, product_id: current.product_id, ...window,
         check_in_date: fields.check_in_date, check_out_date: fields.check_out_date }) : []),
       ...turnovers.queries,
+      receiptsAre(access.organizationId, stayId, current.payments),
+      ...owed,
       ...ari,
       stayDetailQuery(access, stayId),
     ], { operation: 'Update stay' })
   } catch (error) {
+    if (receiptsChanged(error)) fail(409, 'PAYMENT_CHANGED', 'A payment on this stay changed while it was being edited. Reload the stay and try again.', 'version')
     if (isStayNightConflict(error) || bookingBatchWriteRefused(error)) fail(409, 'STAY_OVERLAP', 'Another stay already holds one of these nights', 'check_in_date')
     throw error
   }
@@ -2190,6 +2177,7 @@ export async function mergeStayHomeQueries(db: DbClient, access: StayAccess, sou
   const org = access.organizationId
   const source = await readStayHome(db, access, sourceId)
   if (source.timezone !== target.timezone) fail(409, 'HOME_TIMEZONE_MISMATCH', 'The homes must use the same time zone before merging.', 'product_id')
+  await refuseMergeConflict(db, org, sourceId, target.product_id)
   const claims = await queryAll<{ booking_id: string; date: string }>(db, 'SELECT booking_id, date FROM stay_nights WHERE organization_id = ? AND product_id = ? ORDER BY booking_id, date', [org, sourceId])
   const json = JSON.stringify(claims)
   const turnover = await mergedHomeTurnovers(db, org, sourceId, target.product_id, homeToday(target.timezone, new Date(now)), now)
@@ -2251,6 +2239,107 @@ export async function mergeStayHomeQueries(db: DbClient, access: StayAccess, sou
     { query: 'UPDATE products SET active = 0, updated_at = ? WHERE organization_id = ? AND id = ?', params: [now, org, sourceId] },
     ...reconcileGuestListingParticipants(org, { query: 'c.location_id = ?', params: [target.location_id] }),
     publicResourceCacheInvalidationQuery(org, 'stay-home-merge'),
+  ]
+}
+
+type NamedStay = { id: string; guest_name: string | null; channel: string; starts_at: string; ends_at: string; timezone: string }
+const NAMED_STAY = `json_extract(r.payload_json, '$.guest.name') AS guest_name, s.id, s.channel, s.starts_at, s.ends_at, s.timezone FROM bookings s
+  LEFT JOIN conversations r ON r.organization_id = s.organization_id AND r.booking_id = s.id AND r.kind = 'booking'`
+const describeStay = (stay: NamedStay) => `${stay.guest_name?.trim() || 'A guest'}’s ${stay.channel === 'direct' ? 'direct' : stay.channel === 'airbnb' ? 'Airbnb' : stay.channel} stay, ${bookingDay(stay.starts_at, stay.timezone)} to ${bookingDay(stay.ends_at, stay.timezone)} (booking ${stay.id})`
+
+/** The moving nights (`src`, filtered by `moving`) that land on a direct stay at the target, or a direct stay that lands on one there. */
+const MOVE_OVERLAP = (moving: string) => `FROM stay_nights src
+  JOIN occupied_stay_nights dst ON dst.organization_id = src.organization_id AND dst.product_id = ? AND dst.date = src.date AND dst.booking_id <> src.booking_id
+  JOIN bookings a ON a.id = src.booking_id JOIN bookings b ON b.id = dst.booking_id
+  WHERE src.organization_id = ? AND ${moving} AND (a.owner <> 'channel' OR b.owner <> 'channel')`
+
+/**
+ * The stay that stops a move of stays to another home, named so the host can
+ * resolve it: one moving onto a direct stay there, or a direct stay moving onto
+ * one. Two channel reservations on the same nights are kept and flagged
+ * overbooked instead; the batch guard repeats this for a booking landing after
+ * this read.
+ */
+async function refuseMoveOverlap(db: DbClient, org: string, moving: { sql: string; params: unknown[] }, targetId: string, code: string, what: string): Promise<void> {
+  const overlap = await queryFirst<{ source_id: string; target_id: string }>(db, `SELECT a.id AS source_id, b.id AS target_id ${MOVE_OVERLAP(moving.sql)} ORDER BY src.date LIMIT 1`, [targetId, org, ...moving.params])
+  if (!overlap) return
+  const [from, onto] = await Promise.all([overlap.source_id, overlap.target_id].map(async id => {
+    const stay = await queryFirst<NamedStay>(db, `SELECT ${NAMED_STAY} WHERE s.organization_id = ? AND s.id = ?`, [org, id])
+    if (!stay) throw new Error(`Booking ${id} overlapping a move between homes has no row`)
+    return stay
+  }))
+  fail(409, code, `${describeStay(from!)} ${what} overlaps ${describeStay(onto!)}. Change or cancel one of them, then try again.`, 'product_id', { booking_id: from!.id, conflicting_booking_id: onto!.id })
+}
+
+/**
+ * The booking that stops a merge, named so the host can resolve it: a request
+ * still awaiting a decision on the source home, or a direct stay overlapping a
+ * stay on the other home.
+ */
+async function refuseMergeConflict(db: DbClient, org: string, sourceId: string, targetId: string): Promise<void> {
+  const pending = await queryFirst<NamedStay>(db, `SELECT ${NAMED_STAY}
+    WHERE s.organization_id = ? AND (s.product_id = ? OR s.booked_product_id = ?) AND s.status = 'pending' ORDER BY s.starts_at LIMIT 1`, [org, sourceId, sourceId])
+  if (pending) fail(409, 'HOME_MERGE_CONFLICT', `${describeStay(pending)} is a request awaiting your decision on the home being merged. Accept or decline it, then merge again.`, 'product_id', { booking_id: pending.id })
+  await refuseMoveOverlap(db, org, { sql: 'src.product_id = ?', params: [sourceId] }, targetId, 'HOME_MERGE_CONFLICT', 'on the home being merged')
+}
+
+/**
+ * Move the reservations an Airbnb listing sold that have not ended yet from
+ * the home it leaves to the home it now sells (the listing moved, or was given
+ * its own home). They are the listing's guests, so they sleep where the listing
+ * now is. Each keeps the home it left as its booked home: Channex took those
+ * nights off that home's room when the guest booked and keeps sending the
+ * reservation's changes there, so it stays unavailable on both until the stay
+ * ends or is cancelled (the moved-reservation rule of occupied_stay_nights).
+ * Its conversation follows it; the channel thread stays with the home Channex
+ * sends it through. Reservations that already ended stay where they happened.
+ */
+export async function moveListingStaysQueries(db: DbClient, access: StayAccess, listingId: string, sourceId: string, target: StayHome, now: string): Promise<BatchQuery[]> {
+  requireManager(access)
+  const org = access.organizationId
+  const moving = `SELECT id FROM bookings WHERE organization_id = ? AND product_id = ? AND channel_listing_id = ? AND owner = 'channel' AND status = 'confirmed' AND ends_at > ?`
+  const movingParams = [org, sourceId, listingId, now]
+  const ids = (await queryAll<{ id: string }>(db, `${moving} ORDER BY id`, movingParams)).map(row => row.id)
+  if (!ids.length) return []
+  const set = JSON.stringify(ids)
+  const inSet = 'src.booking_id IN (SELECT value FROM json_each(?))'
+  await refuseMoveOverlap(db, org, { sql: inSet, params: [set] }, target.product_id, 'LISTING_MOVE_CONFLICT', 'moving with the listing')
+  const claims = JSON.stringify(await queryAll<{ booking_id: string; date: string }>(db,
+    'SELECT booking_id, date FROM stay_nights WHERE organization_id = ? AND booking_id IN (SELECT value FROM json_each(?)) ORDER BY booking_id, date', [org, set]))
+  return [
+    assertBookingBatchWrite({
+      query: `(SELECT json_group_array(id) FROM (${moving} ORDER BY id)) = ?
+        AND (SELECT json_group_array(json_object('booking_id', booking_id, 'date', date)) FROM
+          (SELECT booking_id, date FROM stay_nights WHERE organization_id = ? AND booking_id IN (SELECT value FROM json_each(?)) ORDER BY booking_id, date)) = ?
+        AND NOT EXISTS (SELECT 1 ${MOVE_OVERLAP(inSet)})`,
+      params: [...movingParams, set, org, set, claims, target.product_id, org, set],
+    }),
+    {
+      query: `UPDATE bookings SET overbooked = 1 WHERE organization_id = ? AND id IN (SELECT value FROM json_each(?))
+        AND EXISTS (SELECT 1 FROM stay_nights src JOIN occupied_stay_nights dst
+          ON dst.organization_id = src.organization_id AND dst.product_id = ? AND dst.date = src.date AND dst.booking_id <> src.booking_id
+          WHERE src.organization_id = bookings.organization_id AND src.booking_id = bookings.id)`,
+      params: [org, set, target.product_id],
+    },
+    { query: 'DELETE FROM stay_nights WHERE organization_id = ? AND booking_id IN (SELECT value FROM json_each(?))', params: [org, set] },
+    { query: `UPDATE conversations SET location_id = ? WHERE organization_id = ? AND booking_id IN (SELECT value FROM json_each(?))`, params: [target.location_id, org, set] },
+    { query: `UPDATE tasks SET product_id = ?, location_id = ?, version = version + 1, updated_at = ?
+        WHERE organization_id = ? AND subject_type = 'booking' AND subject_id IN (SELECT value FROM json_each(?))`, params: [target.product_id, target.location_id, now, org, set] },
+    { query: `UPDATE scheduled_guest_messages SET product_id = ?, updated_at = ? WHERE organization_id = ? AND booking_id IN (SELECT value FROM json_each(?))`,
+      params: [target.product_id, now, org, set] },
+    {
+      query: `UPDATE bookings SET product_id = ?, product_variant_id = ?, location_id = ?,
+        booked_product_id = NULLIF(COALESCE(booked_product_id, ?), ?), version = version + 1, updated_at = ?
+        WHERE organization_id = ? AND id IN (SELECT value FROM json_each(?))`,
+      params: [target.product_id, target.variant_id, target.location_id, sourceId, target.product_id, now, org, set],
+    },
+    {
+      query: `INSERT INTO stay_nights (organization_id, product_id, date, booking_id)
+        SELECT ?, ?, json_extract(value, '$.date'), json_extract(value, '$.booking_id') FROM json_each(?)`,
+      params: [org, target.product_id, claims],
+    },
+    ...reconcileGuestListingParticipants(org, { query: 'c.location_id = ?', params: [target.location_id] }),
+    publicResourceCacheInvalidationQuery(org, 'stay-listing-move'),
   ]
 }
 
@@ -2329,6 +2418,7 @@ function stayCancellationQueries(organizationId: string, stay: Stay, now: string
         entityType: 'stay', entityId: stay.id, metadata: input.metadata, onlyIfPreviousChangedOneRow: true }),
       ...stayNightReleaseQueries(stay, organizationId, now),
       ...queries,
+      closedBookingPaymentTasksQuery(organizationId, stay.id, now),
     ], keys,
   }
 }
@@ -2730,9 +2820,12 @@ function stayPaymentInsert(access: StayAccess, stay: { id: string; currency: str
   ]
 }
 
+
 export async function recordStayPayment(db: DbClient, env: CloudflareEnv, access: StayAccess, stayId: string, input: Record<string, unknown>): Promise<{ stay: StayDetail; payment: StayPayment }> {
   requireManager(access)
-  const stay = await getStay(db, access, stayId)
+  const { query, params } = stayDetailQuery(access, stayId)
+  const row = await queryFirst<Record<string, unknown> & StayMoneyRow>(db, query, params)
+  const stay = stayDetailFrom(access, row)
   if (isChannelManagedStay(stay)) channelOwned(stay, 'is paid through')
   if (stay.request_status) fail(409, 'STAY_REQUEST_PENDING', 'The guest pays for this stay online after approval.', 'booking_id')
   const payment = stayPaymentFields(input, '', true)
@@ -2762,9 +2855,14 @@ export async function recordStayPayment(db: DbClient, env: CloudflareEnv, access
   }
   const earlier = await replay()
   if (earlier) return settle(earlier)
+  // The stay as this receipt leaves it: the month it pays, or the oldest months, closes on Today.
+  const paid = stayDetailFrom(access, { ...row!, offline_payments_json: JSON.stringify([...JSON.parse(row!.offline_payments_json) as StayPayment[], { amount_minor: payment.amount_minor, period_start: payment.period_start }]) })
+  const now = new Date().toISOString()
   try {
-    await executeBatch(db, stayPaymentInsert(access, stay, payment, key, new Date().toISOString()), { operation: 'Record stay payment' })
+    await executeBatch(db, [...stayPaymentInsert(access, stay, payment, key, now), receiptsAre(access.organizationId, stayId, paid.payments),
+      ...stayPaymentTaskQueries({ organizationId: access.organizationId, stay: paid, money: paid, now })], { operation: 'Record stay payment' })
   } catch (error) {
+    if (receiptsChanged(error)) fail(409, 'PAYMENT_CHANGED', 'Another payment was recorded on this stay at the same time. Reload the stay and record this payment again.', 'payment_id')
     if (/UNIQUE constraint failed: offline_payments\.organization_id, offline_payments\.idempotency_key/.test(error instanceof Error ? error.message : String(error))) {
       const concurrent = await replay()
       if (concurrent) return settle(concurrent)
@@ -2787,10 +2885,18 @@ export async function deleteStayPayment(db: DbClient, env: CloudflareEnv, access
   // in place and the same delete retries the same Stripe writes; the delete commits only once Stripe holds the month.
   const without = stayDetailFrom(access, { ...row!, offline_payments_json: JSON.stringify((JSON.parse(row!.offline_payments_json!) as StayPayment[]).filter(payment => payment.id !== paymentId)) })
   await settleMonthsOutside(db, env, access, without, removed, `delete:${paymentId}`)
-  await executeBatch(db, [
-    { query: 'DELETE FROM offline_payments WHERE organization_id = ? AND booking_id = ? AND id = ?', params: [access.organizationId, stayId, paymentId] },
-    organizationEventQuery({ organizationId: access.organizationId, locationId: stay.location_id, actorId: access.actorId, eventType: 'stay.payment_deleted', entityType: 'stay', entityId: stayId, metadata: { payment_id: paymentId }, onlyIfPreviousChangedOneRow: true }),
-  ], { operation: 'Delete stay payment' })
+  try {
+    await executeBatch(db, [
+      { query: 'DELETE FROM offline_payments WHERE organization_id = ? AND booking_id = ? AND id = ?', params: [access.organizationId, stayId, paymentId] },
+      organizationEventQuery({ organizationId: access.organizationId, locationId: stay.location_id, actorId: access.actorId, eventType: 'stay.payment_deleted', entityType: 'stay', entityId: stayId, metadata: { payment_id: paymentId }, onlyIfPreviousChangedOneRow: true }),
+      receiptsAre(access.organizationId, stayId, without.payments),
+      // What the receipt paid is owed again.
+      ...stayPaymentTaskQueries({ organizationId: access.organizationId, stay: without, money: without, now: new Date().toISOString() }),
+    ], { operation: 'Delete stay payment' })
+  } catch (error) {
+    if (receiptsChanged(error)) fail(409, 'PAYMENT_CHANGED', 'The payments on this stay changed at the same time. Reload the stay and try again.', 'payment_id')
+    throw error
+  }
   await publishStayInvalidation(env, { type: 'stay.changed', organization_id: access.organizationId, location_id: stay.location_id, product_id: stay.product_id, booking_id: stayId }, { version: stay.version })
   return getStay(db, access, stayId)
 }
@@ -2958,6 +3064,8 @@ export async function setStayNights(db: DbClient, env: StayMutationEnv, inputAcc
 export interface ImportedNight {
   date: string
   available: boolean
+  /** Closed because Airbnb holds the listing's own reservation on it, not a block. */
+  closed_for_reservation: boolean
   price_minor: number | null
   min_stay_arrival: number | null
   max_stay: number | null
@@ -2980,7 +3088,7 @@ export async function importStayNights(db: DbClient, env: GuestInboxPublicationE
     from: nights[0]!.date, to: nights.at(-1)!.date, nights: nights.length, provider: 'channex',
   }, nights)
   const incoming = JSON.stringify(nights.map(night => ({
-    id: crypto.randomUUID(), date: night.date, closed: night.available ? 0 : 1, price_minor: night.price_minor,
+    id: crypto.randomUUID(), date: night.date, closed: night.available ? 0 : 1, closed_for_reservation: !night.available && night.closed_for_reservation ? 1 : 0, price_minor: night.price_minor,
     min_stay_arrival: night.min_stay_arrival, max_stay: night.max_stay,
     closed_to_arrival: night.closed_to_arrival ? 1 : 0, closed_to_departure: night.closed_to_departure ? 1 : 0,
   })))
@@ -2990,11 +3098,11 @@ export async function importStayNights(db: DbClient, env: GuestInboxPublicationE
   await executeBatch(db, [
     audit.before,
     {
-      query: `INSERT INTO product_nights (organization_id, product_id, date, closed, min_stay_arrival, max_stay, closed_to_arrival, closed_to_departure, source, updated_at, updated_by)
-              SELECT ?, ?, json_extract(value, '$.date'), json_extract(value, '$.closed'), json_extract(value, '$.min_stay_arrival'),
+      query: `INSERT INTO product_nights (organization_id, product_id, date, closed, closed_for_reservation, min_stay_arrival, max_stay, closed_to_arrival, closed_to_departure, source, updated_at, updated_by)
+              SELECT ?, ?, json_extract(value, '$.date'), json_extract(value, '$.closed'), json_extract(value, '$.closed_for_reservation'), json_extract(value, '$.min_stay_arrival'),
                      json_extract(value, '$.max_stay'), json_extract(value, '$.closed_to_arrival'), json_extract(value, '$.closed_to_departure'), 'import', ?, ?
                 FROM json_each(?) WHERE true
-              ON CONFLICT (product_id, date) DO UPDATE SET closed = excluded.closed, min_stay_arrival = excluded.min_stay_arrival,
+              ON CONFLICT (product_id, date) DO UPDATE SET closed = excluded.closed, closed_for_reservation = excluded.closed_for_reservation, min_stay_arrival = excluded.min_stay_arrival,
                 max_stay = excluded.max_stay, closed_to_arrival = excluded.closed_to_arrival, closed_to_departure = excluded.closed_to_departure,
                 updated_at = excluded.updated_at, updated_by = excluded.updated_by
               WHERE product_nights.source = 'import'`,
@@ -3038,6 +3146,8 @@ export interface ChannelBooking {
   currency: string
   /** Channex loaded it from the channel's existing reservations (a home's import), rather than receiving it as it was booked. */
   imported: boolean
+  /** The Airbnb listing it was sold through, when its rate plan names one; a revision that names none keeps the one recorded. */
+  channel_listing_id?: string | null
 }
 
 /** What a channel revision changed on its stay, as its owners are told it. */
@@ -3201,8 +3311,8 @@ export async function applyChannelBooking(db: DbClient, env: GuestInboxPublicati
   }, {
     query: `INSERT INTO bookings (id, organization_id, user_id, product_id, product_variant_id, location_id, starts_at, ends_at, timezone, party_size, adults, children, infants,
               channel, owner, status, overbooked, policy_json, total_minor, currency, provider, external_booking_id, channel_booking_id, revision_id,
-              provider_updated_at, cancelled_at, received_at, version, created_at, updated_at, booked_product_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'channel', ?, CASE WHEN ? OR (${availability.query} AND ${bookedAvailability.query}) THEN 0 ELSE 1 END, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+              provider_updated_at, cancelled_at, received_at, version, created_at, updated_at, booked_product_id, channel_listing_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'channel', ?, CASE WHEN ? OR (${availability.query} AND ${bookedAvailability.query}) THEN 0 ELSE 1 END, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
             ON CONFLICT (provider, external_booking_id) WHERE external_booking_id IS NOT NULL DO UPDATE SET
               product_id = excluded.product_id, product_variant_id = excluded.product_variant_id, location_id = excluded.location_id, timezone = excluded.timezone,
               starts_at = excluded.starts_at, ends_at = excluded.ends_at, actual_check_out_date = ?, channel = excluded.channel, status = excluded.status, overbooked = excluded.overbooked,
@@ -3210,14 +3320,15 @@ export async function applyChannelBooking(db: DbClient, env: GuestInboxPublicati
               total_minor = excluded.total_minor, currency = excluded.currency, channel_booking_id = excluded.channel_booking_id,
               revision_id = excluded.revision_id, provider_updated_at = excluded.provider_updated_at,
               cancelled_at = CASE WHEN excluded.status = 'cancelled' THEN COALESCE(bookings.cancelled_at, excluded.cancelled_at) ELSE NULL END,
-              version = bookings.version + 1, updated_at = excluded.updated_at, booked_product_id = excluded.booked_product_id
+              version = bookings.version + 1, updated_at = excluded.updated_at, booked_product_id = excluded.booked_product_id,
+              channel_listing_id = COALESCE(excluded.channel_listing_id, bookings.channel_listing_id)
             WHERE bookings.organization_id = excluded.organization_id AND bookings.id = ? AND bookings.product_id = ? AND bookings.version IS ?
               AND (bookings.provider_updated_at IS NULL OR bookings.provider_updated_at < excluded.provider_updated_at)`,
     params: [id, organizationId, guestUserId, landing, home.variant_id, home.location_id, window.starts_at, window.ends_at, home.timezone,
       booking.adults + booking.children, booking.adults, booking.children, booking.infants, booking.channel, booking.cancelled ? 'cancelled' : 'confirmed', booking.cancelled ? 1 : 0, ...availability.params, ...bookedAvailability.params, policy,
       booking.total_minor, booking.currency, booking.provider, booking.external_booking_id, booking.channel_booking_id, booking.revision_id,
       // A booking received as it happened starts the new-reservation messages; the import's history never does. An update keeps the first answer.
-      booking.provider_updated_at, booking.cancelled ? now : null, booking.imported || booking.cancelled ? null : now, now, now, bookedProductId, released, existing?.id ?? null, previous?.product_id ?? null, previous?.version ?? null],
+      booking.provider_updated_at, booking.cancelled ? now : null, booking.imported || booking.cancelled ? null : now, now, now, bookedProductId, booking.channel_listing_id ?? null, released, existing?.id ?? null, previous?.product_id ?? null, previous?.version ?? null],
   },
   organizationEventQuery({ organizationId, locationId: home.location_id, actorId: null, eventType: existing ? 'stay.updated' : 'stay.created', entityType: 'stay', entityId: id,
     dedupeKey: revisionKey, onlyIfPreviousChangedOneRow: true, metadataQuery: {
@@ -3240,11 +3351,12 @@ export async function applyChannelBooking(db: DbClient, env: GuestInboxPublicati
   ...bookingConversationQueries({ organizationId, bookingId: id, requestId: crypto.randomUUID(), locationId: home.location_id, userId: guestUserId, now,
     guest: { name: guestName, email: booking.guest_email, phone: booking.guest_phone }, ...(guestName === null ? { participant: { kind: 'channel' as const, title: reservation } } : {}) }),
   {
-    // Airbnb's calendar reports a reserved night unavailable, so the import closed it. A reservation Channex
-    // loads from before the import is what held those nights: once its booking is here they are no longer a
-    // block, and free if it cancels. A booking made later never lands on a block, and a loaded cancellation
-    // held nothing at import, so neither opens any.
-    query: `UPDATE product_nights SET closed = 0, updated_at = ? WHERE organization_id = ? AND product_id = ? AND source = 'import' AND closed = 1
+    // Airbnb's calendar reports the listing's own reserved night as availability_type 'reservation', so the import
+    // closed it and recorded why. A reservation Channex loads from before the import is what held those nights:
+    // once its booking is here they are no longer a block, and free if it cancels. A night Airbnb reported 'busy'
+    // (the host's block, or another listing's reservation through linked calendars) stays closed. A booking made
+    // later never lands on a block, and a loaded cancellation held nothing at import, so neither opens any.
+    query: `UPDATE product_nights SET closed = 0, closed_for_reservation = 0, updated_at = ? WHERE organization_id = ? AND product_id = ? AND source = 'import' AND closed = 1 AND closed_for_reservation = 1
       AND date >= ? AND date < ? AND ? = 1 AND EXISTS (SELECT 1 FROM bookings WHERE organization_id = ? AND id = ? AND version = ?)`,
     params: [now, organizationId, landing, booking.check_in_date, booking.check_out_date, booking.imported === true && !booking.cancelled ? 1 : 0, organizationId, id, version],
   },
@@ -3265,6 +3377,8 @@ export async function applyChannelBooking(db: DbClient, env: GuestInboxPublicati
     guest: { name: guestName ?? undefined, email: booking.guest_email ?? undefined, phone: booking.guest_phone ?? undefined } }),
   ...reconcileGuestListingParticipants(organizationId, { query: 'c.booking_id = ?', params: [id] }),
   ...turnovers.queries,
+  // A booking its channel now collects for owes the business nothing here.
+  closedBookingPaymentTasksQuery(organizationId, id, now),
   ]
   const writes = await executeBatch(db, write, { operation: 'Apply channel booking' })
   const changed = writes[existing?.external_booking_id === null || reimported !== null ? 2 : 1]?.meta.changes

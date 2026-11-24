@@ -82,6 +82,8 @@ export interface ListingNight {
    * lifts that itself as the window moves, so it is not a block.
    */
   blocked: boolean
+  /** Closed because the listing's own reservation holds it (availability_type 'reservation', read live 2026-11-24); 'busy' is any other block. */
+  reservation: boolean
 }
 
 function fail(statusCode: number, code: string, message: string): never {
@@ -433,6 +435,7 @@ export async function listingCalendar(env: ChannexEnv, channelId: string, listin
           minStay: integer(day.min_nights, 'Minimum nights', 1), maxStay: integer(day.max_nights, 'Maximum nights'),
           closedToArrival: day.closed_to_arrival, closedToDeparture: day.closed_to_departure,
           blocked: day.availability === 'unavailable' && day.availability_type !== 'rule',
+          reservation: day.availability === 'unavailable' && day.availability_type === 'reservation',
         }
       } catch (error) {
         if (error instanceof ChannexDataError) throw new ChannexDataError(`${error.message} (night ${date})`)

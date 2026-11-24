@@ -59,7 +59,7 @@ class FakeChannex {
     message('guest-3', 'guest', 'Thank you! What time is check-in?', RAW(18, 31), { meta: { name: 'Mililani', role: 'GUEST' } }),
   ]
   revision = { booking_id: 'bk-contract', property_id: PROPERTY, status: 'new', ota_name: 'AirBNB', ota_reservation_code: 'HMCONTRACT', inserted_at: '2026-10-20T00:00:00Z',
-    arrival_date: '2026-11-08', departure_date: '2026-11-12', amount: '600.00', currency: 'USD', customer: { name: 'Mililani', surname: 'Garcia', mail: null, phone: null }, occupancy: { adults: 2, children: 0, infants: 0 } }
+    arrival_date: '2026-11-08', departure_date: '2026-11-12', amount: '600.00', currency: 'USD', customer: { name: 'Mililani', surname: 'Garcia', mail: null, phone: null }, occupancy: { adults: 2, children: 0, infants: 0 }, rooms: [{ rate_plan_id: 'rate-plan' }] }
   alteration = { id: 'alteration-contract', type: 'live_feed_event', attributes: { id: 'alteration-contract', event: 'alteration_request', property_id: PROPERTY, channel_id: 'channel', inserted_at: RAW(18, 40), payload: {
     id: 'airbnb-alteration-contract', message_thread_id: 'thread', resolved: false,
     bms: { booking_id: 'bk-contract', status: 'modified', arrival_date: '2026-11-08', departure_date: '2026-11-14', amount: 90_000, currency: 'USD', occ_adults: 2, occ_children: 0, occ_infants: 0,

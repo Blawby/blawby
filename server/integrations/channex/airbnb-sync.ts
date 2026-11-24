@@ -42,6 +42,8 @@ export interface AirbnbSyncListing {
   listing_id: string
   product_id: string | null
   action: 'sync' | 'stop'
+  /** A sync that gives a listing sharing a home its own home again. */
+  own_home: boolean
   status: 'queued' | 'running' | 'done' | 'failed'
   stage: ImportStage | null
   error: { code: string; message: string } | null
@@ -55,6 +57,7 @@ interface JobRow {
   product_id: string | null
   action: 'sync' | 'stop'
   details: string | null
+  own_home: number
   state: 'pending' | 'done' | 'failed'
   requested_by: string | null
   last_error_code: string | null
@@ -77,14 +80,21 @@ function ids(value: unknown, field: string): string[] {
   return [...new Set(value as string[])]
 }
 
-/** The listings to sync: each `{listing_id, details?}`, details being the listing fields the host supplied, each text. */
-function syncItems(value: unknown): Array<{ listing_id: string; product_id: string | null; details: Record<string, string> | null }> {
+/**
+ * The listings to sync: each `{listing_id, details?}`, details being the listing fields the host
+ * supplied, each text; or `{listing_id, product_id}` to put it on an existing home; or
+ * `{listing_id, own_home: true, details?}` to give a listing sharing a home its own home again.
+ */
+function syncItems(value: unknown): Array<{ listing_id: string; product_id: string | null; own_home: boolean; details: Record<string, string> | null }> {
   if (value === undefined) return []
   if (!Array.isArray(value)) fail(422, 'VALIDATION_ERROR', 'sync must be a list of {listing_id, details}', { field: 'sync' })
   const items = value.map((item, index) => {
     const record = item as Record<string, unknown> | null
     if (!record || typeof record !== 'object' || Array.isArray(record) || typeof record.listing_id !== 'string' || !record.listing_id.trim()
-      || Object.keys(record).some(key => key !== 'listing_id' && key !== 'details' && key !== 'product_id')) fail(422, 'VALIDATION_ERROR', 'Each sync item is {listing_id, details}', { field: `sync[${index}]` })
+      || Object.keys(record).some(key => !['listing_id', 'details', 'product_id', 'own_home'].includes(key))) fail(422, 'VALIDATION_ERROR', 'Each sync item is {listing_id, details}, {listing_id, product_id} or {listing_id, own_home: true, details}', { field: `sync[${index}]` })
+    if (record.own_home !== undefined && (record.own_home !== true || record.product_id !== undefined)) {
+      fail(422, 'VALIDATION_ERROR', 'own_home is true, and not with product_id', { field: `sync[${index}].own_home` })
+    }
     if (record.product_id !== undefined && (typeof record.product_id !== 'string' || !record.product_id.trim() || record.details !== undefined)) {
       fail(422, 'VALIDATION_ERROR', 'Choose one existing home or supply the details for a new home.', { field: `sync[${index}].product_id` })
     }
@@ -92,7 +102,7 @@ function syncItems(value: unknown): Array<{ listing_id: string; product_id: stri
     if (details !== undefined && (!details || typeof details !== 'object' || Array.isArray(details) || Object.values(details).some(field => typeof field !== 'string' || !field.trim()))) {
       fail(422, 'VALIDATION_ERROR', 'details must name listing fields, each as non-empty text', { field: `sync[${index}].details` })
     }
-    return { listing_id: record.listing_id, product_id: typeof record.product_id === 'string' ? record.product_id : null, details: details === undefined ? null : details as Record<string, string> }
+    return { listing_id: record.listing_id, product_id: typeof record.product_id === 'string' ? record.product_id : null, own_home: record.own_home === true, details: details === undefined ? null : details as Record<string, string> }
   })
   const repeated = items.find((item, index) => items.findIndex(other => other.listing_id === item.listing_id) !== index)
   if (repeated) fail(422, 'VALIDATION_ERROR', 'A listing is named twice', { listing_id: repeated.listing_id })
@@ -138,8 +148,8 @@ export async function requestAirbnbSync(env: CloudflareEnv, db: DbClient, organi
   const both = stopped.find(mapping => sync.includes(mapping.listing_id))
   if (both) fail(422, 'VALIDATION_ERROR', 'A listing cannot be synced and stopped at once', { listing_id: both.listing_id })
 
-  const queued = [...items.map(item => ({ listing: item.listing_id, product: item.product_id ?? null, action: 'sync' as const, details: item.details ? JSON.stringify(item.details) : null })),
-    ...stopped.map(mapping => ({ listing: mapping.listing_id, product: mapping.product_id, action: 'stop' as const, details: null }))]
+  const queued = [...items.map(item => ({ listing: item.listing_id, product: item.product_id ?? null, action: 'sync' as const, ownHome: item.own_home, details: item.details ? JSON.stringify(item.details) : null })),
+    ...stopped.map(mapping => ({ listing: mapping.listing_id, product: mapping.product_id, action: 'stop' as const, ownHome: false, details: null }))]
   await queueJobs(db, env, organizationId, userId, queued)
   const named = new Set(queued.map(job => job.listing))
   return (await readAirbnbSync(db, organizationId)).filter(listing => named.has(listing.listing_id))
@@ -159,15 +169,15 @@ async function connectedAirbnbMappings(db: DbClient, organizationId: string, ids
  * gives the row a new id, so a run still on the old request writes nothing
  * over this one. `requestedBy` is null only for a stop Blawby asks for itself.
  */
-async function queueJobs(db: DbClient, env: CloudflareEnv, organizationId: string, requestedBy: string | null, jobs: Array<{ listing: string; product: string | null; action: 'sync' | 'stop'; details: string | null }>): Promise<void> {
+async function queueJobs(db: DbClient, env: CloudflareEnv, organizationId: string, requestedBy: string | null, jobs: Array<{ listing: string; product: string | null; action: 'sync' | 'stop'; ownHome: boolean; details: string | null }>): Promise<void> {
   const at = now()
   const pending = jobs.map(job => ({ ...job, id: crypto.randomUUID() }))
-  await executeBatch(db, pending.map(job => ({ query: `INSERT INTO airbnb_sync_jobs (id, organization_id, listing_id, product_id, action, details, state, requested_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
-      ON CONFLICT (organization_id, listing_id) DO UPDATE SET id = excluded.id, action = excluded.action, details = excluded.details, state = 'pending', requested_by = excluded.requested_by,
+  await executeBatch(db, pending.map(job => ({ query: `INSERT INTO airbnb_sync_jobs (id, organization_id, listing_id, product_id, action, own_home, details, state, requested_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+      ON CONFLICT (organization_id, listing_id) DO UPDATE SET id = excluded.id, action = excluded.action, own_home = excluded.own_home, details = excluded.details, state = 'pending', requested_by = excluded.requested_by,
         product_id = excluded.product_id, last_error_code = NULL, last_error = NULL,
         completed_at = NULL, updated_at = excluded.updated_at`,
-    params: [job.id, organizationId, job.listing, job.product, job.action, job.details, requestedBy, at, at] })), { operation: 'Queue an Airbnb sync change' })
+    params: [job.id, organizationId, job.listing, job.product, job.action, job.ownHome ? 1 : 0, job.details, requestedBy, at, at] })), { operation: 'Queue an Airbnb sync change' })
   for (const job of pending) await publishAirbnbSync(env, { type: 'airbnb.sync_step', organization_id: organizationId, job_id: job.id })
 }
 
@@ -188,7 +198,7 @@ export async function stopAirbnbSyncForPlanEnd(db: DbClient, env: CloudflareEnv,
   if (missingListing) throw new Error(`Airbnb listing ${missingListing} is not on an account connected to this organization`)
   // One batch holds at most D1's statements per batch; an organization past Basic may have more homes than that.
   for (let start = 0; start < mappings.length; start += MAX_D1_BATCH_STATEMENTS) {
-    await queueJobs(db, env, organizationId, null, mappings.slice(start, start + MAX_D1_BATCH_STATEMENTS).map(row => ({ listing: row.listing_id, product: row.product_id, action: 'stop', details: null })))
+    await queueJobs(db, env, organizationId, null, mappings.slice(start, start + MAX_D1_BATCH_STATEMENTS).map(row => ({ listing: row.listing_id, product: row.product_id, action: 'stop', ownHome: false, details: null })))
   }
 }
 
@@ -201,6 +211,7 @@ export async function readAirbnbSync(db: DbClient, organizationId: string): Prom
     listing_id: row.listing_id,
     product_id: row.state === 'failed' ? row.product_id : row.product_id ?? row.mapped_product_id,
     action: row.action,
+    own_home: row.own_home === 1,
     status: row.state === 'done' ? 'done' : row.state === 'failed' ? 'failed'
       : row.stage !== null && row.stage !== 'draft' && row.stage !== 'complete' ? 'running' : 'queued',
     stage: row.stage,
@@ -226,13 +237,19 @@ async function step(env: CloudflareEnv, db: DbClient, job: JobRow): Promise<Step
       LEFT JOIN channex_connections c ON c.organization_id = m.organization_id AND c.channel_id = m.channel_id AND c.status = 'connected'
       WHERE m.organization_id = ? AND m.provider = 'channex' AND m.listing_id = ?`, [job.organization_id, job.listing_id])
   if (job.action === 'sync') {
+    const missingDetails = job.details ? JSON.parse(job.details) as Record<string, string> : {}
+    if (job.own_home && mapping && mapping.channel_id === mapping.connected_channel_id
+      && await queryFirst(db, 'SELECT 1 FROM product_airbnb_listings WHERE organization_id = ? AND product_id = ? AND listing_id <> ?', [job.organization_id, mapping.product_id, job.listing_id])) {
+      await connection.ownHome(job.listing_id, { missingDetails })
+      return 'continue'
+    }
     if (job.product_id && mapping?.product_id !== job.product_id) {
       await connection.attach(job.listing_id, job.product_id)
       return 'continue'
     }
     if (!mapping || mapping.channel_id !== mapping.connected_channel_id) {
       // Prepare creates the mapping; the job retains only the host's explicitly requested destination.
-      await connection.prepare(job.listing_id, { missingDetails: job.details ? JSON.parse(job.details) as Record<string, string> : {} })
+      await connection.prepare(job.listing_id, { missingDetails })
       return 'continue'
     }
     if (mapping.import_stage === 'complete' && mapping.enabled === 1) {

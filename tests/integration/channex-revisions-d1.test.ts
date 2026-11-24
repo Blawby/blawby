@@ -72,7 +72,7 @@ class FakeChannex {
     this.revisions.set(revision, {
       booking_id: booking.id, property_id: booking.property_id, status: booking.status, ota_name: booking.ota_name ?? 'AirBNB', ota_reservation_code: booking.code ?? `HM${booking.id}`,
       inserted_at: at, arrival_date: booking.arrival, departure_date: booking.departure, amount: booking.amount, currency: 'USD',
-      customer: booking.customer ?? { name: 'Lee', surname: 'Park', mail: 'lee@example.test', phone: null }, occupancy: { adults: 2, children: 1, infants: 0 },
+      customer: booking.customer ?? { name: 'Lee', surname: 'Park', mail: 'lee@example.test', phone: null }, occupancy: { adults: 2, children: 1, infants: 0 }, rooms: [{ rate_plan_id: 'rate-plan' }],
       ...(booking.imported ? { meta: { is_imported: true } } : {}),
     })
   }
@@ -214,13 +214,14 @@ test('a channel booking lands, repeats and stale deliveries change nothing, an o
     channex.availability = []
     await queue.drain(env, 'stay.changed')
     assert.deepEqual(channex.availability.map(entry => [entry.date_from, entry.date_to, entry.availability]), [['2027-01-10', '2027-01-11', 1]])
-    // A reservation loaded from before the import held the nights the import closed: landing opens them.
-    await db.prepare("INSERT INTO product_nights (organization_id, product_id, date, closed, source, updated_by) VALUES (?, ?, '2027-05-01', 1, 'import', ?)").bind(ORG, productId, OWNER).run()
+    // A reservation loaded from before the import held the nights the import closed as its own: landing opens them.
+    // A night Airbnb reported busy under it (a block of the host's) stays closed.
+    await db.prepare("INSERT INTO product_nights (organization_id, product_id, date, closed, closed_for_reservation, source, updated_by) VALUES (?, ?, '2027-05-01', 1, 1, 'import', ?), (?, ?, '2027-05-02', 1, 0, 'import', ?)").bind(ORG, productId, OWNER, ORG, productId, OWNER).run()
     channex.revise('rev-loaded', { ...booking, id: 'bk-loaded', arrival: '2027-05-01', departure: '2027-05-03', imported: true }, '2026-10-15T03:50:00Z')
     const imported = await applyBookingRevision(db, env, 'rev-loaded')
     assert(imported.status === 'acknowledged')
     assert.equal(await db.prepare("SELECT json_extract(payload_json, '$.guest.email') AS email FROM conversations WHERE organization_id = ? AND booking_id = ?").bind(ORG, imported.booking_id).first('email'), 'lee@example.test')
-    assert.deepEqual(await db.prepare("SELECT closed FROM product_nights WHERE product_id = ? AND date = '2027-05-01'").bind(productId).first(), { closed: 0 })
+    assert.deepEqual((await db.prepare("SELECT date, closed FROM product_nights WHERE product_id = ? AND date IN ('2027-05-01', '2027-05-02') ORDER BY date").bind(productId).all()).results, [{ date: '2027-05-01', closed: 0 }, { date: '2027-05-02', closed: 1 }])
 
     // The same reservation code arriving under a new Channex booking id updates its stay rather than making a second one.
     const coded: Booking = { ...booking, id: 'bk-code', code: 'HMCODE', arrival: '2027-03-10', departure: '2027-03-12' }

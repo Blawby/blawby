@@ -81,6 +81,8 @@ class FakeChannex {
   listingId = LISTING
   /** More listings on the same Airbnb account. */
   extraListings: string[] = []
+  /** A rate Channex wrongly holds for every listing plan derived from a home's, instead of deriving it. */
+  wrongDerivedRate: string | null = null
   nightlyRate = 189.5
   restrictionsByRate = new Map<string, Map<string, unknown>>()
   messagesProperty: string | null = null
@@ -242,7 +244,19 @@ class FakeChannex {
       return json({ data: [{ id: 'task-availability', type: 'task' }], meta: { message: 'Success', warnings: [] } })
     }
     if (method === 'GET' && path === '/availability') return json({ data: { [Object.keys(this.availability).length ? this.roomType : 'none']: this.availability } })
-    if (method === 'GET' && path === '/restrictions') return json({ data: { [this.ratePlan]: Object.fromEntries(Object.entries(this.restrictions).map(([date, rule]) => [date, { ...rule, rate: String(rule.rate) }])) } })
+    if (method === 'GET' && path === '/restrictions') {
+      // A plan derived from a home's takes the home's rates through its derived rule, as Channex documents.
+      const derived = [...this.ratePlans].filter(([, plan]) => plan.parent_rate_plan_id && plan.property_id === url.searchParams.get('filter[property_id]')).map(([id, plan]) => {
+        const [rule] = ((plan.options as Array<{ is_primary?: boolean; derived_option?: { rate?: Array<[string, string]> } }>).find(option => option.is_primary)?.derived_option?.rate ?? []) as Array<[string, string]>
+        const rate = (base: unknown) => {
+          const cents = Math.round(Number(base) * 100)
+          const changed = !rule ? cents : rule[0].endsWith('percent') ? Math.round(cents * (100 + (rule[0].startsWith('increase') ? 1 : -1) * Number(rule[1])) / 100) : cents + (rule[0].startsWith('increase') ? 1 : -1) * Math.round(Number(rule[1]) * 100)
+          return this.wrongDerivedRate ?? (changed / 100).toFixed(2)
+        }
+        return [id, Object.fromEntries([...this.restrictionsByRate.get(String(plan.parent_rate_plan_id)) ?? new Map()].map(([date, value]) => [date, { rate: rate(value) }]))]
+      })
+      return json({ data: { [this.ratePlan]: Object.fromEntries(Object.entries(this.restrictions).map(([date, rule]) => [date, { ...rule, rate: String(rule.rate) }])), ...Object.fromEntries(derived) } })
+    }
     if (method === 'POST' && path === '/channels/chan-1/mappings') {
       const id = `map-${++this.mappingIds}`
       // Channex's Airbnb mapping endpoint attaches this rate plan's property automatically.
@@ -984,6 +998,13 @@ test('a connected backup merges into the same room across accounts and keeps bil
     backup.extraListings = ['backup-2']
     await connection.attach('backup-2', targetId)
     await connection.activate('backup-2')
+    // Channex holding a wrong price for the new listing's plan stops it before Airbnb maps it, naming the night and both prices.
+    primary.wrongDerivedRate = '0.00'
+    await assert.rejects(advanceTo(connection, db, primary, targetId, 'complete', 'backup-2'),
+      (error: { message?: string; data?: { code?: string; expected?: string; actual?: string } }) => error.data?.code === 'LISTING_PRICE_MISMATCH' && error.data.actual === '0.00' && error.data.expected !== '0.00' && Boolean(error.message?.includes('Channex holds 0.00')))
+    assert.ok(!backup.channel.ratePlans.some(entry => entry.settings.listing_id === 'backup-2'))
+    assert.equal(await db.prepare("SELECT import_stage FROM product_airbnb_listings WHERE listing_id = 'backup-2'").first('import_stage'), 'mapping')
+    primary.wrongDerivedRate = null
     await advanceTo(connection, db, primary, targetId, 'complete', 'backup-2')
     const secondPlan = backup.channel.ratePlans.find(entry => entry.settings.listing_id === 'backup-2')!.rate_plan_id
 
@@ -994,6 +1015,12 @@ test('a connected backup merges into the same room across accounts and keeps bil
     await connection.setListingPrice('backup-2', { price_adjustment_type: 'amount', price_adjustment: -1500 })
     assert.deepEqual(primaryOption(secondPlan).derived_option, { rate: [['decrease_by_amount', '15.00']] })
     await assert.rejects(connection.setListingPrice(LISTING, { price_adjustment_type: 'percent', price_adjustment: 10 }), (error: { data?: { code?: string } }) => error.data?.code === 'LISTING_SELLS_HOME_PRICE')
+    // A new rule Channex gets wrong is taken back and refused; the listing keeps the price it had.
+    primary.wrongDerivedRate = '1.00'
+    await assert.rejects(connection.setListingPrice('backup', { price_adjustment_type: 'percent', price_adjustment: 20 }), (error: { data?: { code?: string; actual?: string } }) => error.data?.code === 'LISTING_PRICE_MISMATCH' && error.data.actual === '1.00')
+    primary.wrongDerivedRate = null
+    assert.deepEqual(primaryOption(ratePlan).derived_option, { rate: [['increase_by_percent', '10']] })
+    assert.deepEqual(await db.prepare("SELECT price_adjustment_type, price_adjustment FROM product_airbnb_listings WHERE listing_id = 'backup'").first(), { price_adjustment_type: 'percent', price_adjustment: 10 })
     await assert.rejects(connection.setListingPrice('backup', { price_adjustment_type: 'percent', price_adjustment: -100 }), (error: { data?: { code?: string } }) => error.data?.code === 'VALIDATION_ERROR')
     const listed2 = (await connection.listings()).listings.find(listing => listing.id === 'backup')!.import
     assert.deepEqual(listed2.status === 'imported' && [listed2.own_rate_plan, listed2.price_adjustment_type, listed2.price_adjustment], [true, 'percent', 10])

@@ -822,6 +822,13 @@ export class ChannexConnection {
     })
     await channexRequest(this.env, path, 'PUT', { rate_plan: { options: options.map(option => option.is_primary === true
       ? { ...option, derived_option: { ...(object(option.derived_option ?? {}, 'derived_option')), rate: derivedRate(adjustment, home.currency) } } : option) } })
+    try {
+      await this.verifyListingPrice(mapping, adjustment)
+    } catch (error) {
+      // Airbnb is not left selling at a price Channex got wrong: the rule it had goes back, then the mismatch is the answer.
+      await channexRequest(this.env, path, 'PUT', { rate_plan: { options } })
+      throw error
+    }
     const saved = await execute(this.db, `UPDATE product_airbnb_listings SET price_adjustment_type = ?, price_adjustment = ?, updated_at = ?
       WHERE organization_id = ? AND listing_id = ? AND rate_plan_id = ?`, [adjustment.price_adjustment_type, adjustment.price_adjustment, now(), this.organizationId, listingId, mapping.listing_rate_plan_id])
     if (!saved.meta.changes) fail(409, 'IMPORT_CHANGED', 'The listing moved while its price was set. Refresh and try again.')
@@ -879,6 +886,8 @@ export class ChannexConnection {
         // syncing forgot what Channex confirmed, so this is its full sync; a home just
         // imported changed nothing since its inventory and sends nothing.
         if ((await this.deliverCalendar(mapping)).state === 'pending') return { product_id: productId, stage, waiting: true, content: null }
+        // A listing selling through its own plan is mapped only once Channex shows that plan at the price the host set.
+        if (mapping.listing_rate_plan_id) await this.verifyListingPrice(mapping, mapping)
         const former = channel.ratePlans.find(entry => entry.rate_plan_id !== mapping.rate_plan_id && object(entry.settings, 'Mapping settings').listing_id === listingId)
         if (former) {
           await channexRequest(this.env, `${path}/mappings/${encodeURIComponent(string(former.id, 'Mapping id'))}`, 'DELETE')
@@ -1484,6 +1493,45 @@ export class ChannexConnection {
     const pushed = await syncStayCalendar(this.db, this.env, this.manager(), mapping.product_id, target)
     if (pushed.state === 'needs_review') fail(502, 'PROVIDER_VERIFICATION_FAILED', `Channex rejected part of the calendar: ${pushed.detail}`)
     return pushed
+  }
+
+  /**
+   * Channex derives a listing's own plan from its home's plan; nothing Blawby sends sets its
+   * price. So before the listing is mapped, and after its price rule changes, every night
+   * Channex holds for that plan is read back and must be the home's rate Blawby last sent,
+   * changed by the listing's rule. A night that differs stops the step and names the night and
+   * both rates, so a listing is never put on Airbnb at a price nobody set. A percent may differ
+   * by one minor unit for Channex's rounding.
+   */
+  private async verifyListingPrice(mapping: Pick<MappingRow, 'product_id' | 'listing_id' | 'property_id' | 'listing_rate_plan_id'>, adjustment: PriceAdjustment): Promise<void> {
+    const planId = string(mapping.listing_rate_plan_id, 'listing_rate_plan_id')
+    const home = await readStayHome(this.db, this.manager(), mapping.product_id)
+    const sent = await queryAll<{ date: string; sent_json: string }>(this.db, "SELECT date, sent_json FROM channel_night_pushes WHERE product_id = ? AND provider = 'channex' AND state = 'pushed' AND sent_json IS NOT NULL ORDER BY date", [mapping.product_id])
+    if (!sent.length) throw new Error(`Home ${mapping.product_id} has no delivered calendar to check listing ${mapping.listing_id}'s price against`)
+    const query = new URLSearchParams({ 'filter[property_id]': string(mapping.property_id, 'property_id'), 'filter[date][gte]': sent[0]!.date, 'filter[date][lte]': sent.at(-1)!.date, 'filter[restrictions]': 'rate' })
+    const restrictions = await channexRequest(this.env, `/restrictions?${query}`)
+    const digits = currencyFractionDigits(home.currency)
+    const minor = (value: unknown, what: string) => {
+      const number = Number(value)
+      if ((typeof value !== 'string' && typeof value !== 'number') || !Number.isFinite(number) || number < 0) throw new ChannexDataError(`${what} must be a non-negative number`)
+      return Math.round(number * 10 ** digits)
+    }
+    const money = (amount: number) => (amount / 10 ** digits).toFixed(digits)
+    provided(() => {
+      const rates = object(object(restrictions.data, 'restrictions')[planId] ?? {}, 'listing rate plan restrictions')
+      for (const night of sent) {
+        const home = minor(object(JSON.parse(night.sent_json), `sent values for ${night.date}`).rate, `the home's rate on ${night.date}`)
+        const expected = adjustment.price_adjustment_type === 'percent' ? Math.round(home * (100 + adjustment.price_adjustment!) / 100)
+          : adjustment.price_adjustment_type === 'amount' ? home + adjustment.price_adjustment! : home
+        const rule = rates[night.date]
+        const actual = rule === undefined ? null : minor(object(rule, `restrictions on ${night.date}`).rate, `listing ${mapping.listing_id}'s rate on ${night.date}`)
+        const tolerance = adjustment.price_adjustment_type === 'percent' ? 1 : 0
+        if (actual === null || Math.abs(actual - expected) > tolerance) {
+          fail(502, 'LISTING_PRICE_MISMATCH', `Channex holds ${actual === null ? 'no rate' : money(actual)} for Airbnb listing ${mapping.listing_id} on ${night.date}; it should be ${money(expected)} from the home's ${money(home)}. The listing was not put on that price.`,
+            { listing_id: mapping.listing_id, date: night.date, expected: money(expected), actual: actual === null ? null : money(actual) })
+        }
+      }
+    })
   }
 
   /** Whether Channex now reads every night the full sync sent it; a new rate plan reads zero until its update is applied, which is "not yet", not an error. */

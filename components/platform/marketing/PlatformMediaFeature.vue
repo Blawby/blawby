@@ -32,13 +32,7 @@
         <NuxtLink v-if="label && url && !linkInBody" :to="route(url)" class="kc-media-feature__link">{{ label }}</NuxtLink>
       </div>
 
-      <dl v-if="examples.length" class="kc-media-feature__exchange">
-        <template v-for="(example, index) in examples" :key="index">
-          <dt>{{ example.title }}</dt>
-          <dd>{{ example.description }}</dd>
-        </template>
-      </dl>
-      <div v-else class="kc-media-feature__media">
+      <div class="kc-media-feature__media">
         <MediaPreview
           v-if="media?.kind === 'video' && media.public_url"
           :item="{ url: media.public_url, kind: 'video', poster: media.thumbnail_url || undefined, alt: media.alt_text || undefined }"
@@ -54,6 +48,13 @@
         <!-- Nothing chosen yet: the frame keeps its shape and weight, empty. -->
         <div v-else class="kc-media-feature__frame" aria-hidden="true" />
       </div>
+
+      <dl v-if="examples.length" class="kc-media-feature__exchange">
+        <template v-for="(example, index) in examples" :key="index">
+          <dt>{{ example.title }}</dt>
+          <dd>{{ example.description }}</dd>
+        </template>
+      </dl>
     </div>
   </section>
 </template>
@@ -190,6 +191,7 @@ const bodyParts = computed(() => {
 }
 
 .kc-media-feature__exchange {
+  grid-column: 1 / -1;
   display: grid;
   gap: .65rem;
   margin: 0;

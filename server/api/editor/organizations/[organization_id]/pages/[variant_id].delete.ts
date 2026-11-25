@@ -6,7 +6,7 @@ import { deleteTenantPage } from '~/server/utils/content/pages'
 
 export default defineHandler(async (event) => {
   const organizationId = getRouterParam(event, 'organization_id')
-  const variantId = getRouterParam(event, 'variant_id')
+  const variantId = getRouterParam(event, 'variant_id', { decode: true })
   if (!organizationId || !variantId) return jsonResponse({ error: 'Organization and page IDs are required' }, { status: 400 })
   const { env, db } = await requireWebsiteAccess(event, organizationId)
   const body = await readStrictBody<{ updated_at: string }>(event, { updated_at: 'string' })

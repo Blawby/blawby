@@ -213,7 +213,7 @@ export function mediaPlacementSlotInputSchema(ownerType: EditableMediaPlacementO
     && (options.single === undefined || isSingleMediaPlacement({ owner_type: ownerType, slot }) === options.single)
     && !options.excludedFixedSlots?.includes(slot))
   const indexedSlots = INDEXED_MEDIA_PLACEMENT_SLOTS.filter(entry => entry.ownerType === ownerType)
-    .map(entry => ({ type: 'string', pattern: entry.runtime.source, examples: [entry.sqlGlob.replace('[0-9]*', '0')] }))
+    .map(entry => ({ type: 'string', pattern: entry.runtime.source, examples: [entry.sqlGlob.replace('[0-9]*', '0').replace(/\*$/, 'item_1')] }))
     .filter(entry => options.single === undefined || isSingleMediaPlacement({ owner_type: ownerType, slot: entry.examples[0]! }) === options.single)
   if (!slots.length && !indexedSlots.length) return null
   const fixedSlots = { type: 'string', enum: slots }
@@ -939,6 +939,18 @@ export const EXPECTED_TOOL_ANNOTATIONS = {
   complete_task: { ...D, openWorldHint: true },
   skip_task: D,
   list_opportunities: R,
+  get_home_turnover_checklist: R,
+  // Replaces the home's checklist and its reference photos; a new item gets a new id each time.
+  set_home_turnover_checklist: D,
+  // Copies the source as it is when called.
+  copy_home_turnover_checklist: D,
+  get_turnover_requirements: R,
+  list_turnover_submissions: R,
+  get_turnover_submission_photos: R,
+  get_home_team: R,
+  // Moves the home's open cleans to whoever cleans it now.
+  set_home_team_member: { ...D, idempotentHint: true },
+  set_home_cleaning: { ...D, idempotentHint: true },
   get_inventory: R,
   // Each replaces what is there: a stock count, a zone's rate list, a location's pickup.
   set_inventory: D,

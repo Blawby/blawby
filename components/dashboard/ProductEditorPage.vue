@@ -225,7 +225,7 @@ import { formatTime, MINUTE_TIME_PATTERN } from '~/utils/timezone'
 
 export const SECTION_KEYS = [
   'photo', 'kind', 'name', 'internal-name', 'price', 'description', 'page', 'order-url', 'attributes', 'publication', 'booking', 'locations', 'collections',
-  'options', 'shipping', 'guests', 'security-deposit', 'availability', 'arrival-time', 'directions', 'check-in-method', 'wifi', 'house-manual', 'house-rules', 'checkout-instructions', 'property-type', 'rooms', 'amenities', 'accessibility', 'cancellation', 'team', 'guest-safety', 'location', 'questions',
+  'options', 'shipping', 'guests', 'security-deposit', 'availability', 'arrival-time', 'directions', 'check-in-method', 'wifi', 'house-manual', 'house-rules', 'checkout-instructions', 'turnover-checklist', 'property-type', 'rooms', 'amenities', 'accessibility', 'cancellation', 'team', 'guest-safety', 'location', 'questions',
 ] as const
 export type SectionKey = typeof SECTION_KEYS[number]
 export type BookingConcern = 'enabled' | 'duration' | 'seatings' | 'capacity' | 'party' | 'guest-terms' | 'confirmation' | 'notice' | 'payment' | 'location' | 'assignment' | number
@@ -426,6 +426,8 @@ export interface ProductEditor {
   arrivalError: ComputedRef<string | null>
   arrivalManage: ComputedRef<boolean>
   arrivalChanged: (fields: readonly StayArrivalField[]) => boolean
+  /** Re-read the home's staff settings after a write elsewhere, such as its turnover checklist. */
+  refreshArrival: () => Promise<void>
   saveArrival: (fields: readonly StayArrivalField[], closeTo?: string) => Promise<void>
   /** Replaces the booking's or the home's questions over the revision last read, then re-reads the product. */
   saveQuestions: (owner: 'booking' | 'stay', questions: readonly FormQuestionWrite[]) => Promise<void>
@@ -567,6 +569,7 @@ const sectionLabels: Record<SectionKey, string> = {
   'guest-safety': 'Guest safety',
   'location': 'Location',
   'checkout-instructions': 'Checkout instructions',
+  'turnover-checklist': 'Turnover checklist',
   'property-type': 'Property type',
   'rooms': 'Rooms and beds',
   'amenities': 'Amenities',
@@ -660,10 +663,12 @@ async function changeStayTab(value: string | number) {
 // The home's private arrival guide is read only inside its authenticated editor.
 // A role without operations access can continue editing the public Product.
 const arrivalUrl = () => `/api/dashboard/stay-homes/${encodeURIComponent(productId.value)}`
-const isArrivalResponse = (value: unknown): value is { home: StayArrivalGuide; manage: boolean } =>
+const isArrivalResponse = (value: unknown): value is { home: StayArrivalGuide & { turnover_checklist_items: number }; manage: boolean } =>
   isRecord(value) && isStayArrivalGuide(value.home) && typeof value.manage === 'boolean' && value.home.product_id === productId.value
-const isArrivalMutation = (value: unknown): value is { home: StayArrivalGuide; channel_push: SuccessfulChannelPush | null } =>
+    && Number.isSafeInteger((value.home as { turnover_checklist_items?: unknown }).turnover_checklist_items)
+const isArrivalMutation = (value: unknown): value is { home: StayArrivalGuide & { turnover_checklist_items: number }; channel_push: SuccessfulChannelPush | null } =>
   isRecord(value) && isStayArrivalGuide(value.home) && value.home.product_id === productId.value && isSuccessfulChannelPush(value.channel_push)
+    && Number.isSafeInteger((value.home as { turnover_checklist_items?: unknown }).turnover_checklist_items)
 const arrivalReadKey = computed(() => `dashboard-product-arrival:${organizationId}:${productId.value}:${arrivalTab.value ? 'open' : 'closed'}`)
 const { data: arrivalLoaded, error: arrivalFailure, refresh: refreshArrival } = await useWebsiteIndexData(
   arrivalReadKey,
@@ -1298,6 +1303,8 @@ const navigationGroups = computed<EditorNavigationGroup[]>(() => {
       { id: 'house-manual', label: 'House manual', summary: home.house_manual || 'Add details', placeholder: !home.house_manual, to: sectionPath('house-manual') },
       { id: 'house-rules', label: 'House rules', summary: savedHouseRules.value.join('\n') || 'Add details', placeholder: !savedHouseRules.value.length, to: sectionPath('house-rules') },
       { id: 'checkout-instructions', label: 'Checkout instructions', summary: home.checkout_instructions.length ? `${home.checkout_instructions.length} ${home.checkout_instructions.length === 1 ? 'instruction' : 'instructions'}` : 'Add details', placeholder: !home.checkout_instructions.length, to: sectionPath('checkout-instructions') },
+      // What a clean must leave, for the cleaning team: Done asks for it.
+      { id: 'turnover-checklist', label: 'Turnover checklist', summary: home.turnover_checklist_items ? `${home.turnover_checklist_items} ${home.turnover_checklist_items === 1 ? 'item' : 'items'}` : 'Add details', placeholder: !home.turnover_checklist_items, to: sectionPath('turnover-checklist') },
     ] }]
   }
   const otherDetails = definitions.value.filter(field => ![PRICING_NOTE_HANDLE, 'tagline'].includes(field.key) && !isStayFocusedDetail(field.key) && hasDetail(field)).map(field => ({
@@ -2359,6 +2366,7 @@ provide(productEditorKey, {
   arrivalError,
   arrivalManage,
   arrivalChanged,
+  refreshArrival: async () => { await refreshArrival() },
   saveArrival,
   saveQuestions,
 })

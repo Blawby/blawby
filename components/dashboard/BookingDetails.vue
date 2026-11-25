@@ -84,6 +84,10 @@
             <h2 class="text-[22px] font-semibold leading-7 tracking-tight text-highlighted">{{ panel.title }}</h2>
             <UBadge v-if="statusLabel" :color="(stay?.status ?? booking?.status) === 'pending' ? 'warning' : 'neutral'" variant="soft" :label="statusLabel" />
           </div>
+          <!-- Whether the home is ready for this stay, from the turnover before it. -->
+          <p v-if="readiness" class="flex items-center gap-1.5 text-sm" :class="readiness.state === 'ready' ? (readiness.shortage ? 'text-warning' : 'text-success') : readiness.urgent ? 'font-medium text-error' : 'text-muted'" data-testid="stay-readiness">
+            <UIcon :name="readiness.state === 'ready' ? 'i-lucide-sparkles' : 'i-lucide-brush-cleaning'" class="size-4" />{{ readiness.label }}
+          </p>
           <p v-if="panel.host" class="text-xs text-muted">Hosted by {{ panel.host.name }}</p>
           <p v-if="panel.purchaseDate" class="text-xs text-muted">{{ panel.purchaseDate }}</p>
           <div v-if="recordGuestName" class="mt-4 flex items-center">
@@ -549,6 +553,7 @@ import { getVerticalCopy, normalizeVertical } from '~/utils/vertical-copy'
 import { STAY_CHECK_IN_METHODS, STAY_CHECKOUT_TASKS } from '~/shared/stay-listing'
 import DashboardConfirmDialog from '~/components/dashboard/DashboardConfirmDialog.vue'
 import { isChannelManagedStay, STAY_CHANNEL_LABELS, STAY_PAYMENT_METHOD_LABELS, type StayPaymentMethod } from '~/shared/bookings'
+import { isTurnoverReadiness } from '~/shared/turnover-checklist'
 import { bookedPolicyTerms } from '~/shared/stay-cancellation'
 import { isCurrencyCode } from '~/shared/currencies'
 import { formatMinorAmount, majorAmountToMinor } from '~/shared/prices'
@@ -896,6 +901,7 @@ const dashboardStay = computed(() => isDashboardBooking(data.value) && 'home' in
 const managedStay = computed(() => dashboardStay.value?.manage ? dashboardStay.value : null)
 const turnoverHome = computed(() => dashboardStay.value?.manage === false ? dashboardStay.value.home : null)
 const stay = computed(() => accountStay.value?.booking ?? dashboardStay.value?.booking ?? null)
+const readiness = computed(() => { const value = dashboardStay.value?.booking as { readiness?: unknown } | undefined; return isTurnoverReadiness(value?.readiness) ? value.readiness : null })
 const detail = computed(() => accountStay.value?.booking ?? managedStay.value?.booking ?? null)
 const pendingChanges = computed(() => managedStay.value?.booking.pending_changes ?? [])
 const channelManaged = computed(() => detail.value !== null && isChannelManagedStay(detail.value))

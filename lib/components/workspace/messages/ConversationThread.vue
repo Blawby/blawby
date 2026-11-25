@@ -39,12 +39,19 @@
                       <UBadge v-if="message.job_status === 'done'" label="Done" color="success" variant="subtle" size="sm" />
                       <UBadge v-else-if="message.job_status === 'cancelled'" label="Cancelled" color="neutral" variant="subtle" size="sm" />
                       <UBadge v-else-if="message.job_status === 'skipped'" label="Skipped" color="neutral" variant="subtle" size="sm" />
+                      <UBadge v-else-if="message.job_confirmation === 'confirmed'" label="Confirmed" color="success" variant="subtle" size="sm" />
+                      <UBadge v-else-if="message.job_confirmation === 'not_confirmed'" label="Not confirmed yet" color="warning" variant="subtle" size="sm" />
                     </div>
                     <p class="mt-0.5 whitespace-pre-wrap break-words text-base font-semibold text-highlighted">{{ message.body }}</p>
                     <div v-if="message.photos.length" class="mt-3 grid gap-1" :class="message.photos.length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
                       <button v-for="(photo, at) in message.photos" :key="photo.id" type="button" class="block overflow-hidden rounded-2xl bg-accented" :aria-label="`Open photo ${at + 1} of ${message.photos.length}`" @click="viewer = { photos: message.photos.map(item => ({ url: item.url })), at }">
                         <img :src="photo.thumbnail_url" alt="" loading="lazy" class="size-full object-cover" :class="message.photos.length > 1 ? 'aspect-square' : 'max-h-64'">
                       </button>
+                    </div>
+                    <!-- A clean given to you: accept it, or hand it to the home's next cleaner. -->
+                    <div v-if="data?.job_responses?.[message.id]" class="mt-3 grid grid-cols-2 gap-2">
+                      <UButton label="Accept" color="neutral" block class="rounded-xl" :loading="closing" data-testid="conversation-job-accept" @click="emit('accept', message.id)" />
+                      <UButton label="Can’t do it" color="neutral" variant="outline" block class="rounded-xl" :disabled="closing" data-testid="conversation-job-decline" @click="emit('decline', message.id)" />
                     </div>
                     <UButton v-if="data?.job_actions?.[message.id]" label="Done" color="neutral" variant="soft" block class="mt-3 rounded-xl" :loading="closing" data-testid="conversation-job-done" @click="emit('done', message.id)" />
                   </div>
@@ -58,7 +65,14 @@
               <!-- Airbnb's run header: "Shoba · Host 9:52 AM". -->
               <p class="mb-1 mt-3 text-xs text-muted"><span class="font-semibold text-highlighted">{{ [item.runs[0]!.author, item.runs[0]!.side === 'business' ? titleOf(item.runs[0]!.author_user_id) : null].filter(Boolean).join(' · ') }}</span> {{ item.runs[0]!.time }}</p>
               <div v-for="message in item.runs" :key="settledKeys[message.id] ?? message.id" class="group/message flex min-w-0 flex-col" :class="item.mine ? 'items-end' : 'items-start'" :data-team-message="thread.kind === 'team' ? message.id : undefined" :data-automatic="message.automatic || undefined">
-                <div v-if="message.photos.length" class="grid max-w-sm gap-1" :class="[message.photos.length > 1 ? 'grid-cols-2' : 'grid-cols-1', message.sending ? 'opacity-60' : '']">
+                <!-- A turnover checklist submitted with Done: one card, its photos beside their references. -->
+                <div v-if="message.checklist" class="flex w-full min-w-0 items-start gap-2" :class="item.mine ? 'flex-row-reverse' : ''">
+                  <TurnoverChecklistCard :checklist="message.checklist" :sent-at="message.sent_at" @view="(photos, at) => viewer = { photos: photos.map(photo => ({ url: photo.url })), at }" />
+                  <UDropdownMenu v-if="messageActions(message, item.mine).length" :items="messageActions(message, item.mine)" :content="{ align: item.mine ? 'end' : 'start' }">
+                    <UButton icon="i-lucide-ellipsis" color="neutral" variant="outline" square size="sm" class="shrink-0 rounded-full" :aria-label="`Actions for ${message.author}'s message`" />
+                  </UDropdownMenu>
+                </div>
+                <div v-else-if="message.photos.length" class="grid max-w-sm gap-1" :class="[message.photos.length > 1 ? 'grid-cols-2' : 'grid-cols-1', message.sending ? 'opacity-60' : '']">
                   <button
                     v-for="(photo, at) in message.photos"
                     :key="photo.id"
@@ -70,7 +84,7 @@
                     <img :src="photo.thumbnail_url" alt="" :width="photo.width ?? undefined" :height="photo.height ?? undefined" loading="lazy" class="size-full object-cover" :class="message.photos.length > 1 ? 'aspect-square' : 'max-h-80'">
                   </button>
                 </div>
-                <div v-if="message.body" class="flex min-w-0 max-w-full items-center gap-2" :class="item.mine ? 'flex-row-reverse' : ''">
+                <div v-if="message.body && !message.checklist" class="flex min-w-0 max-w-full items-center gap-2" :class="item.mine ? 'flex-row-reverse' : ''">
                   <div
                     class="min-w-0 whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-base [overflow-wrap:anywhere]"
                     :class="[item.mine ? 'bg-inverted text-inverted' : 'bg-accented/70 text-highlighted', message.sending ? 'opacity-60' : '']"
@@ -174,6 +188,7 @@ import { authClient } from '~/lib/auth-client'
 import MessageComposer, { messageReplyForm, sameMessagePhotos, useMessagePhotoDraft, type MessagePhotoDraft } from './MessageComposer.vue'
 import MessagePhotoViewer, { type MessagePhotoViewerState } from './MessagePhotoViewer.vue'
 import InboxAvatar from './InboxAvatar.vue'
+import TurnoverChecklistCard from './TurnoverChecklistCard.vue'
 import ReportDialog from './ReportDialog.vue'
 import TaskCreate from '~/components/dashboard/TaskCreate.vue'
 import AgreementSignSheet from '~/components/booking/AgreementSignSheet.vue'
@@ -192,7 +207,7 @@ function prefetchReservation(to: string) {
   const id = router.resolve(to).params.record_id
   if (typeof id === 'string') reservationRead.prefetch(id)
 }
-const emit = defineEmits<{ done: [messageId: string] }>()
+const emit = defineEmits<{ done: [messageId: string]; accept: [messageId: string]; decline: [messageId: string] }>()
 
 const dashboard = useDashboardOrganization()
 const route = useRoute()

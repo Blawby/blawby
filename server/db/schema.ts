@@ -178,6 +178,9 @@ export const listing_message_members = sqliteTable("listing_message_members", {
 	listing_id: text().notNull(),
 	member_id: text().notNull(),
 	access: text({ enum: ["messaging", "tasks", "calendar", "calendar_and_messaging", "operations"] }).default("messaging").notNull(),
+	// A cleaner's place in the home's order: the first is offered each clean, the next after a decline (#2091).
+	// NULL keeps the order they were added in, after any the host has placed.
+	cleaning_order: integer(),
 	created_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
 }, table => [
 	primaryKey({ columns: [table.organization_id, table.listing_id, table.member_id] }),
@@ -334,6 +337,10 @@ export const tasks = sqliteTable('tasks', {
   notes: text(),
   assigned_member_id: text(),
   claim_role: text(),
+  // The member who accepted this job (#2091 section 8): confirmed while it is the assignee.
+  // A reassignment leaves it naming someone else, which reads as not confirmed; a decline clears it.
+  accepted_member_id: text(),
+  accepted_at: text(),
   starts_at: text(),
   due_at: text(),
   timezone: text().notNull(),
@@ -1304,6 +1311,13 @@ export const product_stay_configs = sqliteTable("product_stay_configs", {
 	house_manual: text(),
 	// [{ task, details }] in the order guests read them; each task once.
 	checkout_instructions: text().default("[]").notNull(),
+	// What a turnover must leave, in the order the cleaner checks it (#2091):
+	// [{ id, title, instructions, type, minimum, per_guest, baseline, photo_required }],
+	// checked by server/domain/turnover-checklists.ts. An item's reference photo
+	// is the product's `turnover_checklist.<id>` media placement. Staff only.
+	turnover_checklist: text().default("[]").notNull(),
+	// 1: each clean is offered to all the home's cleaners, first to accept takes it; 0: it goes to the first cleaner.
+	offer_cleans_to_all: integer().default(0).notNull(),
 	created_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
 	updated_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
 	created_by: text().notNull(),

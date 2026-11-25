@@ -292,7 +292,10 @@ base nightly price. Property type, rooms, amenities from
 `shared/stay-listing.ts` and cancellation policies are public and appear in its
 `Accommodation` data. The arrival guide (check-in method, wifi, directions,
 house manual, checkout) is private to managers and assigned members. Web, iPhone
-and MCP edit the same facts.
+and MCP edit the same facts. Beside it, the turnover checklist is one leaf: the
+items a clean must leave, in order, each confirmed or counted (a count may follow
+the guests arriving next) and some with a photo and a reference photo. Done on
+that home's turnover asks for it, and only owners and admins close past it.
 
 A stay opens at `bookings/:bookingId`. A host-created stay records offline
 payments and is not blocked by closed nights or minimum stays. A channel stay

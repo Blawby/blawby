@@ -16,8 +16,8 @@ export const MAX_MESSAGE_PHOTOS = 10
 /** A message in any conversation, or a task someone closed with photos. */
 
 /** The rules every message photo meets, however it arrived: count, size and real image type. */
-export function assertMessagePhotos(photos: MessagePhoto[]): Array<MessagePhoto & { contentType: string }> {
-  if (photos.length > MAX_MESSAGE_PHOTOS) throw new MessagePhotoRejection(`A message can carry at most ${MAX_MESSAGE_PHOTOS} photos.`)
+export function assertMessagePhotos(photos: MessagePhoto[], max = MAX_MESSAGE_PHOTOS): Array<MessagePhoto & { contentType: string }> {
+  if (photos.length > max) throw new MessagePhotoRejection(`A message can carry at most ${max} photos.`)
   return photos.map((photo) => {
     if (photo.bytes.byteLength > MAX_IMAGE_BYTES) throw new MessagePhotoRejection(`${photo.filename} is larger than 10 MB.`)
     const contentType = sniffMediaMimeType(photo.bytes)
@@ -120,8 +120,10 @@ export async function uploadMessagePhotos(
   organizationId: string,
   photos: MessagePhoto[],
   uploader: Uploader,
+  /** A turnover checklist's message carries one photo per item besides its note's. */
+  max = MAX_MESSAGE_PHOTOS,
 ): Promise<string[]> {
-  const checked = assertMessagePhotos(photos)
+  const checked = assertMessagePhotos(photos, max)
 
   const assetIds: string[] = []
   try {

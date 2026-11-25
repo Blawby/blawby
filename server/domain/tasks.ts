@@ -1,4 +1,4 @@
-import { PLATFORM_MESSAGE_AUTHOR_KINDS_SQL } from '~/shared/messages-contract'
+import { PLATFORM_MESSAGE_AUTHOR_KIND, PLATFORM_MESSAGE_AUTHOR_KINDS_SQL } from '~/shared/messages-contract'
 import { listingGrantSql, staffAccessWritesEnabled } from '~/server/domain/listing-access'
 import { assignedOperationsRoles, isOrganizationRole, organizationRoleCards, roleMatchesSql, rolesAllowing, workspaceManagementRoles } from '~/utils/organization-access'
 import { PAYMENT_TASK_KIND } from '~/server/domain/unpaid'
@@ -11,7 +11,7 @@ import { creationDedupeKey, creationRecordOf, creationRecordQuery, creationReque
 import { publishBusinessInvalidation, publishConversationEvent } from '~/server/cloudflare/guest-inbox-events'
 import { conversationMemberSql, messageQueries, participantGuard } from '~/server/domain/conversations'
 import { firstName } from '~/server/domain/guest-threads/presentation'
-import { discardMessagePhotos, groupMessagePhotos, messagePhotoPlacements, messagePhotoRowsSql, MessagePhotoRejection, uploadMessagePhotos, type MessagePhoto, type MessagePhotoRow } from '~/server/domain/guest-threads/attachments'
+import { discardMessagePhotos, groupMessagePhotos, MAX_MESSAGE_PHOTOS, messagePhotoPlacements, messagePhotoRowsSql, MessagePhotoRejection, uploadMessagePhotos, type MessagePhoto, type MessagePhotoRow } from '~/server/domain/guest-threads/attachments'
 import { bookingEditorPath, guestConversationPath } from '~/server/utils/dashboard-links'
 import { ownerPicture } from '~/server/notifications/hero'
 import { groupMediaPlacements, mediaPlacementsQuery } from '~/server/utils/media-asset-manager'
@@ -21,6 +21,8 @@ import { BOOKING_RECORDS_SQL, bookingDay } from '~/server/domain/requests'
 import { resolveBookingPresentation } from '~/utils/booking-presentation'
 import { getVerticalCopy } from '~/utils/vertical-copy'
 import { guestGroup } from '~/shared/dashboard-today'
+import { checkedSubmission, checklistColumnsSql, checklistOf, lapsedTurnoverSql, resolveTaskChecklist, submissionBody, WITHOUT_CHECKLIST, type ChecklistColumns } from '~/server/domain/turnover-checklists'
+import type { ChecklistSubmission, HomeTurnoverChecklist, TaskChecklist } from '~/shared/turnover-checklist'
 
 /*
   A turnover or failed scheduled message follows changes to its subject.
@@ -41,6 +43,9 @@ export interface TaskRow {
   title: string | null; notes: string | null
   assigned_member_id: string | null
   claim_role?: string | null
+  /** Who accepted the job: confirmed while it is the assignee (#2091). */
+  accepted_member_id?: string | null
+  accepted_at?: string | null
   starts_at: string | null; due_at: string | null; timezone: string
   status: TaskStatus; closed_at: string | null; closed_by_user_id: string | null
   dedupe_key: string; version: number; created_by_user_id: string | null; created_at: string; updated_at: string
@@ -130,6 +135,8 @@ export interface TurnoverHome {
   check_in_time: string | null
   check_out_time: string | null
   assigned_member_id: string | null
+  /** 'cleaner' when the home offers its cleans to all its cleaners. */
+  claim_role: string | null
   turnover_neighbours: string
 }
 
@@ -156,6 +163,46 @@ function stayIs(organizationId: string, stay: StayWindow, timezone: string): Bat
     params: [organizationId, stay.id, stay.product_id, stay.status, ...starts.params!, ...ends.params!] }
 }
 
+/**
+ * A home's cleaners, first first (#2091): its team members with the cleaner role and task access,
+ * in the order the host set, then in the order they joined the home. `home` names a product_stay_configs row.
+ */
+export const homeCleanersSql = (organization: string, product: string) => `SELECT g.member_id FROM listing_message_members g
+  JOIN member cm ON cm.id = g.member_id AND cm.organizationId = g.organization_id
+  WHERE g.organization_id = ${organization} AND g.listing_id = ${product} AND g.access IN ('tasks', 'operations')
+    AND ${roleMatchesSql('cm.role', ['cleaner'])}
+  ORDER BY g.cleaning_order IS NULL, g.cleaning_order, g.created_at, g.member_id`
+
+/**
+ * Who a home's new clean goes to: its first cleaner, or, when the home offers cleans to all its
+ * cleaners or has none, its host (who holds it until a cleaner accepts). `home` and `booking` name
+ * its product_stay_configs and product_booking_configs rows.
+ */
+export const turnoverAssigneeSql = (home: string, booking: string) => `CASE WHEN ${home}.offer_cleans_to_all = 1 THEN ${booking}.assigned_member_id
+  ELSE COALESCE((${homeCleanersSql(`${home}.organization_id`, `${home}.product_id`)} LIMIT 1), ${booking}.assigned_member_id) END`
+/** 'cleaner' while a clean is offered to all the home's cleaners, first to accept takes it. */
+export const turnoverOfferSql = (home: string) => `CASE WHEN ${home}.offer_cleans_to_all = 1 AND EXISTS (${homeCleanersSql(`${home}.organization_id`, `${home}.product_id`)}) THEN 'cleaner' END`
+
+/**
+ * The home's open cleans that have not started, moved to whoever its cleaning now goes to, after
+ * its team, its cleaners' order or its offer setting changed. A clean the assignee accepted stays
+ * with them while they are still one of the home's cleaners.
+ */
+export function rehomeTurnoversQuery(organizationId: string, productId: string, now: string): BatchQuery {
+  const home = `(SELECT %s FROM product_stay_configs c JOIN product_booking_configs b ON b.organization_id = c.organization_id AND b.product_id = c.product_id
+    WHERE c.organization_id = tasks.organization_id AND c.product_id = tasks.product_id)`
+  const assignee = home.replace('%s', jobAssigneeSql('c.organization_id', turnoverAssigneeSql('c', 'b')))
+  const offer = home.replace('%s', turnoverOfferSql('c'))
+  return {
+    query: `UPDATE tasks SET assigned_member_id = ${assignee}, claim_role = ${offer}, accepted_member_id = NULL, accepted_at = NULL, version = version + 1, updated_at = ?
+      WHERE organization_id = ? AND product_id = ? AND kind = 'turnover' AND status = 'open' AND (starts_at IS NULL OR starts_at > ?)
+        AND (assigned_member_id IS NOT ${assignee} OR claim_role IS NOT ${offer})
+        AND NOT (accepted_member_id IS NOT NULL AND accepted_member_id = assigned_member_id AND assigned_member_id IN (${homeCleanersSql('tasks.organization_id', 'tasks.product_id')}))
+      RETURNING id AS changed_task_id`,
+    params: [now, organizationId, productId, now],
+  }
+}
+
 export const TURNOVER_HOME_FROM = `product_stay_configs c
   JOIN product_booking_configs b ON b.organization_id = c.organization_id AND b.product_id = c.product_id
   JOIN business_locations l ON l.organization_id = c.organization_id AND l.id = c.location_id`
@@ -168,7 +215,8 @@ export function turnoverHomeColumns(checkIn: string): string {
     timezone: 'l.timezone',
     check_in_time: 'b.check_in_time',
     check_out_time: 'b.check_out_time',
-    assigned_member_id: 'b.assigned_member_id',
+    assigned_member_id: turnoverAssigneeSql('c', 'b'),
+    claim_role: turnoverOfferSql('c'),
     // Read one day wider for a checkout instant on a different UTC day than its local day.
     turnover_neighbours: `(SELECT json_group_array(json_object('id', id, 'product_id', product_id, 'status', status,
       'starts_at', starts_at, 'ends_at', ends_at, 'actual_check_out_date', actual_check_out_date, 'timezone', timezone))
@@ -269,11 +317,11 @@ export function turnoverTaskQueries(input: TurnoverChange & { after: StayWindow;
     // A stay that checked out before today at its home is history, not work.
     if (stay.check_out_date >= localDateAt(new Date(now), home.timezone)) {
       queries.push({
-        query: `INSERT INTO tasks (id, organization_id, kind, subject_type, subject_id, product_id, location_id, assigned_member_id,
+        query: `INSERT INTO tasks (id, organization_id, kind, subject_type, subject_id, product_id, location_id, assigned_member_id, claim_role,
             starts_at, due_at, timezone, status, dedupe_key, version, created_at, updated_at)
-          SELECT ?, ?, 'turnover', 'booking', ?, ?, ?, ${jobAssigneeSql('?', '?')}, ?, ?, ?, 'open', ?, 1, ?, ? WHERE (${guard.query})
+          SELECT ?, ?, 'turnover', 'booking', ?, ?, ?, ${jobAssigneeSql('?', '?')}, ?, ?, ?, ?, 'open', ?, 1, ?, ? WHERE (${guard.query})
           ON CONFLICT (dedupe_key) DO NOTHING RETURNING id AS changed_task_id`,
-        params: [crypto.randomUUID(), organizationId, stay.id, home.product_id, home.location_id, home.assigned_member_id, organizationId,
+        params: [crypto.randomUUID(), organizationId, stay.id, home.product_id, home.location_id, home.assigned_member_id, organizationId, home.claim_role,
           startsAt, dueAt, home.timezone, key, now, now, ...guard.params!],
       })
     }
@@ -361,8 +409,12 @@ export async function taskViewer(principal: MemberAccessPrincipal): Promise<Task
  */
 const claimRoles = rolesAllowing({ task: ['claim'] })
 
+/** A clean offered to a home's cleaners that nobody has accepted: its host holds it, any of them may take it. */
+const OFFERED_SQL = (task: string) => `OR (${task}.kind = 'turnover' AND ${task}.status = 'open' AND ${task}.accepted_member_id IS NULL)`
+
 function claimAudienceSql(task: string, member: string) {
-  return `${task}.kind = 'custom' AND ${task}.claim_role IS NOT NULL
+  // Work someone added, or a home's clean offered to all its cleaners (#2091).
+  return `${task}.kind IN ('custom', 'turnover') AND ${task}.claim_role IS NOT NULL
     AND ${roleMatchesSql(`${member}.role`, claimRoles)}
     AND instr(',' || replace(${member}.role, ' ', '') || ',', ',' || ${task}.claim_role || ',') > 0
     AND ${listingGrantSql(`${task}.organization_id`, `${task}.product_id`, `${member}.id`, 'task')}`
@@ -375,7 +427,7 @@ export function taskScopeSql(alias: string, who: () => ViewerTerms): string {
       OR (${alias}.claim_role IS NULL AND ${alias}.assigned_member_id = m.id
         AND ${alias}.kind NOT IN ('message_delivery', 'booking_change', 'booking_review')
         AND (${alias}.kind <> 'maintenance' OR ${roleMatchesSql('m.role', ['maintenance'])}))
-      OR ((${alias}.assigned_member_id = m.id OR (${alias}.assigned_member_id IS NULL AND ${alias}.status = 'open'))
+      OR ((${alias}.assigned_member_id = m.id OR (${alias}.assigned_member_id IS NULL AND ${alias}.status = 'open') ${OFFERED_SQL(alias)})
         AND ${claimAudienceSql(alias, 'm')})
       OR (${alias}.claim_role IS NULL AND ${alias}.kind <> 'maintenance' AND ${roleMatchesSql('m.role', assignedOperationsRoles)}
         AND NOT (${alias}.kind = 'booking_review' AND EXISTS (SELECT 1 FROM bookings b WHERE b.id = ${alias}.subject_id
@@ -387,7 +439,7 @@ export function taskScopeSql(alias: string, who: () => ViewerTerms): string {
 }
 
 /** `taskScopeSql` for a resolved viewer: every term is bound, in the order the SQL reads it. */
-function scopeSql(viewer: TaskViewer, alias = 't'): { sql: string; params: unknown[] } {
+export function scopeSql(viewer: TaskViewer, alias = 't'): { sql: string; params: unknown[] } {
   const params: unknown[] = []
   const { organizationId, userId } = viewer.principal
   const bind = (value: unknown) => { params.push(value); return '?' }
@@ -451,6 +503,13 @@ export interface TaskView {
   /** The owner's instructions. */
   notes: string | null
   outcome: { note: string | null; photos: TaskPhoto[]; closed_at: string; closed_by: string | null } | null
+  /** A turnover at a home with a checklist: what Done asks for, counts resolved against the next arrival now. */
+  checklist: TaskChecklist | null
+  /**
+   * An open clean: whether its cleaner has accepted it, and who could not do it and why (#2091).
+   * "Confirmed by Ann", "Not confirmed yet", "Offered to the home's cleaners".
+   */
+  confirmation: { state: 'confirmed' | 'not_confirmed' | 'offered'; label: string; declined: Array<{ name: string; reason: string | null }> } | null
   /** The dashboard page of the task's subject, when it has one. */
   path: string | null
   product_id: string | null
@@ -458,7 +517,7 @@ export interface TaskView {
   booking_id: string | null
   product_session_id?: string
   conversation_id: string | null
-  can: { complete: boolean; skip: boolean; reopen: boolean; assign: boolean; edit: boolean }
+  can: { complete: boolean; skip: boolean; reopen: boolean; assign: boolean; edit: boolean; accept: boolean; decline: boolean }
   /** How an open task is set aside. */
   dismiss: { label: 'Skip' | 'Dismiss' } | null
 }
@@ -484,7 +543,7 @@ interface Context {
   people: Map<string, { name: string; userId: string }>
   users: Map<string, string>
   /** An offering by id; a task's offering without a name is a broken record. */
-  product: (id: string) => { name: string; kind: ProductKind; imageUrl: string | null } | null
+  product: (id: string) => { name: string; kind: ProductKind; imageUrl: string | null; checklist: HomeTurnoverChecklist['items'] } | null
   locations: Map<string, string>
   stay: (id: string) => StayFacts | null
   arrival: (stay: StayFacts) => StayFacts | null
@@ -495,6 +554,8 @@ interface Context {
   outcomes: Map<string, { note: string | null; photos: TaskPhoto[] }>
   /** The guest message a maintenance job was reported in, by message id. */
   reports: Map<string, { conversation_id: string; guest_name: string | null; participant: string | null; body: string | null }>
+  /** Who could not do each listed clean and why, in the order they said so. */
+  declines: Map<string, Array<{ name: string; reason: string | null }>>
   /** An order to send, by order id: its number, buyer, items and conversation. */
   orders: Map<string, { number: number; conversation_id: string | null; guest_name: string | null; delivery_method: string; items: string; first_product_id: string | null; country: string | null }>
 }
@@ -544,7 +605,7 @@ function taskContextQueries(organizationId: string, listed: { sql: string; param
     query(`SELECT ${STAY_FACTS} FROM ${stays} WHERE s.organization_id = ${org} AND s.product_session_id IS NULL AND s.id IN ${stayIds}`),
     query(`SELECT id, json_extract(payload_json, '$.guest.name') AS guest_name, json_extract(payload_json, '$.participant.title') AS participant
       FROM conversations WHERE organization_id = ${org} AND kind = 'booking' AND booking_id IN ${bookingIds}`),
-    query(`SELECT p.id, p.kind, CASE WHEN p.kind = 'stay' THEN c.internal_name ELSE p.name END AS name
+    query(`SELECT p.id, p.kind, CASE WHEN p.kind = 'stay' THEN c.internal_name ELSE p.name END AS name, ${checklistColumnsSql('c')}
       FROM products p LEFT JOIN product_stay_configs c ON c.organization_id = p.organization_id AND c.product_id = p.id
       WHERE p.organization_id = ${org} AND p.id IN (${productIds})`),
     { query: `WITH listed AS (${listed.sql}), scope(organization_id) AS (SELECT ?) ${pictures.query}`, params: [...listed.params, organizationId, ...pictures.params!] },
@@ -560,19 +621,24 @@ function taskContextQueries(organizationId: string, listed: { sql: string; param
         (SELECT l.product_id FROM order_lines l WHERE l.organization_id = o.organization_id AND l.order_id = o.id AND l.sort_order = 0) AS first_product_id
       FROM orders o LEFT JOIN conversations c ON c.organization_id = o.organization_id AND c.id = o.conversation_id
       WHERE o.organization_id = ${org} AND o.id IN ${subjects('order')}`),
+    // Each clean's Can't do it lines, by their keys (tasks.ts declineTask).
+    query(`SELECT json_extract(m.payload_json, '$.task_id') AS task_id, json_extract(m.payload_json, '$.name') AS name, json_extract(m.payload_json, '$.reason') AS reason
+      FROM listed t JOIN messages m ON m.organization_id = t.organization_id AND m.dedupe_key >= 'task-response:' || t.id || ':' AND m.dedupe_key < 'task-response:' || t.id || ';'
+      WHERE t.kind = 'turnover' AND json_extract(m.payload_json, '$.task_response') = 'declined' ORDER BY m.occurred_at`),
   ]
 }
 
 function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ results: unknown[] }>): Context {
-  const [organizations, members, locations, messages, privateConsultations, booked, stayRows, requests, products, pictures, closureRows, reportRows, orderRows]
+  const [organizations, members, locations, messages, privateConsultations, booked, stayRows, requests, products, pictures, closureRows, reportRows, orderRows, declineRows]
     = results.map(result => result.results) as [
       Array<{ slug: string; vertical: string }>, Array<{ id: string; userId: string; name: string }>, Array<{ id: string; title: string }>,
       DeliveryTaskMessage[],
       Array<{ id: string; booking_id: string | null }>, BookedRow[], StayRow[], Array<{ id: string; guest_name: string | null; participant: string | null }>,
-      Array<{ id: string; name: string | null; kind: ProductKind }>, unknown[],
+      Array<{ id: string; name: string | null; kind: ProductKind } & { [K in keyof ChecklistColumns]: ChecklistColumns[K] | null }>, unknown[],
       Array<{ task_id: string; message_id: string; body: string | null } & (MessagePhotoRow | { owner_id: null })>,
       Array<{ id: string; conversation_id: string; guest_name: string | null; participant: string | null; body: string | null }>,
       Array<{ id: string; number: number; conversation_id: string | null; guest_name: string | null; delivery_method: string; items: string; first_product_id: string | null; country: string | null }>,
+      Array<{ task_id: string; name: string; reason: string | null }>,
     ]
   const organization = organizations[0]
   if (!organization) throw new Error(`Organization ${organizationId} is missing`)
@@ -600,7 +666,8 @@ function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ r
       const product = offerings.get(id)
       if (!product) return null
       if (!product.name?.trim()) throw new Error(`Product ${product.id} has no name for this task`)
-      return { name: product.name, kind: product.kind, imageUrl: ownerPicture('product', placements.get(id) ?? [], [])?.imageUrl ?? null }
+      return { name: product.name, kind: product.kind, imageUrl: ownerPicture('product', placements.get(id) ?? [], [])?.imageUrl ?? null,
+        checklist: product.turnover_checklist === null ? [] : checklistOf({ turnover_checklist: product.turnover_checklist, turnover_references: product.turnover_references! }, product.id) }
     },
     locations: new Map(locations.map(location => [location.id, location.title])),
     stay,
@@ -615,6 +682,7 @@ function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ r
       .map(photo => ({ id: photo.id, url: photo.url, thumbnail_url: photo.thumbnailUrl })) }])),
     reports: new Map(reportRows.map(({ id, ...report }) => [id, report])),
     orders: new Map(orderRows.map(({ id, ...order }) => [id, order])),
+    declines: declineRows.reduce((byTask, { task_id, ...decline }) => byTask.set(task_id, [...byTask.get(task_id) ?? [], decline]), new Map<string, Array<{ name: string; reason: string | null }>>()),
   }
 }
 
@@ -655,6 +723,7 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
   let face: TaskView['face'] = product ? 'photo' : 'compact'
   let image: string | null = product?.imageUrl ?? null
   let avatar: TaskView['avatar'] = null
+  let checklist: TaskChecklist | null = null
   switch (row.kind) {
     case 'turnover': {
       const stay = context.stay(row.subject_id!)
@@ -666,6 +735,8 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
       const checkout = row.starts_at === null ? null : time(row.starts_at)
       checkoutSide = { label: 'Checkout', time: checkout ?? 'Time not set', guest: who(stay.guest_name) }
       const next = context.arrival(stay)
+      // The home's checklist, its counts for the party arriving next as the bookings stand now.
+      checklist = resolveTaskChecklist(product.checklist, next ? { guests: next.adults + next.children, check_in_date: next.check_in_date } : null, isOrganizationWideRole(viewer.principal.role))
       if (next) {
         const localTime = row.due_at === null ? 'Time not set' : time(row.due_at)
         const party = next.adults + next.children
@@ -844,6 +915,8 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
       face = 'compact'
       break
   }
+  // Its next guests have arrived: the clean can still be closed late, but it is no longer today's work.
+  if (row.kind === 'turnover' && row.status === 'open' && row.due_at !== null && row.due_at <= now.toISOString()) status_line = `Not marked done · ${status_line}`
   if (row.status !== 'open') {
     face = 'compact'
     when = null
@@ -852,7 +925,10 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
     status_line = `${row.status === 'done' ? 'Done' : row.status === 'skipped' ? PERSON_WORK.has(row.kind) ? 'Skipped' : 'Dismissed' : 'Cancelled'} at ${at}`
     detail = null
   }
-  const available = !viewer.manage && row.assigned_member_id === null && Boolean(row.claim_role) && row.status === 'open'
+  // A clean offered to the home's cleaners is held by its host until one of them accepts it.
+  const offered = row.kind === 'turnover' && row.status === 'open' && Boolean(row.claim_role) && !row.accepted_member_id
+  const available = !viewer.manage && Boolean(row.claim_role) && row.status === 'open'
+    && (row.assigned_member_id === null || (offered && row.assigned_member_id !== viewer.memberId))
   if (available) {
     status_line = product?.name ?? null
     detail = null
@@ -861,7 +937,15 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
   const mine = assignee?.you ?? false
   const reachable = viewer.manage || mine || PERSON_WORK.has(row.kind) || row.kind === 'booking_change'
   const personClosed = (row.status === 'done' || row.status === 'skipped') && row.closed_by_user_id !== null
+  const confirmed = row.kind === 'turnover' && Boolean(row.accepted_member_id) && row.accepted_member_id === row.assigned_member_id
+  const confirmation: TaskView['confirmation'] = row.kind !== 'turnover' || row.status !== 'open' ? null : {
+    state: confirmed ? 'confirmed' : offered ? 'offered' : 'not_confirmed',
+    label: confirmed ? `Confirmed by ${assignee?.you ? 'you' : member ? firstName(member.name) : 'a former member'}` : offered ? 'Offered to the home’s cleaners' : 'Not confirmed yet',
+    declined: context.declines.get(row.id) ?? [],
+  }
   const can = {
+    accept: row.kind === 'turnover' && row.status === 'open' && !confirmed && (mine || available),
+    decline: row.kind === 'turnover' && row.status === 'open' && mine && !offered,
     complete: row.status === 'open' && action?.type === 'complete' && reachable,
     skip: row.status === 'open' && reachable && !available,
     reopen: personClosed && (viewer.manage || row.closed_by_user_id === viewer.principal.userId),
@@ -884,7 +968,7 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
     person: row.status === 'open' ? assignee : closer, assignee, action, sheet: { ...sheet, checkout: checkoutSide, checkin: checkinSide },
     ...(available ? { claim: { label: 'Claim', path: taskUpdatePath(row.organization_id, row.id), version: row.version } } : {}),
     starts_at: row.starts_at, due_at: row.due_at, timezone: zone, notes: available ? null : row.notes,
-    outcome,
+    outcome, checklist: row.status === 'open' ? checklist : null, confirmation,
     path, product_id: row.product_id, location_id: row.location_id, booking_id, ...(product_session_id ? { product_session_id } : {}), conversation_id, can,
     dismiss: can.skip ? { label: PERSON_WORK.has(row.kind) ? 'Skip' : 'Dismiss' } : null,
   }
@@ -932,8 +1016,9 @@ export async function listTasks(db: DbClient, viewer: TaskViewer, query: TaskLis
   if (query.kind) { filters.push('t.kind = ?'); params.push(query.kind) }
   // Closed work is shown on the day it was closed; two days covers every zone's today.
   const closedSince = new Date(now.getTime() - 2 * 86_400_000).toISOString()
-  const statusSql = query.status ? 't.status = ?' : `(t.status = 'open' OR (? = 'today' AND t.status IN ('done', 'skipped') AND t.closed_at >= ?))`
-  const statusParams = query.status ? [query.status] : [query.range, closedSince]
+  // A turnover whose next guests have arrived is not open work; asked for open tasks by name, it is listed as Not marked done.
+  const statusSql = query.status ? 't.status = ?' : `((t.status = 'open' AND NOT ${lapsedTurnoverSql('t', '?')}) OR (? = 'today' AND t.status IN ('done', 'skipped') AND t.closed_at >= ?))`
+  const statusParams = query.status ? [query.status] : [now.toISOString(), query.range, closedSince]
   // The tasks and everything their cards show, in one round trip.
   const listed = { sql: `SELECT t.*, COALESCE(s.actual_check_out_date, s.ends_at) AS checkout_at, s.timezone AS checkout_timezone FROM tasks t
     LEFT JOIN bookings s ON t.kind = 'turnover' AND t.starts_at IS NULL AND s.organization_id = t.organization_id AND s.id = t.subject_id
@@ -989,7 +1074,7 @@ export async function listTasks(db: DbClient, viewer: TaskViewer, query: TaskLis
 export interface OpenWorkRow {
   id: string; kind: TaskKind | typeof PAYMENT_TASK_KIND; version: number; subject_type: TaskRow['subject_type']; subject_id: string | null; dedupe_key: string
   product_id: string | null; location_id: string | null; title: string | null; timezone: string; starts_at: string | null; due_at: string | null
-  claim_role: string | null; notes: string | null; assigned_member_id: string | null; assignee_name: string | null; assigned_to_viewer: number
+  claim_role: string | null; notes: string | null; assigned_member_id: string | null; accepted_member_id: string | null; assignee_name: string | null; assigned_to_viewer: number
   /** Who added a task by hand; 1 when it was the viewer. */
   creator_name: string | null; created_by_viewer: number
   booking_id: string | null; booking_starts_at: string | null; booking_ends_at: string | null; booking_timezone: string | null; booking_unit: 'slot' | 'nights' | null
@@ -1016,7 +1101,7 @@ export interface OpenWorkRow {
 /** An untimed job's day is its booking's: a clean after the checkout. */
 const UNTIMED_JOB_DAY_SQL = 'b.ends_at'
 
-export function openWorkQuery(viewer: ViewerTerms, to: string): BatchQuery {
+export function openWorkQuery(viewer: ViewerTerms, to: string, now: string): BatchQuery {
   // What a booking still has to pay is read only by the people who manage the business, as its payments are.
   const wideTo = `${addLocalDays(to, 1)}T23:59:59.999Z`
   return {
@@ -1029,7 +1114,7 @@ export function openWorkQuery(viewer: ViewerTerms, to: string): BatchQuery {
           WHERE c.organization_id = x.organization_id AND c.kind = 'team' AND c.booking_id IS x.booking_id
             AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND instr(json_extract(m.payload_json, '$.key'), 'job:' || x.id || ':') = 1)
           ORDER BY c.created_at DESC, c.id LIMIT 1) AS team_conversation_id
-      FROM (SELECT t.id, t.organization_id, t.kind, t.version, t.subject_type, t.subject_id, t.product_id, t.location_id, t.title, t.timezone, t.starts_at, t.due_at, t.claim_role, t.assigned_member_id, t.dedupe_key,
+      FROM (SELECT t.id, t.organization_id, t.kind, t.version, t.subject_type, t.subject_id, t.product_id, t.location_id, t.title, t.timezone, t.starts_at, t.due_at, t.claim_role, t.assigned_member_id, t.accepted_member_id, t.dedupe_key,
           CASE WHEN t.kind IN ('custom', 'maintenance') AND t.assigned_member_id = ${viewer.member} THEN t.notes END AS notes,
           (SELECT u.name FROM member am JOIN user u ON u.id = am.userId WHERE am.id = t.assigned_member_id AND am.organizationId = t.organization_id) AS assignee_name,
           t.assigned_member_id IS NOT NULL AND t.assigned_member_id = ${viewer.member} AS assigned_to_viewer,
@@ -1043,6 +1128,8 @@ export function openWorkQuery(viewer: ViewerTerms, to: string): BatchQuery {
         LEFT JOIN scheduled_guest_messages g ON t.kind = 'message_delivery' AND g.organization_id = t.organization_id AND g.id = t.subject_id
         LEFT JOIN orders o ON t.kind = 'order_fulfillment' AND o.organization_id = t.organization_id AND o.id = t.subject_id
         WHERE t.organization_id = ${viewer.organization} AND t.status = 'open'
+          -- A turnover whose next guests have arrived is no longer open work (Not marked done).
+          AND NOT ${lapsedTurnoverSql('t', '?')}
           AND ((t.kind IN ('turnover', 'consultation_follow_up', 'consultation_prep', 'message_delivery', 'booking_change', 'custom', 'maintenance', 'order_fulfillment')
             AND ${taskScopeSql('t', () => viewer)})
             OR (t.kind = '${PAYMENT_TASK_KIND}' AND ${viewer.role ? roleMatchesSql(viewer.role, workspaceManagementRoles) : '0'}))) x
@@ -1054,7 +1141,7 @@ export function openWorkQuery(viewer: ViewerTerms, to: string): BatchQuery {
       LEFT JOIN conversations r ON r.organization_id = b.organization_id AND r.booking_id = b.id AND r.kind = 'booking'
      WHERE x.kind IN ('message_delivery', 'booking_change', 'order_fulfillment') OR COALESCE(x.starts_at, x.due_at, ${UNTIMED_JOB_DAY_SQL}, '') <= ?
      ORDER BY COALESCE(x.starts_at, x.due_at, ${UNTIMED_JOB_DAY_SQL}), x.id`,
-    params: [wideTo],
+    params: [now, wideTo],
   }
 }
 
@@ -1316,16 +1403,26 @@ async function claimTask(db: DbClient, viewer: TaskViewer, taskId: string, versi
     AND m.userId = ? AND ${claimAudienceSql('t', 'm')})`
   const key = [viewer.principal.organizationId, taskId, viewer.memberId, viewer.principal.userId]
   const current = await queryFirst<TaskRow>(db, `SELECT t.* FROM tasks t WHERE t.organization_id = ? AND t.id = ? AND ${audience}`, key)
-  if (!current || current.status !== 'open' || current.assigned_member_id !== null || current.version !== version) {
+  // A clean offered to the home's cleaners is held by its host until one of them accepts it: taking it is accepting it.
+  const offered = current?.kind === 'turnover'
+  const open = offered ? current!.accepted_member_id === null && current!.claim_role !== null : current?.assigned_member_id === null
+  if (!current || current.status !== 'open' || !open || current.version !== version) {
     fail(409, 'TASK_CLAIM_UNAVAILABLE', 'This task is no longer available to claim', 'version')
   }
+  const now = new Date().toISOString()
+  const entry = offered ? await jobEntryQueries(db, viewer, current, `${await memberFirstName(db, viewer)} accepted this clean.`, { task_response: 'accepted' }, now) : []
   const [result] = await executeBatch(db, [{
-    query: `UPDATE tasks AS t SET assigned_member_id = ?, version = version + 1, updated_at = ?
-      WHERE t.organization_id = ? AND t.id = ? AND ${audience} AND t.status = 'open' AND t.assigned_member_id IS NULL AND t.version = ?`,
-    params: [viewer.memberId, new Date().toISOString(), ...key, version],
-  }, taskEventQuery(viewer, current, 'task.assigned', {
-    before: { assigned_member_id: null }, after: { assigned_member_id: viewer.memberId },
-  })], { operation: 'Claim task' })
+    query: `UPDATE tasks AS t SET assigned_member_id = ?, ${offered ? 'accepted_member_id = ?, accepted_at = ?, claim_role = NULL, ' : ''}version = version + 1, updated_at = ?
+      WHERE t.organization_id = ? AND t.id = ? AND ${audience} AND t.status = 'open' AND ${offered ? 't.accepted_member_id IS NULL AND t.claim_role IS NOT NULL' : 't.assigned_member_id IS NULL'} AND t.version = ?
+      RETURNING id AS changed_task_id`,
+    params: [viewer.memberId, ...(offered ? [viewer.memberId, now] : []), now, ...key, version],
+  }, { query: "SELECT CASE WHEN changes() = 1 THEN NULL ELSE json('TASK_CLAIM_UNAVAILABLE') END" },
+  taskEventQuery(viewer, current, 'task.assigned', {
+    before: { assigned_member_id: current.assigned_member_id }, after: { assigned_member_id: viewer.memberId },
+  }, false), ...entry], { operation: 'Claim task' }).catch((error: unknown) => {
+    if (/malformed JSON/.test(error instanceof Error ? error.message : String(error))) fail(409, 'TASK_CLAIM_UNAVAILABLE', 'This task is no longer available to claim', 'version')
+    throw error
+  })
   if (result?.meta.changes !== 1) fail(409, 'TASK_CLAIM_UNAVAILABLE', 'This task is no longer available to claim', 'version')
   return afterWrite(db, viewer, taskId, viewer.memberId)
 }
@@ -1360,8 +1457,13 @@ export async function updateTask(db: DbClient, viewer: TaskViewer, taskId: strin
   return afterWrite(db, viewer, taskId, reassigned && assigned ? assigned : undefined)
 }
 
-/** Done or skipped, in one tap. What the person found they say in the job's conversation. */
-export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string, input: { status: 'done' | 'skipped'; env: CloudflareEnv; note?: unknown; photos?: MessagePhoto[] }): Promise<TaskView> {
+/**
+ * Done or skipped, in one tap. What the person found they say in the job's conversation.
+ * A turnover at a home with a checklist is done with `checklist` answers and a photo per item
+ * (`checklistPhotos`, by item id), checked against what the job requires now; done without
+ * them, the closing message says the checklist was not done.
+ */
+export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string, input: { status: 'done' | 'skipped'; env: CloudflareEnv; note?: unknown; photos?: MessagePhoto[]; checklist?: unknown; checklistPhotos?: Map<string, MessagePhoto> }): Promise<TaskView> {
   await assertRoleAllows({ ...viewer.principal, permissions: { task: ['complete'] } })
   const current = await readTaskRow(db, viewer, taskId)
   const context = await loadContext(db, viewer, [current])
@@ -1372,8 +1474,17 @@ export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string
   const now = new Date().toISOString()
   const organizationId = viewer.principal.organizationId
   const note = text(input.note, 'note', 5000)
-  const photos = input.photos ?? []
-  const authored = note !== null || photos.length > 0
+  const itemPhotos = input.checklistPhotos ?? new Map<string, MessagePhoto>()
+  if ((input.checklist !== undefined || itemPhotos.size) && (input.status !== 'done' || !view.checklist)) fail(422, 'CHECKLIST_NOT_EXPECTED', 'Only Done on a turnover with a checklist takes checklist answers', 'checklist')
+  // The answers as this job requires them now; a refusal names every missing answer and photo.
+  const checked = input.checklist === undefined || !view.checklist ? null : checkedSubmission(current.id, view.checklist, input.checklist, new Set(itemPhotos.keys()))
+  const skippedChecklist = input.status === 'done' && view.checklist !== null && checked === null
+  // Only an owner or admin closes a job past its checklist; every other client, an old app included, is told what to do.
+  if (skippedChecklist && !view.checklist!.close_without) fail(422, 'CHECKLIST_REQUIRED', 'This home has a cleaning checklist. Update Blawby to complete it.', 'checklist')
+  // An item's photo comes first in the message, in the checklist's order, then the note's own photos.
+  const itemOrder = checked ? checked.items.filter(item => itemPhotos.has(item.id)).map(item => item.id) : []
+  const photos = [...itemOrder.map(id => itemPhotos.get(id)!), ...input.photos ?? []]
+  const authored = note !== null || photos.length > 0 || checked !== null || skippedChecklist
   // A job closes in its conversation too: "Done" is the person's own message there, and nobody is alerted.
   // The conversation that carries this job is the one its automatic post went to, and the closer must still sit in it.
   const privatePrep = current.subject_type === 'product_session'
@@ -1392,16 +1503,19 @@ export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string
          WHERE later.conversation_id = c.id AND later.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND later.sequence > m.sequence))
      ORDER BY m.created_at DESC, m.id DESC LIMIT 1`, [viewer.principal.userId, organizationId, view.booking_id, privatePrep ? 1 : 0, current.assigned_member_id,
     jobKey(current), `${jobKey(current)}:after:`, privatePrep ? 1 : 0, d1JsonStringSet(jobEndKeys(current.id))]) : null
-  if (authored && !thread) fail(422, 'TASK_OUTCOME_REQUIRES_CONVERSATION', 'Notes and photos need the job’s team conversation', photos.length ? 'photos' : 'note')
-  const assetIds = await uploadMessagePhotos(db, input.env, organizationId, photos, { source: 'uploaded', userId: viewer.principal.userId }).catch((error: unknown) => {
+  if ((note !== null || photos.length > 0 || checked !== null || skippedChecklist) && !thread) fail(422, 'TASK_OUTCOME_REQUIRES_CONVERSATION', 'Notes, photos and a checklist need the job’s team conversation', checked ? 'checklist' : photos.length ? 'photos' : 'note')
+  const assetIds = await uploadMessagePhotos(db, input.env, organizationId, photos, { source: 'uploaded', userId: viewer.principal.userId }, MAX_MESSAGE_PHOTOS + itemOrder.length).catch((error: unknown) => {
     if (error instanceof MessagePhotoRejection) fail(422, 'INVALID_PHOTO', error.message, 'photos')
     throw error
   })
+  // The submission names each item's photo by the asset it became.
+  const submission: ChecklistSubmission | null = checked ? { ...checked, note, items: checked.items.map(item => ({ ...item, photo_id: itemOrder.includes(item.id) ? assetIds[itemOrder.indexOf(item.id)]! : null })) } : null
+  const body = submission ? submissionBody(submission) : skippedChecklist ? [WITHOUT_CHECKLIST, note].filter(Boolean).join('\n') : authored ? note : input.status === 'done' ? 'Done' : 'Skipped'
   // The person's own message in the job's conversation, written by the one message writer.
   const message = thread ? messageQueries({
     conversationId: thread.id, authorKind: 'member', authorUserId: viewer.principal.userId,
-    body: authored ? note : input.status === 'done' ? 'Done' : 'Skipped', dedupeKey: `task-closed:${taskId}:${current.version + 1}`,
-    ...(authored ? { payload: { task_outcome: true } } : {}),
+    body, dedupeKey: `task-closed:${taskId}:${current.version + 1}`,
+    ...(authored ? { payload: { task_outcome: true, ...(submission ? { checklist: submission } : {}), ...(skippedChecklist ? { checklist_skipped: true } : {}) } } : {}),
     guard: participantGuard('c', viewer.principal.userId, 'member'),
   }) : null
   try {
@@ -1442,3 +1556,108 @@ export async function reopenTask(db: DbClient, viewer: TaskViewer, taskId: strin
   return afterWrite(db, viewer, taskId)
 }
 
+
+// ---------------------------------------------------------------------------
+// A cleaner accepts a clean, or hands it back (#2091 section 8). Turno's
+// primaries and backups, with the home's team as the list: Can't do it hands
+// the clean to the home's next cleaner, then to its host. Each answer is one
+// line in the job's conversation, written with the task.
+// ---------------------------------------------------------------------------
+
+const DECLINE_REASON_MAX = 500
+
+async function memberFirstName(db: DbClient, viewer: TaskViewer): Promise<string> {
+  const row = await queryFirst<{ name: string }>(db, 'SELECT u.name FROM user u WHERE u.id = ?', [viewer.principal.userId])
+  if (!row) throw new Error(`User ${viewer.principal.userId} is missing`)
+  return firstName(row.name)
+}
+
+/**
+ * The line a job's answer writes into the conversation that carries the job now, for the batch that
+ * changes the task. A job whose conversation has not been written yet cannot be answered.
+ */
+async function jobEntryQueries(db: DbClient, viewer: TaskViewer, task: TaskRow, body: string, payload: Record<string, unknown>, now: string): Promise<BatchQuery[]> {
+  const thread = await queryFirst<{ id: string }>(db, `WITH t(id, product_id) AS (SELECT ?, ?)
+    SELECT c.id FROM t, conversations c JOIN messages m ON m.conversation_id = c.id AND m.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL})
+    WHERE c.organization_id = ? AND c.kind = 'team' AND ${jobPostMatchSql('t', 'm')}
+      AND NOT EXISTS (SELECT 1 FROM messages later JOIN json_each(?) stop ON json_extract(later.payload_json, '$.key') = stop.value OR instr(json_extract(later.payload_json, '$.key'), stop.value || ':') = 1
+        WHERE later.conversation_id = c.id AND later.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND later.sequence > m.sequence)
+    ORDER BY m.created_at DESC, m.id DESC LIMIT 1`,
+  [task.id, task.product_id, viewer.principal.organizationId, d1JsonStringSet(jobEndKeys(task.id))])
+  if (!thread) fail(409, 'JOB_CONVERSATION_PENDING', 'This clean is still being posted to its conversation; try again in a moment', 'task_id')
+  return messageQueries({ conversationId: thread.id, authorKind: PLATFORM_MESSAGE_AUTHOR_KIND, authorUserId: null, body,
+    dedupeKey: `task-response:${task.id}:${task.version + 1}`, occurredAt: now,
+    payload: { key: `response:${task.id}:${task.version + 1}`, task_id: task.id, member_id: viewer.memberId, ...payload } }).queries
+}
+
+/** Accept a clean given to you, or take one offered to the home's cleaners. */
+export async function acceptTask(db: DbClient, viewer: TaskViewer, taskId: string, body: Record<string, unknown>): Promise<TaskView> {
+  await assertRoleAllows({ ...viewer.principal, permissions: { task: ['complete'] } })
+  const current = await readTaskRow(db, viewer, taskId)
+  if (current.kind !== 'turnover') fail(422, 'TASK_NOT_ACCEPTABLE', 'Only a clean is accepted', 'task_id')
+  if (body.version !== current.version) fail(409, 'TASK_VERSION_CONFLICT', 'This task changed since you opened it; reload it and try again', 'version')
+  if (current.status !== 'open') fail(409, 'TASK_CLOSED', `This task is already ${current.status}`, 'status')
+  if (current.assigned_member_id !== viewer.memberId) {
+    if (current.claim_role !== null && current.accepted_member_id === null) return claimTask(db, viewer, taskId, body.version)
+    fail(403, 'TASK_SCOPE_DENIED', 'This clean is not yours to accept', 'task_id')
+  }
+  if (current.accepted_member_id === viewer.memberId) return getTask(db, viewer, taskId)
+  const now = new Date().toISOString()
+  const entry = await jobEntryQueries(db, viewer, current, `${await memberFirstName(db, viewer)} accepted this clean.`, { task_response: 'accepted' }, now)
+  await executeBatch(db, [{
+    query: `UPDATE tasks SET accepted_member_id = ?, accepted_at = ?, version = version + 1, updated_at = ?
+      WHERE organization_id = ? AND id = ? AND version = ? AND status = 'open' AND assigned_member_id = ?`,
+    params: [viewer.memberId, now, now, viewer.principal.organizationId, taskId, current.version, viewer.memberId],
+  }, { query: "SELECT CASE WHEN changes() = 1 THEN NULL ELSE json('TASK_VERSION_CONFLICT') END" },
+  taskEventQuery(viewer, current, 'task.updated', { after: { accepted_member_id: viewer.memberId } }, false), ...entry], { operation: 'Accept task' }).catch(versionConflict)
+  return afterWrite(db, viewer, taskId)
+}
+
+function versionConflict(error: unknown): never {
+  if (/malformed JSON/.test(error instanceof Error ? error.message : String(error))) fail(409, 'TASK_VERSION_CONFLICT', 'This task changed since you opened it; reload it and try again', 'version')
+  throw error
+}
+
+/**
+ * Can't do it: the clean goes to the home's next cleaner after you, or, with none left, to its host,
+ * who is told in the job's conversation who declined and why.
+ */
+export async function declineTask(db: DbClient, viewer: TaskViewer, taskId: string, body: Record<string, unknown>): Promise<TaskView> {
+  await assertRoleAllows({ ...viewer.principal, permissions: { task: ['complete'] } })
+  const current = await readTaskRow(db, viewer, taskId)
+  if (current.kind !== 'turnover') fail(422, 'TASK_NOT_ACCEPTABLE', 'Only a clean is handed on', 'task_id')
+  if (body.version !== current.version) fail(409, 'TASK_VERSION_CONFLICT', 'This task changed since you opened it; reload it and try again', 'version')
+  if (current.status !== 'open') fail(409, 'TASK_CLOSED', `This task is already ${current.status}`, 'status')
+  if (current.assigned_member_id !== viewer.memberId) fail(403, 'TASK_SCOPE_DENIED', 'This clean is not yours to hand on', 'task_id')
+  const reason = text(body.reason, 'reason', DECLINE_REASON_MAX)
+  const organizationId = viewer.principal.organizationId
+  const [cleanerRows, hostRows] = (await executeBatch(db, [
+    // The home's cleaners in their order, each with their name.
+    { query: `SELECT ordered.member_id, (SELECT u.name FROM member m JOIN user u ON u.id = m.userId WHERE m.id = ordered.member_id) AS name
+      FROM (${homeCleanersSql('?', '?')}) ordered`, params: [organizationId, current.product_id] },
+    { query: `SELECT m.id AS member_id, u.name FROM product_booking_configs b JOIN member m ON m.id = ${jobAssigneeSql('b.organization_id', 'b.assigned_member_id')}
+      JOIN user u ON u.id = m.userId WHERE b.organization_id = ? AND b.product_id = ?`, params: [organizationId, current.product_id] },
+  ], { operation: 'Read who cleans next' })).map(result => result.results as Array<{ member_id: string; name: string }>)
+  const host = hostRows![0]
+  if (!host) throw new Error(`Home ${current.product_id} has no host`)
+  const cleaners = cleanerRows!
+  const at = cleaners.findIndex(cleaner => cleaner.member_id === viewer.memberId)
+  const next = (at >= 0 ? cleaners.slice(at + 1) : cleaners.filter(cleaner => cleaner.member_id !== viewer.memberId))[0] ?? host
+  if (next.member_id === viewer.memberId) fail(409, 'NO_ONE_TO_HAND_ON', 'You are the last person this clean can go to: assign it to someone', 'task_id')
+  const now = new Date().toISOString()
+  const who = await memberFirstName(db, viewer)
+  const handed = next === host ? `It’s back with ${firstName(host.name)}.` : `${firstName(next.name)} has it now.`
+  const entry = await jobEntryQueries(db, viewer, current, `${who} can’t do it${reason ? `: ${reason}` : ''}. ${handed}`, { task_response: 'declined', reason, name: who }, now)
+  await executeBatch(db, [{
+    query: `UPDATE tasks SET assigned_member_id = ?, accepted_member_id = NULL, accepted_at = NULL, claim_role = NULL, version = version + 1, updated_at = ?
+      WHERE organization_id = ? AND id = ? AND version = ? AND status = 'open' AND assigned_member_id = ? RETURNING id AS changed_task_id`,
+    params: [next.member_id, now, organizationId, taskId, current.version, viewer.memberId],
+  }, { query: "SELECT CASE WHEN changes() = 1 THEN NULL ELSE json('TASK_VERSION_CONFLICT') END" },
+  taskEventQuery(viewer, current, 'task.assigned', { before: { assigned_member_id: viewer.memberId }, after: { assigned_member_id: next.member_id, declined: reason } }, false),
+  ...entry], { operation: 'Hand on task' }).catch(versionConflict)
+  const env = viewer.principal.env as CloudflareEnv
+  await publishChangedJobs(env, organizationId, [taskId])
+  await publishBusinessInvalidation(env, organizationId)
+  // It is no longer theirs to read through their scope: they get it as it now stands, held by someone else.
+  return taskViewForUser(db, organizationId, taskId, viewer.principal.userId)
+}

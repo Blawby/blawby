@@ -61,6 +61,7 @@ export async function seedExperience(createTenant: CreateTenant): Promise<SeedTe
     for (const asset of [studioImage]) await tool('attach_media', { placement: { owner_type: 'product', owner_id: item.id, slot: 'gallery' }, asset_id: asset.id })
     await tool('set_product_location', { product_id: item.id, location_id: aoNang.id, active: true, published: true })
     await tool('set_product_publication', { product_id: item.id, published: true })
+    await tool('set_pickup', { location_id: aoNang.id, pickup_enabled: true })
     recordProduct(tenant, 'ceramic-bowl', item)
     return tenant
   } finally { await owner.dispose() }

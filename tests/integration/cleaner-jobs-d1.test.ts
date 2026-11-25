@@ -12,7 +12,7 @@ import { cancelStay, createStay, updateStayHome, type StayAccess } from '../../s
 import { conversationPageFor } from './support/conversation-page.ts'
 import { sendConversationMessage } from '../../server/domain/send-conversation-message.ts'
 import { createTeamThread } from '../../server/domain/team-messages.ts'
-import { acceptTask, closeTask, createTask, declineTask, getTask, jobKey, listTasks, maintenanceOptions, reopenTask, taskViewer, updateTask, type TaskRow, type TaskView } from '../../server/domain/tasks.ts'
+import { acceptTask, closeTask, createTask, declineTask, getTask, jobEndKeys, jobKey, listTasks, maintenanceOptions, reopenTask, taskViewer, updateTask, type TaskRow, type TaskView } from '../../server/domain/tasks.ts'
 import { listConversations } from '../../server/domain/guest-threads/repository.ts'
 import { appendMessage, markConversationRead, resolveConversationAccess } from '../../server/domain/conversations.ts'
 import { messagePhotoPlacements, uploadMessagePhotos } from '../../server/domain/guest-threads/attachments.ts'
@@ -458,6 +458,50 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     // One alert, sent to the host and nobody else.
     assert.deepEqual((await db.prepare(`SELECT status, json_extract(email_json, '$.message.to') AS recipient FROM guest_thread_deliveries
       WHERE message_id = ? AND purpose = 'owner_alert'`).bind(hostPost!.id).all()).results, [{ status: 'sent', recipient: 'cook@example.test' }], 'the host is alerted')
+    // Completed, reopened, then rehomed before the queued posts run: Cara's old
+    // "No longer yours" must be followed by a fresh actionable assignment (#2091).
+    const eveClosed = await closeTask(db, ownerViewer, eveClean.id, { status: 'done', env })
+    await reopenTask(db, ownerViewer, eveClean.id, { version: eveClosed.version })
+    await setHomeCleaning(db, env, manager, cabin.id, { cleaner_ids: ['m-cara', 'm-dot'] })
+    assert.equal((await taskRow(`turnover:${eve.id}`))!.assigned_member_id, 'm-cara')
+    const repeatedWake = queue.pending.find(item => item.body.type === 'jobs.changed')!
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:31'))
+    const returnedJob = async (viewer: typeof cara) => {
+      // A task-only cleaner's header redacts booking_id; find the persisted
+      // association, then read each conversation through that cleaner's scope.
+      const threads = (await db.prepare(`SELECT c.id FROM conversations c JOIN conversation_participants seat ON seat.conversation_id = c.id
+        WHERE c.organization_id = ? AND c.kind = 'team' AND c.booking_id = ? AND seat.user_id = ? AND seat.role = 'member'`)
+        .bind(ORG, eve.id, viewer.principal.userId).all<{ id: string }>()).results
+      const pages = await Promise.all(threads.map(item => conversationPageFor(db, env, viewer.principal, item.id)))
+      const conversations = pages.map(page => page.conversation)
+      if (!viewer.manage) assert.ok(conversations.every(conversation => conversation.booking_id === null), 'task access keeps booking details private')
+      const actions = pages.flatMap(page => Object.entries(page.job_actions ?? {}).filter(([, id]) => id === eveClean.id))
+      assert.equal(actions.length, 1, actions.length === 1 ? 'the assignee has exactly one actionable post' : JSON.stringify({
+        viewer: viewer.memberId, task: await taskRow(`turnover:${eve.id}`),
+        conversations: await Promise.all(conversations.map(async conversation => ({
+          id: conversation.id, participants: conversation.participants.map(person => person.id), posts: await automatic(conversation.id),
+          actions: pages.find(page => page.conversation.id === conversation.id)?.job_actions,
+        }))),
+      }))
+      const page = pages.find(item => item.job_actions?.[actions[0]![0]] === eveClean.id)!
+      const lifecycle = (await automatic(page.conversation.id)).filter(message => message.key.startsWith(jobKey(eveClean))
+        || jobEndKeys(eveClean.id).some(end => message.key === end || message.key.startsWith(`${end}:`)))
+      assert.ok(lifecycle.at(-1)!.key.startsWith(`${jobKey(eveClean)}:after:`), 'the latest assignment follows the previous release')
+      return actions[0]![0]
+    }
+    const returnedPost = await returnedJob(cara)
+    assert.equal(await returnedJob(ownerViewer), returnedPost, 'the host sees the same sole current assignment')
+    await queue.deliver(env, repeatedWake)
+    assert.equal(await returnedJob(cara), returnedPost, 'a redelivery keeps the same assignment post')
+    // Handed on to a cleaner who also held it before, then assigned back again.
+    await declineTask(db, cara, eveClean.id, { version: (await taskRow(`turnover:${eve.id}`))!.version, reason: 'Still away' })
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:31'))
+    await returnedJob(dot)
+    await updateTask(db, ownerViewer, eveClean.id, { version: (await taskRow(`turnover:${eve.id}`))!.version, assigned_member_id: 'm-cara' })
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:31'))
+    assert.notEqual(await returnedJob(cara), returnedPost, 'a later return gets a new post')
+    await acceptTask(db, cara, eveClean.id, { version: (await taskRow(`turnover:${eve.id}`))!.version })
+    assert.equal((await getTask(db, ownerViewer, eveClean.id)).confirmation?.label, 'Confirmed by Cara')
     // Accept makes a clean confirmed, by name.
     const fayClean = (await taskRow(`turnover:${fay.id}`))!
     await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:32'))

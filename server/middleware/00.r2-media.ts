@@ -5,6 +5,8 @@
 import { defineHandler } from 'nitro';
 import type { getHeader} from 'nitro/h3';
 import {  sendStream, setHeader, setResponseStatus } from 'nitro/h3';
+import { queryFirst } from '~/server/db'
+import { privateMediaPlacementSql } from '~/shared/media-placement-contract'
 import { cloudflareEnv } from '~/server/utils/api-response'
 import { isNonProductionHost } from '~/server/utils/tenant-hosts'
 
@@ -62,6 +64,10 @@ export default defineHandler(async (event) => {
     : url.pathname.replace(/^\/+/, '')
   // This bucket holds public files only; a private slot's file is in PRIVATE_MEDIA_BUCKET.
   if (!key) return mediaResponse(isWorkerMediaPath, 404)
+  const privateFile = await queryFirst<{ id: string }>(env.DB, `SELECT ma.id FROM media_assets ma JOIN media_placements mp
+    ON mp.asset_id = ma.id AND mp.organization_id = ma.organization_id
+    WHERE ma.r2_key = ? AND ma.status = 'active' AND mp.status = 'active' AND ${privateMediaPlacementSql('mp')} LIMIT 1`, [key])
+  if (privateFile) return mediaResponse(isWorkerMediaPath, 404)
 
   const rangeHeader = (event.req.headers.get('range'))
 

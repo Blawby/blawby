@@ -17,10 +17,11 @@ const nullablePhoto = { anyOf: [photo, { type: 'null' }] }
 const arrival = { anyOf: [{ type: 'object', properties: { guests: { type: 'integer' }, check_in_date: text }, required: ['guests', 'check_in_date'] }, { type: 'null' }], description: 'The next confirmed arrival at the home after this turnover, as bookings stand now; null when none is booked.' }
 const taskChecklist = { anyOf: [{ type: 'object', properties: {
   arrival, arrival_label: { ...text, description: '"4 guests arriving Fri, Nov 28" or "No arrival booked yet".' },
+  close_without: { type: 'boolean', description: 'You are an owner or admin and may close the job without the checklist; anyone else is refused CHECKLIST_REQUIRED.' },
   items: { type: 'array', items: { type: 'object', properties: { id: text, title: text, instructions: nullableText, type: { type: 'string', enum: ['confirm', 'count'] },
     required: { type: ['integer', 'null'], description: 'For a count: the number this job requires for the arrival; null for a confirm.' }, photo_required: { type: 'boolean' }, reference_photo: nullablePhoto },
   required: ['id', 'title', 'instructions', 'type', 'required', 'photo_required', 'reference_photo'] } },
-}, required: ['arrival', 'arrival_label', 'items'] }, { type: 'null' }], description: 'An open turnover at a home with a checklist: what Done asks for. Null otherwise.' }
+}, required: ['arrival', 'arrival_label', 'close_without', 'items'] }, { type: 'null' }], description: 'An open turnover at a home with a checklist: what Done asks for. Null otherwise.' }
 const homeItem = { id: text, title: { ...text, minLength: 1, maxLength: CHECKLIST_LIMITS.title }, instructions: { type: ['string', 'null'], maxLength: CHECKLIST_LIMITS.instructions },
   type: { type: 'string', enum: ['confirm', 'count'], description: 'confirm: done or not. count: the cleaner enters a number.' },
   minimum: { type: ['integer', 'null'], minimum: 0, maximum: CHECKLIST_LIMITS.count, description: 'For a count: the number required, or the number per arriving guest when per_guest. Null for a confirm.' },
@@ -28,7 +29,7 @@ const homeItem = { id: text, title: { ...text, minLength: 1, maxLength: CHECKLIS
   baseline: { type: ['integer', 'null'], minimum: 0, maximum: CHECKLIST_LIMITS.count, description: 'For a per_guest count: what is required when no arrival is booked. Null otherwise.' },
   photo_required: { type: 'boolean', description: 'Done is refused until the cleaner attaches a photo of this item.' } }
 const homeChecklist = { type: 'object', properties: { product_id: text, items: { type: 'array', items: { type: 'object', properties: { ...homeItem, reference_photo: nullablePhoto },
-  required: ['id', 'title', 'instructions', 'type', 'minimum', 'per_guest', 'baseline', 'photo_required', 'reference_photo'] } } }, required: ['product_id', 'items'] }
+  required: ['id', 'title', 'instructions', 'type', 'minimum', 'per_guest', 'baseline', 'photo_required', 'reference_photo'] } }, revision: text }, required: ['product_id', 'items', 'revision'] }
 const submittedItem = { type: 'object', properties: { id: text, title: text, instructions: nullableText, type: { type: 'string', enum: ['confirm', 'count'] }, photo_required: { type: 'boolean' },
   required: { type: ['integer', 'null'] }, counted: { type: ['integer', 'null'] }, confirmed: { type: ['boolean', 'null'] },
   shortage: { type: ['integer', 'null'], description: 'How many short of required, for a count.' }, flagged: { type: 'boolean', description: 'Short on a count, or a confirm answered no.' },
@@ -84,9 +85,9 @@ export const TASK_TOOLS: McpToolDefinition[] = [
     inputSchema: { product_id: { ...text, minLength: 1 } }, required: ['product_id'],
     outputSchema: { type: 'object', properties: { checklist: homeChecklist }, required: ['checklist'] },
   }),
-  organizationTool({ name: 'set_home_turnover_checklist', domain: 'tasks', minimumRole: 'admin', description: `Replace a place to stay’s turnover checklist with items, in order (at most ${CHECKLIST_LIMITS.items}). Keep an item’s id from get_home_turnover_checklist to keep it; leave id out for a new item. reference_photo_id is an image asset id (upload one with save_media_attachment) or null for none; send the id read back to keep it. Jobs read the new checklist from now on; submissions already made keep what they were made against. An empty list removes the checklist, and Done goes back to one tap.`,
+  organizationTool({ name: 'set_home_turnover_checklist', domain: 'tasks', minimumRole: 'admin', description: `Replace a place to stay’s turnover checklist with items, in order (at most ${CHECKLIST_LIMITS.items}). Keep an item’s id from get_home_turnover_checklist to keep it; leave id out for a new item. reference_photo_id is an image asset id (upload one with save_media_attachment) or null for none; send the id read back to keep it. expected_revision is the revision get_home_turnover_checklist returned; a checklist changed since is refused CHECKLIST_CHANGED. Jobs read the new checklist from now on; submissions already made keep what they were made against. An empty list removes the checklist, and Done goes back to one tap.`,
     inputSchema: { product_id: { ...text, minLength: 1 }, items: { type: 'array', maxItems: CHECKLIST_LIMITS.items, items: { type: 'object', properties: { ...homeItem, id: { ...text, description: 'The id read from the checklist; omit for a new item.' }, reference_photo_id: { type: ['string', 'null'], description: 'An image asset id, or null.' } },
-      required: ['title', 'type', 'photo_required'], additionalProperties: false } } }, required: ['product_id', 'items'],
+      required: ['title', 'type', 'photo_required'], additionalProperties: false } }, expected_revision: { ...text, minLength: 1 } }, required: ['product_id', 'items', 'expected_revision'],
     outputSchema: { type: 'object', properties: { checklist: homeChecklist }, required: ['checklist'] },
   }),
   organizationTool({ name: 'copy_home_turnover_checklist', domain: 'tasks', minimumRole: 'admin', description: 'Copy one place to stay’s turnover checklist, reference photos included, to other places to stay. Each target’s checklist is replaced by this one.',
@@ -137,7 +138,7 @@ export async function handleTaskTools(ctx: McpExecutorContext): Promise<unknown>
     case 'get_home_turnover_checklist':
       return { checklist: await readHomeChecklist(db, await stayAccessFor(principal), requiredString(args, 'product_id')) }
     case 'set_home_turnover_checklist':
-      return { checklist: await saveHomeChecklist(db, await stayAccessFor(principal), requiredString(args, 'product_id'), { items: args.items }) }
+      return { checklist: await saveHomeChecklist(db, await stayAccessFor(principal), requiredString(args, 'product_id'), { items: args.items, expected_revision: args.expected_revision }) }
     case 'copy_home_turnover_checklist':
       return await copyHomeChecklist(db, await stayAccessFor(principal), requiredString(args, 'product_id'), { product_ids: args.to_product_ids })
     case 'get_turnover_requirements': {

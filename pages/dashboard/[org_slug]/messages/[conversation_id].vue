@@ -20,7 +20,7 @@
     <UAlert v-if="doneError" color="error" variant="soft" title="Done could not be saved" :description="getErrorMessage(doneError, 'The request failed')" class="mx-4 mb-2" />
     <OrderPanel v-if="!personalScope && conversation?.order_id" :key="conversation.order_id" :conversation-id="threadId" class="mx-4 mb-3" @fulfilled="refresh()" />
     <ConversationThread :key="threadId" :thread-id="threadId" :history="history" :personal-scope="personalScope" :reservation-to="reservationTo" :closing="closing" @done="done" />
-    <TurnoverChecklistSheet v-if="checklist" v-model:open="checklistOpen" :checklist="checklist.checklist" :path="checklist.path" :manager="checklist.manager" @done="checklist = null; refresh()" />
+    <TurnoverChecklistSheet v-if="checklist" v-model:open="checklistOpen" :checklist="checklist.checklist" :path="checklist.path" @done="checklist = null; refresh()" />
     <ConversationSheet v-if="data" v-model:open="sheetOpen" v-model:manage-guests="manageGuests" :can-manage-guests="canManageGuests" :booking-party="bookingParty" :page="data" :history="history" :on-left="left" :booking-to="reservationTo" @moved="moved" @participants-changed="refresh()" />
   </DashboardIndexPanel>
 </template>
@@ -87,7 +87,7 @@ watch(level.child, child => { if (child !== null) reservationOpened.value = true
 // A turnover at a home with a checklist opens the checklist instead, read as the job stands now.
 const closing = ref(false)
 const doneError = ref<unknown>(null)
-const checklist = ref<{ checklist: TaskChecklist; path: string; manager: boolean } | null>(null)
+const checklist = ref<{ checklist: TaskChecklist; path: string } | null>(null)
 const checklistOpen = ref(false)
 async function done(messageId: string) {
   const taskId = data.value?.job_actions?.[messageId]
@@ -96,9 +96,9 @@ async function done(messageId: string) {
   doneError.value = null
   const path = `/api/organizations/${encodeURIComponent(conversation.value.organization_id)}/tasks/${encodeURIComponent(taskId)}`
   try {
-    const { task } = await applicationFetch(path, { validate: (value: unknown): value is { task: { id: string; checklist: TaskChecklist | null; can: { edit: boolean } } } => isRecord(value) && isRecord(value.task) && value.task.id === taskId && (value.task.checklist === null || isTaskChecklist(value.task.checklist)) && isRecord(value.task.can) && typeof value.task.can.edit === 'boolean' })
+    const { task } = await applicationFetch(path, { validate: (value: unknown): value is { task: { id: string; checklist: TaskChecklist | null } } => isRecord(value) && isRecord(value.task) && value.task.id === taskId && (value.task.checklist === null || isTaskChecklist(value.task.checklist)) })
     if (task.checklist) {
-      checklist.value = { checklist: task.checklist, path: `${path}/complete`, manager: task.can.edit }
+      checklist.value = { checklist: task.checklist, path: `${path}/complete` }
       checklistOpen.value = true
       return
     }

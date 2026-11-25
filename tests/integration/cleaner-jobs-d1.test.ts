@@ -12,7 +12,7 @@ import { cancelStay, createStay, updateStayHome, type StayAccess } from '../../s
 import { conversationPageFor } from './support/conversation-page.ts'
 import { sendConversationMessage } from '../../server/domain/send-conversation-message.ts'
 import { createTeamThread } from '../../server/domain/team-messages.ts'
-import { closeTask, createTask, getTask, jobKey, maintenanceOptions, reopenTask, taskViewer, updateTask, type TaskRow, type TaskView } from '../../server/domain/tasks.ts'
+import { closeTask, createTask, getTask, jobKey, listTasks, maintenanceOptions, reopenTask, taskViewer, updateTask, type TaskRow, type TaskView } from '../../server/domain/tasks.ts'
 import { listConversations } from '../../server/domain/guest-threads/repository.ts'
 import { appendMessage, markConversationRead, resolveConversationAccess } from '../../server/domain/conversations.ts'
 import { messagePhotoPlacements, uploadMessagePhotos } from '../../server/domain/guest-threads/attachments.ts'
@@ -26,6 +26,7 @@ import completeTaskRoute from '../../server/api/organizations/[organization_id]/
 import readTaskRoute from '../../server/api/organizations/[organization_id]/tasks/[task_id]/read.post.ts'
 import { applySchema } from './support/schema.ts'
 import { saveHomeChecklist } from '../../server/domain/home-checklists.ts'
+import { checklistRevision } from '../../shared/turnover-checklist.ts'
 
 // A cleaner's job is a team conversation: the job is posted there when it is
 // theirs, reminders follow in it, a reassignment or cancellation is told
@@ -336,7 +337,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
       { title: 'TV remote', type: 'confirm', photo_required: false, reference_photo_id: null },
       { title: 'Bath towels', type: 'count', minimum: 1, per_guest: true, baseline: 2, photo_required: false, reference_photo_id: null },
       { title: 'Spare toilet paper', type: 'count', minimum: 2, per_guest: false, photo_required: false, reference_photo_id: null },
-    ] })
+    ], expected_revision: checklistRevision([]) })
     assert.equal(saved.items[0]!.reference_photo?.id, reference)
     const [bed, remote, towels, paper] = saved.items.map(item => item.id) as [string, string, string, string]
     const ann = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'ann', check_in_date: day(10), check_out_date: day(12), adults: 2, guest_name: 'Ann', guest_email: 'ann@example.test', total_minor: 30_000 })
@@ -347,7 +348,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     // The arrival is read as it stands: cancelled, the baseline applies.
     await cancelStay(db, env, manager, bo.id, { version: bo.version, reason: 'Plans changed', financial_writes_allowed: false })
     assert.deepEqual([(await required()).arrival_label, (await required()).items.find(item => item.id === towels)!.required], ['No arrival booked yet', 2])
-    await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'cy', check_in_date: day(13), check_out_date: day(14), adults: 4, guest_name: 'Cy', guest_email: 'cy@example.test', total_minor: 15_000 })
+    const cy = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'cy', check_in_date: day(13), check_out_date: day(14), adults: 4, guest_name: 'Cy', guest_email: 'cy@example.test', total_minor: 15_000 })
     await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:20'))
     const submit = async (body: FormData) => app.request(Object.assign(new Request(`https://proof.example/api/organizations/${ORG}/tasks/${annTurnover.id}/complete`, {
       method: 'POST', headers: { authorization: `Bearer ${token}` }, body,
@@ -358,6 +359,16 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
       if (withBedPhoto) form.append(`photo:${bed}`, new File([pixels], 'bed.avif', { type: 'image/avif' }))
       return form
     }
+    // Cy's card says the home is not cleaned yet, from the stored turnover; once Cy has arrived, the open job is no longer open work.
+    const cyCard = async (when: Date) => (await readToday(db, { slug: ORG, userId: 'owner', range: 'upcoming', now: when })).cards.find(item => item.id === `booking:${cy.id}`)
+    assert.match((await cyCard(at(day(9), '09:00')))!.line ?? '', /Not cleaned yet/)
+    const afterArrival = at(day(13), '16:00')
+    assert.match((await getTask(db, cookViewer, annTurnover.id, afterArrival)).status_line ?? '', /^Not marked done/)
+    assert.ok(!(await listTasks(db, cookViewer, { range: 'today', assignee: 'all' }, afterArrival)).sections.some(section => section.tasks.some(task => task.id === annTurnover.id)), 'a lapsed turnover is not open work')
+    // The installed app's empty Done: a cleaner is told to update, whatever the client.
+    const bare = await submit(new FormData())
+    assert.equal(bare.status, 422)
+    assert.deepEqual(await bare.json().then(body => [(body as { data: { code: string } }).data.code, (body as { message: string }).message]), ['CHECKLIST_REQUIRED', 'This home has a cleaning checklist. Update Blawby to complete it.'])
     const refused = await submit(answers(false))
     assert.equal(refused.status, 422)
     assert.deepEqual((await refused.json() as { data: unknown }).data, { code: 'CHECKLIST_INCOMPLETE', field: 'checklist', missing: [{ id: bed, title: 'Bed made', missing: 'photo' }] })
@@ -370,6 +381,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     assert.equal(submitted.length, 1, 'one message carries the whole checklist')
     const submittedCard = submitted[0]!.type === 'message' ? submitted[0]!.checklist! : null
     assert.deepEqual(submittedCard && [submittedCard.summary, submittedCard.items[0]!.id, submittedCard.items[0]!.shortage, submittedCard.items.find(item => item.id === towels)!.required], ['3 of 4 done · 1 short', paper, 1, 4])
+    assert.match((await cyCard(at(day(9), '09:00')))!.line ?? '', /Ready · shortage flagged/)
     assert.equal(submittedCard!.items.find(item => item.id === bed)!.photo?.id, submitted[0]!.type === 'message' ? submitted[0]!.photos[0]!.id : null)
     // An owner closes a job past the checklist, and its message says so.
     const reopened = await reopenTask(db, ownerViewer, annTurnover.id, { version: (await taskRow(`turnover:${ann.id}`))!.version })

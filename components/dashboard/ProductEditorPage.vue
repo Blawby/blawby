@@ -41,7 +41,7 @@
           </template>
         </UCollapsible>
         <template v-if="form.kind === 'stay'">
-          <UFormField label="Looked after by" required>
+          <UFormField label="Who cleans this home" required>
             <p v-if="schedulingMembersError" role="alert" class="text-error">{{ getErrorMessage(schedulingMembersError, 'Team members could not be loaded') }}</p>
             <USelect v-else v-model="stayMemberChoice" :items="creationMembers" placeholder="Choose a team member" class="w-full" />
           </UFormField>
@@ -575,7 +575,7 @@ const sectionLabels: Record<SectionKey, string> = {
   'amenities': 'Amenities',
   'accessibility': 'Accessibility features',
   'cancellation': 'Cancellation policy',
-  'team': 'Looked after by',
+  'team': 'Who cleans this home',
   'options': 'Options and stock',
   'shipping': 'Shipping',
   // Only a product with a kind has collections to choose.
@@ -1370,7 +1370,7 @@ const navigationGroups = computed<EditorNavigationGroup[]>(() => {
       { id: 'house-rules', label: 'House rules', summary: savedHouseRules.value.join('\n') || 'Add details', placeholder: !savedHouseRules.value.length, to: sectionPath('house-rules') },
       { id: 'guest-safety', label: 'Guest safety', summary: savedSafety.value.join('\n') || 'Add details', placeholder: !savedSafety.value.length, to: sectionPath('guest-safety') },
       { id: 'location', label: 'Location', summary: stayLocationError.value || (stayLocation.value ? formatPostalAddress(stayLocation.value.address) || 'Add address' : 'Loading location…'), placeholder: !stayLocation.value?.address, to: sectionPath('location') },
-      { id: 'team', label: 'Looked after by', summary: stayAssigneeSummary(), to: sectionPath('team') },
+      { id: 'team', label: 'Who cleans this home', summary: stayAssigneeSummary(), to: sectionPath('team') },
       { id: 'questions', label: 'Questions', icon: 'i-lucide-message-square-text', summary: formQuestionsSummary(product.value.stay!.questions), placeholder: !product.value.stay!.questions.length, to: sectionPath('questions') },
       ...otherDetails,
       ...(form.collection_ids.length ? [{ id: 'collections', label: sectionLabels.collections, summary: collectionsSummary(), to: sectionPath('collections') }] : []),

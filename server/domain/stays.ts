@@ -1,3 +1,5 @@
+import { turnoverBeforeSql } from '~/server/domain/turnover-checklists'
+import { turnoverReadiness, type TurnoverReadiness } from '~/shared/turnover-checklist'
 import { PLATFORM_MESSAGE_AUTHOR_KIND } from '~/shared/messages-contract'
 import { listingGrantSql, listingLevelSql } from '~/server/domain/listing-access'
 import { bookingReviewDueAt, historicalNoShowAtSql } from '~/server/utils/review-requests'
@@ -202,6 +204,8 @@ export interface StayOnlinePayment {
  * paid_minor is both, net of refunds. Channel stays are paid through their channel.
  */
 export interface StayDetail extends Stay {
+  /** Whether the home is ready for this stay: Ready, Ready with a shortage, or Not cleaned yet; null with no turnover before it. */
+  readiness: TurnoverReadiness | null
   /** The linked Better Auth account's current portrait; unlinked guests have none. */
   guest_image_url: string | null
   payments: StayPayment[]
@@ -1338,7 +1342,7 @@ export async function moveStayPhotos(db: DbClient, env: CloudflareEnv & GuestInb
 
 /** What this caller reads of a stay: the whole stay for managers, its turnover for members. */
 export type StayView<A extends StayAccess> = A extends { manage: true } ? Stay : StayTurnover
-type StayDetailView<A extends StayAccess> = A extends { manage: true } ? StayDetail : StayTurnover
+type StayDetailView<A extends StayAccess> = A extends { manage: true } ? StayDetail : StayTurnover & { readiness: TurnoverReadiness | null }
 
 export function stayDetailQuery(access: StayAccess, stayId: string): BatchQuery {
   return stayDetailSelection({ query: '?', params: [access.organizationId] }, stayId, access.manage, visibleHomes(access))
@@ -1348,7 +1352,7 @@ export function stayDetailQuery(access: StayAccess, stayId: string): BatchQuery 
 export function stayDetailSelection(organization: BatchQuery, stay: string | BatchQuery, manage: boolean, scope: ReturnType<typeof visibleHomes> = { sql: '1 = 1', params: [] }): BatchQuery {
   const paymentColumns = manage ? `, ${stayMoneyColumns('s')}` : ''
   return {
-    query: `SELECT ${STAY_COLUMNS}, (SELECT u.image FROM user u WHERE u.id = s.user_id) AS guest_image_url ${paymentColumns}
+    query: `SELECT ${STAY_COLUMNS}, (SELECT u.image FROM user u WHERE u.id = s.user_id) AS guest_image_url, ${turnoverBeforeSql('s')} AS turnover_before ${paymentColumns}
       FROM ${STAY_FROM}
      WHERE s.organization_id = ${organization.query} AND s.id = ${typeof stay === 'string' ? '?' : stay.query} AND s.product_session_id IS NULL AND ${scope.sql}`,
     params: [...organization.params ?? [], ...(typeof stay === 'string' ? [stay] : stay.params ?? []), ...scope.params],
@@ -1357,13 +1361,15 @@ export function stayDetailSelection(organization: BatchQuery, stay: string | Bat
 
 export function stayDetailFrom<A extends StayAccess>(access: A, row: unknown): StayDetailView<A> {
   if (!row) fail(404, 'STAY_NOT_FOUND', 'That stay is not in this organization')
-  const { offline_payments_json: offline, online_payments_json: online, installments_json: plan, guest_image_url, ...record } = row as Record<string, unknown>
-    & Pick<StayDetail, 'guest_image_url'> & { offline_payments_json?: string; online_payments_json?: string; installments_json?: string | null }
+  const { offline_payments_json: offline, online_payments_json: online, installments_json: plan, guest_image_url, turnover_before: before, ...record } = row as Record<string, unknown>
+    & Pick<StayDetail, 'guest_image_url'> & { offline_payments_json?: string; online_payments_json?: string; installments_json?: string | null; turnover_before: string | null }
   const stay = mapStay(record)
-  if (!access.manage) return stayTurnover(stay) as StayDetailView<A>
+  // Whether the home is ready for this stay: the stored status of the turnover before it.
+  const readiness = turnoverReadiness(before === null ? null : JSON.parse(before) as { task_id: string; status: string; short: number }, stay.starts_at, new Date())
+  if (!access.manage) return { ...stayTurnover(stay), readiness } as StayDetailView<A>
   if (offline === undefined || online === undefined) throw new Error('The stay detail query did not return its payment data')
   const money = stayMoney(stay, { offline_payments_json: offline, online_payments_json: online, installments_json: plan ?? null })
-  return { ...stay, guest_image_url, ...money, online_payment: money.online_payments[0] ?? null } as StayDetailView<A>
+  return { ...stay, guest_image_url, ...money, online_payment: money.online_payments[0] ?? null, readiness } as StayDetailView<A>
 }
 
 export async function getStay<A extends StayAccess>(db: DbClient, access: A, stayId: string): Promise<StayDetailView<A>> {
@@ -2667,7 +2673,7 @@ export async function readStayReservationHome(db: DbClient, input: Parameters<ty
 export interface GuestStay {
   /** The business the stay is with: a business's site shows only its own. */
   organization_id: string
-  stay: StayDetail & { agreement: import('~/shared/agreements').BookingAgreement | null; deposit: import('~/shared/deposits').BookingDeposit | null }
+  stay: Omit<StayDetail, 'readiness'> & { agreement: import('~/shared/agreements').BookingAgreement | null; deposit: import('~/shared/deposits').BookingDeposit | null }
   home: Omit<StayReservationHome, 'internal_name'>
   /** Null once the stay is cancelled, or for a stay not paid on the site. */
   cancellation: StayCancellationQuote | null
@@ -2697,7 +2703,8 @@ export async function readGuestStay(db: DbClient, viewer: { userId: string; veri
   }, true)], { operation: 'Read the guest stay' })
   const owned = ownedRows!.results[0] as { id: string; conversation_id: string; organization_id: string; product_id: string; paid_online: number; payment_processing: number } | undefined
   if (!owned) fail(404, 'STAY_NOT_FOUND', 'That stay is not in your account', 'booking_id')
-  const stay = stayDetailFrom({ organizationId: owned.organization_id, actorId: buyerUserId, manage: true }, detailRows!.results[0])
+  // Whether the home is cleaned is the team's, never the guest's.
+  const { readiness: _readiness, ...stay } = stayDetailFrom({ organizationId: owned.organization_id, actorId: buyerUserId, manage: true }, detailRows!.results[0])
   if (stay.user_id !== buyerUserId || isChannelManagedStay(stay)) fail(404, 'STAY_NOT_FOUND', 'That stay is not in your account', 'booking_id')
   const confirmed = stay.status === 'confirmed'
   const showArrival = confirmed && (isBookingDay(stay.ends_at)

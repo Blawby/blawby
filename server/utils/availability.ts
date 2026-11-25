@@ -353,10 +353,11 @@ export async function prepareProductBookingConfig(db: DbClient, input: {
     ...(reassigned ? [{
       query: `UPDATE tasks SET assigned_member_id = ${jobAssigneeSql('tasks.organization_id', '?')}, version = version + 1, updated_at = ?
         WHERE organization_id = ? AND product_id = ? AND status = 'open'
-          AND (kind = 'turnover' OR (kind = 'consultation_follow_up'
+          -- A turnover already under way stays with whoever is doing it.
+          AND ((kind = 'turnover' AND (starts_at IS NULL OR starts_at > ?)) OR (kind = 'consultation_follow_up'
             AND (assigned_member_id IS NULL OR assigned_member_id IS ${jobAssigneeSql('tasks.organization_id', '?')})))
           AND EXISTS (SELECT 1 FROM product_booking_configs c WHERE c.organization_id = ? AND c.product_id = ? AND c.assigned_member_id IS ?) RETURNING id AS changed_task_id`,
-      params: [config.assigned_member_id, now, input.organizationId, input.productId, current!.assigned_member_id,
+      params: [config.assigned_member_id, now, input.organizationId, input.productId, now, current!.assigned_member_id,
         input.organizationId, input.productId, current!.assigned_member_id],
     }] : []), {
     query: `INSERT INTO product_booking_configs (product_id, organization_id, unit, ${fields.join(', ')}, questions, created_at, updated_at, created_by, updated_by)

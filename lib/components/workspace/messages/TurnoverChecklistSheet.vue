@@ -33,7 +33,7 @@
     <UFormField label="Note" hint="Optional" class="mt-4">
       <UTextarea v-model="note" variant="none" :rows="2" placeholder="Anything the host should know" class="w-full" />
     </UFormField>
-    <UButton v-if="manager" label="Close without the checklist" color="neutral" variant="link" class="mt-4 px-0" :disabled="submitting" data-testid="turnover-checklist-close-without" @click="closeWithout" />
+    <UButton v-if="checklist.close_without" label="Close without the checklist" color="neutral" variant="link" class="mt-4 px-0" :disabled="submitting" data-testid="turnover-checklist-close-without" @click="closeWithout" />
     <input ref="fileInput" type="file" accept="image/*" capture="environment" class="hidden" @change="chosen">
     <MessagePhotoViewer v-model="viewer" />
   </DashboardListItemDialog>
@@ -45,8 +45,7 @@ import MessagePhotoViewer, { type MessagePhotoViewerState } from './MessagePhoto
 import type { TaskChecklist } from '~/shared/turnover-checklist'
 import { getErrorMessage } from '~/utils/errors'
 
-/** `manager`: an owner or admin, who can close the job past the checklist. */
-const props = defineProps<{ checklist: TaskChecklist; path: string; manager: boolean }>()
+const props = defineProps<{ checklist: TaskChecklist; path: string }>()
 const emit = defineEmits<{ done: [] }>()
 const open = defineModel<boolean>('open', { default: false })
 

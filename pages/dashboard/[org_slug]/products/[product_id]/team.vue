@@ -2,7 +2,7 @@
   <DashboardLeafPanel
     id="product-team"
     :title="p.product.value?.kind === 'stay' ? p.sectionLabels.team : 'Listing access'"
-    :lead="p.product.value?.kind === 'stay' ? 'Choose the host responsible for this home’s stays and guest conversations.' : undefined"
+    :lead="p.product.value?.kind === 'stay' ? 'Its turnover jobs go to this person, who also handles its stays and guest conversations. Changing it moves open cleanings that have not started.' : undefined"
     :saving="p.saving.value"
     :disabled="p.saveDisabled.value"
     :save-label="p.saveLabel.value"

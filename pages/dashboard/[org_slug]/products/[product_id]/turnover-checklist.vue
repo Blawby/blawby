@@ -117,7 +117,7 @@ async function save() {
   saving.value = true
   error.value = null
   try {
-    data.value = await dashboardApi(url.value, { method: 'PUT', body: { items: toWrite(draft.value) }, validate: isRead })
+    data.value = await dashboardApi(url.value, { method: 'PUT', body: { items: toWrite(draft.value), expected_revision: saved.value!.revision }, validate: isRead })
     await p.refreshArrival()
   } catch (cause) {
     error.value = getErrorMessage(cause, 'The checklist could not be saved')

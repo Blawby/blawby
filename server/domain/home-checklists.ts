@@ -3,7 +3,7 @@ import { buildMediaPlacementInsertQuery } from '~/server/utils/media-asset-manag
 import { organizationEventQuery } from '~/server/utils/organization-events'
 import { requireManager, visibleHomes, type StayAccess } from '~/server/domain/stays'
 import { checkedItem, checklistColumnsSql, checklistOf, fail, referenceSlot, SLOT, type ChecklistColumns } from '~/server/domain/turnover-checklists'
-import { CHECKLIST_LIMITS, type HomeTurnoverChecklist, type TurnoverChecklistItem } from '~/shared/turnover-checklist'
+import { CHECKLIST_LIMITS, checklistRevision, type HomeTurnoverChecklist, type TurnoverChecklistItem } from '~/shared/turnover-checklist'
 
 /*
   A home's turnover checklist as owners and admins edit it (#2091): read,
@@ -22,7 +22,8 @@ export async function readHomeChecklist(db: DbClient, access: StayAccess, produc
   const query = homeQuery(access, productId)
   const row = await queryFirst<ChecklistColumns & { product_id: string }>(db, query.query, query.params)
   if (!row) fail(404, 'HOME_NOT_FOUND', 'That place to stay is not in this organization')
-  return { product_id: row.product_id, items: checklistOf(row, row.product_id) }
+  const items = checklistOf(row, row.product_id)
+  return { product_id: row.product_id, items, revision: checklistRevision(items) }
 }
 
 /** The checklist's placements for some homes, replaced: each item with a photo gets its slot. */
@@ -47,8 +48,9 @@ function checklistEvent(access: StayAccess, locationId: string, productId: strin
  */
 export async function saveHomeChecklist(db: DbClient, access: StayAccess, productId: string, body: Record<string, unknown>): Promise<HomeTurnoverChecklist> {
   requireManager(access)
-  const unknown = Object.keys(body).find(key => key !== 'items')
+  const unknown = Object.keys(body).find(key => key !== 'items' && key !== 'expected_revision')
   if (unknown) fail(422, 'INVALID_CHECKLIST_ITEM', `${unknown} is not part of a checklist`, unknown)
+  if (typeof body.expected_revision !== 'string' || !body.expected_revision) fail(422, 'INVALID_CHECKLIST_ITEM', 'expected_revision is the revision read with the checklist', 'expected_revision')
   if (!Array.isArray(body.items)) fail(422, 'INVALID_CHECKLIST_ITEM', 'items must list the checklist items in order', 'items')
   if (body.items.length > CHECKLIST_LIMITS.items) fail(422, 'INVALID_CHECKLIST_ITEM', `A checklist has at most ${CHECKLIST_LIMITS.items} items`, 'items')
   const ids = new Set<string>()
@@ -65,8 +67,9 @@ export async function saveHomeChecklist(db: DbClient, access: StayAccess, produc
     query: `SELECT id FROM media_assets WHERE organization_id = ? AND id IN (SELECT value FROM json_each(?)) AND kind = 'image' AND status = 'active' AND public_url IS NOT NULL`,
     params: [access.organizationId, d1JsonStringSet(assetIds)],
   }], { operation: 'Read a turnover checklist to save' })).map(result => result.results as Array<Record<string, string>>)
-  const current = homeRows![0]
+  const current = homeRows![0] as (ChecklistColumns & { product_id: string; location_id: string }) | undefined
   if (!current) fail(404, 'HOME_NOT_FOUND', 'That place to stay is not in this organization')
+  if (checklistRevision(checklistOf(current, productId)) !== body.expected_revision) fail(409, 'CHECKLIST_CHANGED', 'The checklist changed since you opened it; reload it', 'expected_revision')
   const found = new Set(assetRows!.map(row => row.id))
   const missing = items.findIndex(item => item.reference_photo_id && !found.has(item.reference_photo_id))
   if (missing >= 0) fail(422, 'INVALID_REFERENCE_PHOTO', 'The reference photo must be an image uploaded to this business', `items[${missing}].reference_photo_id`)
@@ -75,12 +78,12 @@ export async function saveHomeChecklist(db: DbClient, access: StayAccess, produc
   }))
   const now = new Date().toISOString()
   const [updated] = await executeBatch(db, [{
-    query: 'UPDATE product_stay_configs SET turnover_checklist = ?, updated_at = ?, updated_by = ? WHERE organization_id = ? AND product_id = ?',
-    params: [JSON.stringify(stored), now, access.actorId, access.organizationId, productId],
-  }, checklistEvent(access, current.location_id!, productId, stored.length),
+    query: 'UPDATE product_stay_configs SET turnover_checklist = ?, updated_at = ?, updated_by = ? WHERE organization_id = ? AND product_id = ? AND turnover_checklist = ?',
+    params: [JSON.stringify(stored), now, access.actorId, access.organizationId, productId, current.turnover_checklist],
+  }, checklistEvent(access, current.location_id, productId, stored.length),
   ...referencePlacements(access.organizationId, productId, items.flatMap(item => item.reference_photo_id ? [{ itemId: item.id, assetId: item.reference_photo_id }] : []), now),
   ], { operation: 'Save turnover checklist' })
-  if (updated?.meta.changes !== 1) fail(409, 'HOME_CHANGED', 'The home changed before its checklist was saved; reload it', 'product_id')
+  if (updated?.meta.changes !== 1) fail(409, 'CHECKLIST_CHANGED', 'The checklist changed since you opened it; reload it', 'expected_revision')
   return readHomeChecklist(db, access, productId)
 }
 

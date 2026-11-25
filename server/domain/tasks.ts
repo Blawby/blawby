@@ -21,7 +21,7 @@ import { BOOKING_RECORDS_SQL, bookingDay } from '~/server/domain/requests'
 import { resolveBookingPresentation } from '~/utils/booking-presentation'
 import { getVerticalCopy } from '~/utils/vertical-copy'
 import { guestGroup } from '~/shared/dashboard-today'
-import { checkedSubmission, checklistColumnsSql, checklistOf, resolveTaskChecklist, submissionBody, WITHOUT_CHECKLIST, type ChecklistColumns } from '~/server/domain/turnover-checklists'
+import { checkedSubmission, checklistColumnsSql, checklistOf, lapsedTurnoverSql, resolveTaskChecklist, submissionBody, WITHOUT_CHECKLIST, type ChecklistColumns } from '~/server/domain/turnover-checklists'
 import type { ChecklistSubmission, HomeTurnoverChecklist, TaskChecklist } from '~/shared/turnover-checklist'
 
 /*
@@ -673,7 +673,7 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
       checkoutSide = { label: 'Checkout', time: checkout ?? 'Time not set', guest: who(stay.guest_name) }
       const next = context.arrival(stay)
       // The home's checklist, its counts for the party arriving next as the bookings stand now.
-      checklist = resolveTaskChecklist(product.checklist, next ? { guests: next.adults + next.children, check_in_date: next.check_in_date } : null)
+      checklist = resolveTaskChecklist(product.checklist, next ? { guests: next.adults + next.children, check_in_date: next.check_in_date } : null, isOrganizationWideRole(viewer.principal.role))
       if (next) {
         const localTime = row.due_at === null ? 'Time not set' : time(row.due_at)
         const party = next.adults + next.children
@@ -852,6 +852,8 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
       face = 'compact'
       break
   }
+  // Its next guests have arrived: the clean can still be closed late, but it is no longer today's work.
+  if (row.kind === 'turnover' && row.status === 'open' && row.due_at !== null && row.due_at <= now.toISOString()) status_line = `Not marked done · ${status_line}`
   if (row.status !== 'open') {
     face = 'compact'
     when = null
@@ -940,8 +942,9 @@ export async function listTasks(db: DbClient, viewer: TaskViewer, query: TaskLis
   if (query.kind) { filters.push('t.kind = ?'); params.push(query.kind) }
   // Closed work is shown on the day it was closed; two days covers every zone's today.
   const closedSince = new Date(now.getTime() - 2 * 86_400_000).toISOString()
-  const statusSql = query.status ? 't.status = ?' : `(t.status = 'open' OR (? = 'today' AND t.status IN ('done', 'skipped') AND t.closed_at >= ?))`
-  const statusParams = query.status ? [query.status] : [query.range, closedSince]
+  // A turnover whose next guests have arrived is not open work; asked for open tasks by name, it is listed as Not marked done.
+  const statusSql = query.status ? 't.status = ?' : `((t.status = 'open' AND NOT ${lapsedTurnoverSql('t', '?')}) OR (? = 'today' AND t.status IN ('done', 'skipped') AND t.closed_at >= ?))`
+  const statusParams = query.status ? [query.status] : [now.toISOString(), query.range, closedSince]
   // The tasks and everything their cards show, in one round trip.
   const listed = { sql: `SELECT t.*, COALESCE(s.actual_check_out_date, s.ends_at) AS checkout_at, s.timezone AS checkout_timezone FROM tasks t
     LEFT JOIN bookings s ON t.kind = 'turnover' AND t.starts_at IS NULL AND s.organization_id = t.organization_id AND s.id = t.subject_id
@@ -1024,7 +1027,7 @@ export interface OpenWorkRow {
 /** An untimed job's day is its booking's: a clean after the checkout. */
 const UNTIMED_JOB_DAY_SQL = 'b.ends_at'
 
-export function openWorkQuery(viewer: ViewerTerms, to: string): BatchQuery {
+export function openWorkQuery(viewer: ViewerTerms, to: string, now: string): BatchQuery {
   // What a booking still has to pay is read only by the people who manage the business, as its payments are.
   const wideTo = `${addLocalDays(to, 1)}T23:59:59.999Z`
   return {
@@ -1051,6 +1054,8 @@ export function openWorkQuery(viewer: ViewerTerms, to: string): BatchQuery {
         LEFT JOIN scheduled_guest_messages g ON t.kind = 'message_delivery' AND g.organization_id = t.organization_id AND g.id = t.subject_id
         LEFT JOIN orders o ON t.kind = 'order_fulfillment' AND o.organization_id = t.organization_id AND o.id = t.subject_id
         WHERE t.organization_id = ${viewer.organization} AND t.status = 'open'
+          -- A turnover whose next guests have arrived is no longer open work (Not marked done).
+          AND NOT ${lapsedTurnoverSql('t', '?')}
           AND ((t.kind IN ('turnover', 'consultation_follow_up', 'consultation_prep', 'message_delivery', 'booking_change', 'custom', 'maintenance', 'order_fulfillment')
             AND ${taskScopeSql('t', () => viewer)})
             OR (t.kind = '${PAYMENT_TASK_KIND}' AND ${viewer.role ? roleMatchesSql(viewer.role, workspaceManagementRoles) : '0'}))) x
@@ -1062,7 +1067,7 @@ export function openWorkQuery(viewer: ViewerTerms, to: string): BatchQuery {
       LEFT JOIN conversations r ON r.organization_id = b.organization_id AND r.booking_id = b.id AND r.kind = 'booking'
      WHERE x.kind IN ('message_delivery', 'booking_change', 'order_fulfillment') OR COALESCE(x.starts_at, x.due_at, ${UNTIMED_JOB_DAY_SQL}, '') <= ?
      ORDER BY COALESCE(x.starts_at, x.due_at, ${UNTIMED_JOB_DAY_SQL}), x.id`,
-    params: [wideTo],
+    params: [now, wideTo],
   }
 }
 
@@ -1390,6 +1395,8 @@ export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string
   // The answers as this job requires them now; a refusal names every missing answer and photo.
   const checked = input.checklist === undefined || !view.checklist ? null : checkedSubmission(current.id, view.checklist, input.checklist, new Set(itemPhotos.keys()))
   const skippedChecklist = input.status === 'done' && view.checklist !== null && checked === null
+  // Only an owner or admin closes a job past its checklist; every other client, an old app included, is told what to do.
+  if (skippedChecklist && !view.checklist!.close_without) fail(422, 'CHECKLIST_REQUIRED', 'This home has a cleaning checklist. Update Blawby to complete it.', 'checklist')
   // An item's photo comes first in the message, in the checklist's order, then the note's own photos.
   const itemOrder = checked ? checked.items.filter(item => itemPhotos.has(item.id)).map(item => item.id) : []
   const photos = [...itemOrder.map(id => itemPhotos.get(id)!), ...input.photos ?? []]

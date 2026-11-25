@@ -106,10 +106,10 @@ export function arrivalLabel(arrival: ChecklistArrival | null): string {
 }
 
 /** What a turnover job requires: the home's items, counts resolved against the next arrival as it stands now. */
-export function resolveTaskChecklist(items: HomeTurnoverChecklist['items'], arrival: ChecklistArrival | null): TaskChecklist | null {
+export function resolveTaskChecklist(items: HomeTurnoverChecklist['items'], arrival: ChecklistArrival | null, closeWithout: boolean): TaskChecklist | null {
   if (!items.length) return null
   return {
-    arrival, arrival_label: arrivalLabel(arrival),
+    arrival, arrival_label: arrivalLabel(arrival), close_without: closeWithout,
     items: items.map(item => ({ id: item.id, title: item.title, instructions: item.instructions, type: item.type, required: requiredCount(item, arrival), photo_required: item.photo_required, reference_photo: item.reference_photo })),
   }
 }
@@ -166,3 +166,21 @@ export function submissionView(stored: unknown, photos: ReadonlyArray<{ id: stri
     items: flaggedFirst(submission.items.map(item => ({ ...item, photo: item.photo_id ? byId.get(item.photo_id) ?? null : null }))),
   }
 }
+
+/**
+ * The turnover before an arrival, as JSON `{ task_id, status, short }` or NULL: the turnover of the
+ * last confirmed stay at the same home to check out on or before `booking` arrives. `booking` is the
+ * alias of the arriving stay in a projection that reads it.
+ */
+export function turnoverBeforeSql(booking: string): string {
+  return `(SELECT json_object('task_id', t.id, 'status', t.status, 'short', EXISTS (SELECT 1 FROM messages m, json_each(m.payload_json, '$.checklist.items') item
+      WHERE m.organization_id = t.organization_id AND m.dedupe_key = 'task-closed:' || t.id || ':' || t.version AND json_extract(item.value, '$.flagged') = 1))
+    FROM tasks t JOIN bookings left_stay ON left_stay.organization_id = t.organization_id AND left_stay.id = t.subject_id
+    WHERE t.organization_id = ${booking}.organization_id AND t.kind = 'turnover' AND t.product_id = ${booking}.product_id
+      AND left_stay.id <> ${booking}.id AND left_stay.status = 'confirmed' AND left_stay.product_session_id IS NULL
+      AND substr(COALESCE(left_stay.actual_check_out_date, left_stay.ends_at), 1, 10) <= substr(${booking}.starts_at, 1, 10)
+    ORDER BY COALESCE(left_stay.actual_check_out_date, left_stay.ends_at) DESC, t.id DESC LIMIT 1)`
+}
+
+/** An open turnover whose next guests' arrival has passed: shown as Not marked done, and no longer open work. */
+export const lapsedTurnoverSql = (task: string, now: string) => `(${task}.kind = 'turnover' AND ${task}.status = 'open' AND ${task}.due_at IS NOT NULL AND ${task}.due_at <= ${now})`

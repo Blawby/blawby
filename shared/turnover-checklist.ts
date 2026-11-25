@@ -1,4 +1,5 @@
 import { isRecord } from '~/utils/api-clients'
+import { cyrb53 } from './form-questions'
 
 /**
  * A home's turnover checklist (#2091): what a clean must leave, each item
@@ -33,6 +34,13 @@ export interface ChecklistPhoto { id: string; url: string; thumbnail_url: string
 export interface HomeTurnoverChecklist {
   product_id: string
   items: Array<TurnoverChecklistItem & { reference_photo: ChecklistPhoto | null }>
+  /** What a save sends back as `expected_revision`, so it never overwrites a change it did not read. */
+  revision: string
+}
+
+/** The checklist's content, as a save checks it was read: its items in order with each reference photo. */
+export function checklistRevision(items: HomeTurnoverChecklist['items']): string {
+  return `cr_${cyrb53(JSON.stringify(items.map(item => [item.id, item.title, item.instructions, item.type, item.minimum, item.per_guest, item.baseline, item.photo_required, item.reference_photo?.id ?? null])))}`
 }
 
 /** An item written by the editor or MCP: no id for a new one; the reference photo by asset id, or null for none. */
@@ -46,6 +54,8 @@ export interface TaskChecklist {
   arrival: ChecklistArrival | null
   /** "4 guests arriving Fri, Nov 28" or "No arrival booked yet". */
   arrival_label: string
+  /** The viewer is an owner or admin and may close the job without the checklist; anyone else is refused `CHECKLIST_REQUIRED`. */
+  close_without: boolean
   items: Array<Pick<TurnoverChecklistItem, 'id' | 'title' | 'instructions' | 'type' | 'photo_required'> & {
     /** The number this job requires, for a count; null for a confirm. */
     required: number | null
@@ -121,7 +131,7 @@ export function isChecklistPhoto(value: unknown): value is ChecklistPhoto {
 }
 
 export function isTaskChecklist(value: unknown): value is TaskChecklist {
-  return isRecord(value) && isText(value.arrival_label)
+  return isRecord(value) && isText(value.arrival_label) && typeof value.close_without === 'boolean'
     && (value.arrival === null || (isRecord(value.arrival) && isCount(value.arrival.guests) && isText(value.arrival.check_in_date)))
     && Array.isArray(value.items) && value.items.every(item => isRecord(item) && isText(item.id) && isText(item.title)
       && (item.instructions === null || isText(item.instructions)) && (item.type === 'confirm' || item.type === 'count')
@@ -130,7 +140,7 @@ export function isTaskChecklist(value: unknown): value is TaskChecklist {
 }
 
 export function isHomeTurnoverChecklist(value: unknown): value is HomeTurnoverChecklist {
-  return isRecord(value) && isText(value.product_id) && Array.isArray(value.items) && value.items.every(item => isRecord(item)
+  return isRecord(value) && isText(value.product_id) && isText(value.revision) && Array.isArray(value.items) && value.items.every(item => isRecord(item)
     && isText(item.id) && isText(item.title) && (item.instructions === null || isText(item.instructions))
     && (item.type === 'confirm' || item.type === 'count') && (item.minimum === null || isCount(item.minimum))
     && typeof item.per_guest === 'boolean' && (item.baseline === null || isCount(item.baseline)) && typeof item.photo_required === 'boolean'
@@ -142,4 +152,34 @@ export function isChecklistSubmissionView(value: unknown): value is ChecklistSub
     && Array.isArray(value.items) && value.items.every(item => isRecord(item) && isText(item.id) && isText(item.title)
       && (item.type === 'confirm' || item.type === 'count') && typeof item.flagged === 'boolean'
       && (item.photo === null || isChecklistPhoto(item.photo)) && (item.reference_photo === null || isChecklistPhoto(item.reference_photo)))
+}
+
+/**
+ * Whether a home is ready for an arrival, from the stored status of the turnover before it (#2091):
+ * Ready once it is done, with a shortage when its checklist flagged one; Not cleaned yet while it is open,
+ * `urgent` from two hours before the guests arrive, the same window as the hosts' warning.
+ */
+export interface TurnoverReadiness {
+  state: 'ready' | 'not_cleaned'
+  /** "Ready", "Ready · shortage flagged", "Not cleaned yet". */
+  label: string
+  shortage: boolean
+  urgent: boolean
+  task_id: string
+}
+
+export const READINESS_WARNING_MS = 2 * 3_600_000
+
+export function turnoverReadiness(stored: { task_id: string; status: string; short: number } | null, arrivesAt: string, now: Date): TurnoverReadiness | null {
+  if (!stored || (stored.status !== 'done' && stored.status !== 'open')) return null
+  if (stored.status === 'done') {
+    const shortage = stored.short === 1
+    return { state: 'ready', label: shortage ? 'Ready · shortage flagged' : 'Ready', shortage, urgent: false, task_id: stored.task_id }
+  }
+  return { state: 'not_cleaned', label: 'Not cleaned yet', shortage: false, urgent: now.getTime() >= Date.parse(arrivesAt) - READINESS_WARNING_MS, task_id: stored.task_id }
+}
+
+export function isTurnoverReadiness(value: unknown): value is TurnoverReadiness {
+  return isRecord(value) && (value.state === 'ready' || value.state === 'not_cleaned') && isText(value.label)
+    && typeof value.shortage === 'boolean' && typeof value.urgent === 'boolean' && isText(value.task_id)
 }

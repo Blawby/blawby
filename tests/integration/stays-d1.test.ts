@@ -469,7 +469,8 @@ test('a member assigned to a home reads its guest conversation and the turnover 
       check_in_date: '2026-11-01', check_out_date: '2026-11-03', adults: 2, children: 1, infants: 1, guest_name: 'Ana' }
     const window = { from: '2026-11-01', to: '2026-11-04' }
 
-    assert.deepEqual(await getStay(db, cleaner, stay.id), turnover)
+    // No stay left the home before Ana, so nothing says whether it is ready.
+    assert.deepEqual(await getStay(db, cleaner, stay.id), { ...turnover, readiness: null })
     // The calendar links the assigned member to the guest thread and limits the booking fields to turnover details.
     const calendarTurnover = { unit: 'nights', booking_id: stay.id, conversation_id: stay.conversation_id, product_id: cabin.id, status: 'confirmed', guest_name: 'Ana', adults: 2, children: 1, check_in_date: '2026-11-01', check_out_date: '2026-11-03' }
     assert.deepEqual((await readHomeCalendar(db, cleaner, { productId: cabin.id, ...window })).stays, [calendarTurnover])
@@ -542,7 +543,7 @@ test('a member assigned to a home reads its guest conversation and the turnover 
       assert(ajv.validate(schema, result), `${toolName} output: ${ajv.errorsText()}`)
       return result as Record<string, unknown>
     }
-    assert.deepEqual(await mcp(cleanerMembership, 'member', 'get_product_booking', { booking_id: stay.id }), { booking_id: stay.id, unit: 'nights', record: turnover })
+    assert.deepEqual(await mcp(cleanerMembership, 'member', 'get_product_booking', { booking_id: stay.id }), { booking_id: stay.id, unit: 'nights', record: { ...turnover, readiness: null } })
     const listed = (owner: boolean) => mcp(owner ? ownerMembership : cleanerMembership, owner ? 'owner' : 'member', 'list_product_bookings', { from: '2026-11-01T00:00:00.000Z', to: '2026-11-04T00:00:00.000Z' })
       .then(result => (result.bookings as Array<Record<string, unknown>>).map(row => [row.booking_id, row.unit, row.guest, row.starts_at]))
     assert.deepEqual(await listed(false), [[stay.id, 'nights', { name: 'Ana' }, turnover.starts_at]])

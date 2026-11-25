@@ -248,7 +248,7 @@ const stayRules = {
   min_nights: { type: 'integer', minimum: 1, maximum: MAX_STAY_NIGHTS, description: 'The listing’s required default minimum; individual arrival dates may override it.' },
   ...depositField,
   calendar_rules: STAY_CALENDAR_RULES_SCHEMA,
-  assigned_member_id: { type: 'string', description: 'Host membership ID from list_organization_members → members[].id or get_member_scheduling → members[].id, not userId. Every home has one: it handles the home\'s stays and turnovers and shows their approved public profile to guests. Publication requires an approved profile with a nonblank public_name; read get_member_public_profile.' },
+  assigned_member_id: { type: 'string', description: 'Who cleans this home: a membership ID from list_organization_members → members[].id or get_member_scheduling → members[].id, not userId. The home\'s turnover jobs go to this member; changing it moves the home\'s open turnovers that have not started, and their conversations, to the new member. To say "Maria cleans these homes", set it on each of them. Every home has one: it also handles the home\'s stays and shows their approved public profile to guests. Publication requires an approved profile with a nonblank public_name; read get_member_public_profile.' },
   ...STAY_LISTING_SCHEMA,
 }
 const stayObject = { type: ['object', 'null'], description: 'Non-null exactly for a place to stay: its one location and stay settings (arrival, departure, guests, minimum nights, who looks after it, what it is and offers, its cancellation policies). Guest-facing house rules are the house_rules detail. Authored photo_rooms and listing accessibility are read-only here and use their stay operations.', properties: { location_id: { type: 'string' }, ...stayRules,

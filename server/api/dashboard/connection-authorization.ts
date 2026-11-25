@@ -6,7 +6,7 @@ import { MEMBER_BUSY_SCOPES } from '~/shared/member-scheduling'
 import { INTEGRATIONS } from '~/shared/integrations'
 import { INTEGRATION_SCOPES } from '~/shared/organization-settings'
 import { cloudflareEnv, jsonResponse } from '~/server/utils/api-response'
-import { createAuth, NATIVE_CONNECTION_RETURN_ORIGIN } from '~/server/utils/auth'
+import { createAuth, NATIVE_CONNECTION_RETURN_ORIGIN, NATIVE_TOKEN_PREFIX, NATIVE_TOKEN_PURPOSE_HEADER } from '~/server/utils/auth'
 import { hasOrganizationEntitlement } from '~/server/utils/billing'
 import { getDashboardMemberContext } from '~/server/utils/dashboard-context'
 import { assertOrganizationWideAccess, memberAccessPrincipal } from '~/server/utils/member-access'
@@ -40,7 +40,9 @@ export default defineHandler(async event => {
     if (entitlement && !await hasOrganizationEntitlement(env, organization.id, entitlement)) {
       throw new HTTPError({ statusCode: 403, message: 'Your plan does not include this connection.', data: { code: 'ENTITLEMENT_REQUIRED' } })
     }
-    const { token } = await auth.api.generateOneTimeToken({ headers: event.req.headers })
+    const headers = new Headers(event.req.headers)
+    headers.set(NATIVE_TOKEN_PURPOSE_HEADER, 'connection')
+    const { token } = await auth.api.generateOneTimeToken({ headers })
     const url = new URL(event.url)
     url.search = new URLSearchParams({ integration, attempt, ticket: token, proof: await signature(token) }).toString()
     return jsonResponse({ authorization_url: url.href }, { headers: privateHeaders })
@@ -48,7 +50,7 @@ export default defineHandler(async event => {
 
   const query = getQuery(event)
   try {
-    if (typeof query.ticket !== 'string' || typeof query.proof !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(query.proof)) {
+    if (typeof query.ticket !== 'string' || !query.ticket.startsWith(NATIVE_TOKEN_PREFIX.connection) || typeof query.proof !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(query.proof)) {
       throw new HTTPError({ statusCode: 400, message: 'This authorization link is incomplete.' })
     }
     if (!timingSafeEqual(Buffer.from(query.proof), Buffer.from(await signature(query.ticket)))) {

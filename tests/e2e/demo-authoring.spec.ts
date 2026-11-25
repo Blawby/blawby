@@ -72,8 +72,9 @@ test('a native dashboard link signs a fresh browser into the explicit workspace 
     const anonymous = await browser.get('/api/auth/get-session')
     expect(anonymous.status()).toBe(200)
     expect(await anonymous.json()).toBeNull()
-    for (const section of ['pages', 'blog', 'posts', 'qa', 'preferences/localization']) {
-      const path = `/dashboard/${tenant.slug}/website/${section}`
+    const paths = ['pages', 'blog', 'posts', 'qa', 'preferences/localization'].map(section => `/dashboard/${tenant.slug}/website/${section}`)
+    paths.push(`/dashboard/${tenant.slug}?tab=overview`, `/dashboard/${tenant.slug}#overview`)
+    for (const path of paths) {
       const started = await native.post('/api/dashboard/web-authorization', { data: { path } })
       expect(started.status(), await started.text()).toBe(200)
       const { authorization_url } = await started.json() as { authorization_url: string }
@@ -173,21 +174,62 @@ test('a dashboard link refuses membership removed after issuance and sets no bro
   }
 })
 
-test('provider connection authorization still reaches Google after dashboard cookie support is enabled', async ({ request, playwright, baseURL }) => {
+test('connection and dashboard tickets cannot cross-redeem or be relabeled, and each original link still works', async ({ request, playwright, baseURL }) => {
   await loginAs(request, baseURL!, 'user-e2e-demo-owner')
   const tenant = seededTenant('restaurant')
   const started = await request.post('/api/dashboard/connection-authorization', {
+    headers: { 'x-blawby-token-purpose': 'dashboard' },
     params: { org: tenant.slug }, data: { integration: 'google-calendar', attempt: crypto.randomUUID() },
   })
   expect(started.status(), await started.text()).toBe(200)
-  const { authorization_url } = await started.json() as { authorization_url: string }
+  const connection = new URL((await started.json() as { authorization_url: string }).authorization_url)
+  const connectionToken = connection.searchParams.get('ticket')!
+  expect(connectionToken.startsWith('connection.')).toBe(true)
+  const path = `/dashboard/${tenant.slug}/website/pages`
+  const dashboardStart = await request.post('/api/dashboard/web-authorization', {
+    headers: { 'x-blawby-token-purpose': 'connection' }, data: { path },
+  })
+  expect(dashboardStart.status(), await dashboardStart.text()).toBe(200)
+  const dashboard = new URL((await dashboardStart.json() as { authorization_url: string }).authorization_url)
+  const dashboardToken = dashboard.searchParams.get('token')!
+  expect(dashboardToken.startsWith('dashboard.')).toBe(true)
   const browser = await playwright.request.newContext({ baseURL })
   try {
-    const opened = await browser.get(authorization_url, { maxRedirects: 0 })
-    expect(opened.status(), await opened.text()).toBe(302)
+    const wrongDashboard = new URL(dashboard)
+    wrongDashboard.searchParams.set('token', connectionToken)
+    const dashboardRefusal = await browser.get(wrongDashboard.href, { maxRedirects: 0 })
+    expect(dashboardRefusal.status()).toBe(400)
+    expect(await dashboardRefusal.json()).toMatchObject({ data: { code: 'INVALID_DASHBOARD_LINK' } })
+    expect(dashboardRefusal.headers()['set-cookie']).toBeUndefined()
+
+    wrongDashboard.searchParams.set('token', connectionToken.replace(/^connection\./, 'dashboard.'))
+    const relabeled = await browser.get(wrongDashboard.href, { maxRedirects: 0 })
+    expect(relabeled.status()).toBe(400)
+    expect(await relabeled.json()).toMatchObject({ message: 'Invalid token' })
+    expect(relabeled.headers()['set-cookie']).toBeUndefined()
+
+    const wrongConnection = new URL(connection)
+    wrongConnection.searchParams.set('ticket', dashboardToken)
+    const connectionRefusal = await browser.get(wrongConnection.href, { maxRedirects: 0 })
+    expect(connectionRefusal.status()).toBe(302)
+    const refused = new URL(connectionRefusal.headers().location!)
+    expect(refused.protocol).toBe('krabiclaw:')
+    expect(refused.hostname).toBe('connections')
+    expect(refused.searchParams.get('error')).toBe('This authorization link is incomplete.')
+    expect(connectionRefusal.headers()['set-cookie']).toBeUndefined()
+
+    const opened = await browser.get(connection.href, { maxRedirects: 0 })
+    expect(opened.status()).toBe(302)
     expect(new URL(opened.headers().location!).hostname).toBe('accounts.google.com')
+    const signedOut = await browser.get('/api/auth/get-session')
+    expect(signedOut.status()).toBe(200)
+    expect(await signedOut.json()).toBeNull()
+
+    const openedDashboard = await browser.get(dashboard.href, { maxRedirects: 0 })
+    expect(openedDashboard.status()).toBe(303)
+    expect(openedDashboard.headers().location).toBe(path)
     const session = await browser.get('/api/auth/get-session')
     expect(session.status()).toBe(200)
-    expect(await session.json()).toBeNull()
+    expect(await session.json()).toMatchObject({ user: { id: 'user-e2e-demo-owner' } })
   } finally { await browser.dispose() }
 })

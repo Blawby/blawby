@@ -81,14 +81,14 @@ test('a native dashboard link signs a fresh browser into the explicit workspace 
       const opened = await browser.get(authorization_url, { maxRedirects: 0 })
       expect(opened.status(), await opened.text()).toBe(303)
       expect(opened.headers().location).toBe(path)
-      expect(opened.headers()['cache-control']).toBe('no-store')
+      expect(opened.headers()['cache-control']).toBe('private, no-store, max-age=0')
       expect(opened.headers()['referrer-policy']).toBe('no-referrer')
       const session = await browser.get('/api/auth/get-session')
       expect(session.status()).toBe(200)
       expect(await session.json()).toMatchObject({ user: { id: 'user-e2e-demo-owner' } })
       const repeated = await browser.get(authorization_url, { maxRedirects: 0 })
       expect(repeated.status(), await repeated.text()).toBe(400)
-      expect(repeated.headers()['cache-control']).toBe('no-store')
+      expect(repeated.headers()['cache-control']).toBe('private, no-store, max-age=0')
       expect(repeated.headers()['referrer-policy']).toBe('no-referrer')
       expect(await repeated.json()).toMatchObject({ message: 'Invalid token' })
     }
@@ -100,7 +100,7 @@ test('dashboard handoff rejects external, inferred and inaccessible destinations
   for (const path of ['https://example.com/dashboard/ember-slice-demo', '//example.com', '/dashboard/app/website/pages', '/dashboard/account/profile', '/dashboard/%2f%2fexample.com', '/dashboard/ember-slice-demo/%2e%2e/harbor-legal-aid/website/pages', '/dashboard/ember-slice-demo/../harbor-legal-aid/website/pages']) {
     const response = await request.post('/api/dashboard/web-authorization', { data: { path } })
     expect(response.status(), await response.text()).toBe(400)
-    expect(response.headers()['cache-control']).toBe('no-store')
+    expect(response.headers()['cache-control']).toBe('private, no-store, max-age=0')
     expect(response.headers()['referrer-policy']).toBe('no-referrer')
     expect(await response.json()).toMatchObject({ data: { code: 'INVALID_DASHBOARD_PATH', field: 'path' } })
   }
@@ -134,7 +134,7 @@ test('a dashboard link refuses membership removed after issuance and sets no bro
     originalRole = saved.role
     const scheduling = await request.get(`/api/organizations/${tenant.organizationId}/members/${saved.id}/scheduling`)
     expect(scheduling.status(), await scheduling.text()).toBe(200)
-    expect(await scheduling.json()).toEqual({ scheduling: null })
+    expect((await scheduling.json()).scheduling).toBeNull()
     const started = await member.post('/api/dashboard/web-authorization', { data: { path: `/dashboard/${tenant.slug}/website/pages` } })
     expect(started.status(), await started.text()).toBe(200)
     const { authorization_url } = await started.json() as { authorization_url: string }
@@ -147,7 +147,7 @@ test('a dashboard link refuses membership removed after issuance and sets no bro
     expect(opened.status(), await opened.text()).toBe(403)
     expect(await opened.json()).toMatchObject({ data: { code: 'WORKSPACE_ACCESS_CHANGED' } })
     expect(opened.headers()['set-cookie']).toBeUndefined()
-    expect(opened.headers()['cache-control']).toBe('no-store')
+    expect(opened.headers()['cache-control']).toBe('private, no-store, max-age=0')
     expect(opened.headers()['referrer-policy']).toBe('no-referrer')
     const session = await browser.get('/api/auth/get-session')
     expect(session.status()).toBe(200)

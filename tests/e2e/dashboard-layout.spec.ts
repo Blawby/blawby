@@ -133,7 +133,7 @@ test.describe('dashboard pane hierarchy', () => {
     let release!: () => void, requested!: () => void
     const held = new Promise<void>(resolve => { release = resolve })
     const pending = new Promise<void>(resolve => { requested = resolve })
-    await page.route(`**/api/organizations/${tenant.organizationId}/locations/${second.id}`, async route => {
+    await page.route(`**/api/organizations/${tenant.organizationId}/locations/${second.id}?*`, async route => {
       requested()
       await held
       await route.continue()

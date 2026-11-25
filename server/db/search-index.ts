@@ -33,17 +33,17 @@ export function searchIndexSchema(): string {
       UNION ALL
       SELECT 'b' || printf('%06x', unicode(substr(text.value, position, 1))) || printf('%06x', unicode(substr(text.value, position + 1, 1))) || ';' FROM positions, text WHERE position < length(text.value)
     ) SELECT json_array(text.value, COALESCE((SELECT group_concat(value, ' ') FROM (SELECT DISTINCT value FROM terms)), '')) AS entry FROM text`
-  const statements = ["CREATE VIRTUAL TABLE search_index USING fts5(text, short_grams, tokenize='trigram case_sensitive 1');"]
+  const statements = ["CREATE VIRTUAL TABLE search_index USING fts5(text, short_grams, scope, kind, tokenize='trigram case_sensitive 1');"]
   for (const [index, source] of SEARCH_SOURCES.entries()) {
     const row = (alias: string) => `${alias}.rowid * ${SEARCH_ROW_STRIDE} + ${index}`
     const raw = source.fields.map(field => `COALESCE(${field}, '')`).join(' || char(10) || ')
-    const insert = (alias: string) => `INSERT INTO search_index(rowid, text, short_grams) SELECT ${row(alias)}, json_extract(normalized.entry, '$[0]'), json_extract(normalized.entry, '$[1]') FROM (${values(`(SELECT ${raw} FROM ${source.table} WHERE rowid = ${alias}.rowid)`)}) normalized;`
+    const insert = (alias: string) => `INSERT INTO search_index(rowid, text, short_grams, scope, kind) SELECT ${row(alias)}, json_extract(normalized.entry, '$[0]'), json_extract(normalized.entry, '$[1]'), (SELECT 'o' || lower(hex(organization_id)) || ';' FROM ${source.table} WHERE rowid = ${alias}.rowid), 't${String(index).padStart(2, '0')};' FROM (${values(`(SELECT ${raw} FROM ${source.table} WHERE rowid = ${alias}.rowid)`)}) normalized;`
     statements.push(`CREATE TRIGGER search_index_${source.table}_insert AFTER INSERT ON ${source.table} BEGIN ${insert('new')} END;`)
-    statements.push(`CREATE TRIGGER search_index_${source.table}_update AFTER UPDATE OF ${source.columns} ON ${source.table} BEGIN DELETE FROM search_index WHERE rowid = ${row('old')}; ${insert('new')} END;`)
+    statements.push(`CREATE TRIGGER search_index_${source.table}_update AFTER UPDATE OF organization_id, ${source.columns} ON ${source.table} BEGIN DELETE FROM search_index WHERE rowid = ${row('old')}; ${insert('new')} END;`)
     statements.push(`CREATE TRIGGER search_index_${source.table}_delete AFTER DELETE ON ${source.table} BEGIN DELETE FROM search_index WHERE rowid = ${row('old')}; END;`)
-    statements.push(`INSERT INTO search_index(rowid, text, short_grams)
-      WITH entries AS MATERIALIZED (SELECT rowid, (${values(raw)}) AS entry FROM ${source.table})
-      SELECT rowid * ${SEARCH_ROW_STRIDE} + ${index}, json_extract(entry, '$[0]'), json_extract(entry, '$[1]') FROM entries;`)
+    statements.push(`INSERT INTO search_index(rowid, text, short_grams, scope, kind)
+      WITH entries AS MATERIALIZED (SELECT rowid, organization_id, (${values(raw)}) AS entry FROM ${source.table})
+      SELECT rowid * ${SEARCH_ROW_STRIDE} + ${index}, json_extract(entry, '$[0]'), json_extract(entry, '$[1]'), 'o' || lower(hex(organization_id)) || ';', 't${String(index).padStart(2, '0')};' FROM entries;`)
   }
   if (statements.some(statement => new TextEncoder().encode(statement).byteLength > 95_000)) throw new Error('Search schema exceeds D1 SQL statement limit')
   return statements.join('\n--> statement-breakpoint\n') + '\n'

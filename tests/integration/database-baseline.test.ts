@@ -86,8 +86,8 @@ test('snapshot payload preserves destination signing keys for refreshes and carr
         assert.equal(destination.prepare("SELECT name FROM organization WHERE id = 'org'").get().name, 'Refreshed content')
         const { searchMatchSql, searchIndexMatch } = await import('../../server/domain/search.ts')
         for (const q of ['jose emile', 'é', 'sé']) {
-          const search = searchMatchSql(q, term => searchIndexMatch('business_locations', 'place', term))!
-          assert.deepEqual(destination.prepare(`SELECT title FROM business_locations place WHERE ${search.sql}`).all(...search.params), [{ title: 'José Émile' }], `transferred index: ${q}`)
+          const search = searchMatchSql(q, hits => `SELECT place.rowid AS id, hit.word FROM ${hits} hit CROSS JOIN business_locations place WHERE ${searchIndexMatch('business_locations', 'place', 'hit')}`, { sources: ['business_locations'], organization: 'org' })!
+          assert.deepEqual(destination.prepare(`SELECT title FROM business_locations place WHERE place.rowid IN (${search.sql})`).all(...search.params), [{ title: 'José Émile' }], `transferred index: ${q}`)
         }
         assert.deepEqual(destination.pragma('foreign_key_check'), [])
       } finally {

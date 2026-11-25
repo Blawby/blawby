@@ -49,17 +49,13 @@ function successfulBusinessReplySql(reply: string): string {
  */
 /** Built when read: requests.ts reaches this module through payments and notifications (the app badge). */
 const operationalRecordSql = () => `
-  LEFT JOIN (
-    SELECT b.id AS booking_id, b.organization_id, b.status, b.party_size, b.party_size_is_minimum, b.starts_at, ${BOOKING_ENDS_SQL('b')} AS ends_at, b.ends_at AS stored_ends_at, b.timezone,
-           CASE WHEN b.product_session_id IS NULL THEN 'nights' ELSE 'slot' END AS unit, bc.assigned_member_id, b.product_id
-      FROM bookings b
-      JOIN product_booking_configs bc ON bc.organization_id = b.organization_id AND bc.product_id = b.product_id
-  ) op ON op.booking_id = gt.booking_id AND op.organization_id = gt.organization_id`
+  LEFT JOIN bookings op ON op.id = gt.booking_id AND op.organization_id = gt.organization_id`
+const RECORD_UNIT_SQL = "CASE WHEN op.id IS NULL THEN NULL WHEN op.product_session_id IS NULL THEN 'nights' ELSE 'slot' END"
 
 /** Business inbox labels use the home's private identity; buyer labels keep the location's public title. */
 function threadLocationTitleSql(buyerAudience = false): string {
   if (buyerAudience) return 'bl.title'
-  return `CASE WHEN op.unit = 'nights' OR EXISTS (SELECT 1 FROM channel_threads channel WHERE channel.organization_id = gt.organization_id AND channel.conversation_id = gt.id AND channel.product_id IS NOT NULL)
+  return `CASE WHEN (${RECORD_UNIT_SQL}) = 'nights' OR EXISTS (SELECT 1 FROM channel_threads channel WHERE channel.organization_id = gt.organization_id AND channel.conversation_id = gt.id AND channel.product_id IS NOT NULL)
     THEN (SELECT home.internal_name FROM product_stay_configs home WHERE home.organization_id = gt.organization_id AND home.product_id = COALESCE(op.product_id,
       (SELECT channel.product_id FROM channel_threads channel WHERE channel.organization_id = gt.organization_id AND channel.conversation_id = gt.id))) ELSE bl.title END`
 }
@@ -83,7 +79,7 @@ function mailboxWhere(mailbox: GuestThreadMailbox | null, now: string, buyerAudi
 }
 
 /** A stay's conversation: its booking is a home's nights, or it is a channel's conversation whose guest has not booked yet (an inquiry). */
-const STAY_CONVERSATION_SQL = `(gt.kind = 'booking' AND (op.unit = 'nights' OR (op.unit IS NULL AND EXISTS (SELECT 1 FROM channel_threads stay_channel WHERE stay_channel.conversation_id = gt.id))))`
+const STAY_CONVERSATION_SQL = `(gt.kind = 'booking' AND ((${RECORD_UNIT_SQL}) = 'nights' OR ((${RECORD_UNIT_SQL}) IS NULL AND EXISTS (SELECT 1 FROM channel_threads stay_channel WHERE stay_channel.conversation_id = gt.id))))`
 
 /**
  * Every booking is a conversation in the inbox from the moment it is made, a stay's as much as any other, as Airbnb lists every reservation.
@@ -113,8 +109,7 @@ function inboxScope(organizationId: string | { sql: string } | null, opts: Omit<
   if (!opts.userId) throw new Error('Conversation list requires the viewer')
   const user = typeof opts.userId === 'string' ? '?' : opts.userId.sql
   const params: Array<string | number> = typeof opts.userId === 'string' ? [opts.userId] : []
-  const from = `conversations gt${operationalRecordSql()}
-    LEFT JOIN conversation_participants me ON me.conversation_id = gt.id AND me.user_id = ${user}`
+
   const access = participantGuard('gt', opts.userId, opts.buyerAudience ? 'guest' : 'member')
   let where = access.sql
   params.push(...access.params)
@@ -125,22 +120,39 @@ function inboxScope(organizationId: string | { sql: string } | null, opts: Omit<
     params.push(d1JsonStringSet(opts.conversationIds))
   }
   if (opts.locationId) { where += ' AND gt.location_id = ?'; params.push(opts.locationId) }
-  if (opts.assignedMemberId) { where += ' AND op.assigned_member_id = ?'; params.push(opts.assignedMemberId) }
+  if (opts.assignedMemberId) { where += ' AND EXISTS (SELECT 1 FROM product_booking_configs config WHERE config.organization_id = gt.organization_id AND config.product_id = op.product_id AND config.assigned_member_id = ?)' ; params.push(opts.assignedMemberId) }
   if (opts.type) where += threadTypeWhere(opts.type)
   if (opts.kind) where += kindWhere(opts.kind)
   // Search covers Current and Past (#2103): the mailbox narrows only a list nobody is searching. Blocked stays out of search.
-  const search = opts.q ? searchMatchSql(opts.q, term => `((${opts.buyerAudience ? 'gt.user_id = me.user_id AND ' : ''}${searchIndexMatch('conversations', 'gt', term)})
-    OR EXISTS (SELECT 1 FROM business_locations search_location WHERE search_location.id = gt.location_id AND ${searchIndexMatch('business_locations', 'search_location', term)})
-    ${opts.buyerAudience ? '' : `OR EXISTS (SELECT 1 FROM product_stay_configs search_home WHERE search_home.organization_id = gt.organization_id
-      AND search_home.product_id = COALESCE(op.product_id, (SELECT channel.product_id FROM channel_threads channel WHERE channel.organization_id = gt.organization_id AND channel.conversation_id = gt.id))
-      AND ${searchIndexMatch('product_stay_configs', 'search_home', term)})`}
-    OR EXISTS (SELECT 1 FROM messages e WHERE e.conversation_id = gt.id${opts.buyerAudience ? ` AND ${guestVisibleSql('e', 'gt.user_id = me.user_id')}` : ''}
-      AND ${searchIndexMatch('messages', 'e', term)}))`) : null
-  if (search) { where += ` AND ${search.sql}`; params.push(...search.params) }
+  const searchUser = typeof opts.userId === 'string' ? `'${opts.userId.replaceAll("'", "''")}'` : opts.userId.sql
+  const search = opts.q ? searchMatchSql(opts.q, hits => {
+    const access = participantGuard('thread', { sql: searchUser }, opts.buyerAudience ? 'guest' : 'member').sql
+    const found = [
+      `SELECT thread.rowid AS id, hit.word FROM ${hits} hit CROSS JOIN conversations thread
+        WHERE ${searchIndexMatch('conversations', 'thread', 'hit')} AND ${access}${opts.buyerAudience ? ` AND thread.user_id = ${searchUser}` : ''}`,
+      `SELECT thread.rowid AS id, hit.word FROM ${hits} hit CROSS JOIN messages entry CROSS JOIN conversations thread
+        WHERE ${searchIndexMatch('messages', 'entry', 'hit')} AND thread.id = entry.conversation_id AND ${access}
+          ${opts.buyerAudience ? `AND ${guestVisibleSql('entry', `thread.user_id = ${searchUser}`)}` : ''}`,
+      `SELECT thread.rowid AS id, hit.word FROM ${hits} hit CROSS JOIN business_locations place CROSS JOIN conversations thread
+        WHERE ${searchIndexMatch('business_locations', 'place', 'hit')} AND thread.organization_id = place.organization_id AND thread.location_id = place.id AND ${access}`,
+    ]
+    if (!opts.buyerAudience) found.push(
+      `SELECT thread.rowid AS id, hit.word FROM ${hits} hit CROSS JOIN product_stay_configs home CROSS JOIN bookings booking CROSS JOIN conversations thread
+        WHERE ${searchIndexMatch('product_stay_configs', 'home', 'hit')} AND booking.organization_id = home.organization_id AND booking.product_id = home.product_id
+          AND thread.organization_id = booking.organization_id AND thread.booking_id = booking.id AND ${access}`,
+      `SELECT thread.rowid AS id, hit.word FROM ${hits} hit CROSS JOIN product_stay_configs home CROSS JOIN channel_threads channel CROSS JOIN conversations thread
+        WHERE ${searchIndexMatch('product_stay_configs', 'home', 'hit')} AND channel.organization_id = home.organization_id AND channel.product_id = home.product_id
+          AND thread.organization_id = channel.organization_id AND thread.id = channel.conversation_id AND ${access}`,
+    )
+    return found.join(' UNION ALL ')
+  }, { sources: opts.buyerAudience ? ['conversations', 'messages', 'business_locations'] : ['conversations', 'messages', 'business_locations', 'product_stay_configs'], organization: organizationId }) : null
+  if (search) { where += ' AND gt.rowid = found.id'; params.unshift(...search.params) }
   where += ` AND (${HAS_CONVERSATION_SQL}${opts.buyerAudience ? ' OR gt.user_id IS NOT me.user_id' : ''})`
   const mailbox = mailboxWhere(search ? null : opts.mailbox ?? null, now, opts.buyerAudience)
   where += mailbox.sql
   params.push(...mailbox.params)
+  const from = `${search ? `(${search.sql}) found CROSS JOIN ` : ''}conversations gt${operationalRecordSql()}
+    LEFT JOIN conversation_participants me ON me.conversation_id = gt.id AND me.user_id = ${user}`
   return { from, where, params }
 }
 
@@ -196,7 +208,7 @@ export async function listConversations(
   return presentConversationList(await queryAll<ListRow>(db, query, params), opts, now)
 }
 
-function conversationListQuery(organizationId: string | null, opts: ListGuestThreadsOptions, now: Date): BatchQuery {
+export function conversationListQuery(organizationId: string | null, opts: ListGuestThreadsOptions, now: Date): BatchQuery {
   const scope = inboxScope(organizationId, opts, now.toISOString())
   const visible = opts.buyerAudience ? ` AND ${guestVisibleSql('e', 'gt.user_id = me.user_id')}` : ''
   const unread = unreadSql('gt', opts.userId)
@@ -206,7 +218,7 @@ function conversationListQuery(organizationId: string | null, opts: ListGuestThr
     WITH listed AS (
     SELECT gt.*, ${REPLY_CHANNEL_SQL} AS reply_channel, ${SUPPORT_CONVERSATION_SQL('gt')} AS support,
       o.name AS organization_name, ${threadLocationTitleSql(opts.buyerAudience)} AS location_title, COALESCE(bl.timezone, o.timezone) AS time_zone,
-      op.unit AS record_unit, op.starts_at AS record_starts_at, op.stored_ends_at AS record_stored_ends_at, op.timezone AS record_timezone,
+      ${RECORD_UNIT_SQL} AS record_unit, op.starts_at AS record_starts_at, op.ends_at AS record_stored_ends_at, op.timezone AS record_timezone,
       (SELECT COALESCE(sc.internal_name, p.name) FROM products p LEFT JOIN product_stay_configs sc ON sc.organization_id = p.organization_id AND sc.product_id = p.id
         WHERE p.organization_id = gt.organization_id AND p.id = op.product_id) AS record_title,
       -- A buyer's order conversation is about its order, not the branch it ships from.

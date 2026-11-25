@@ -1,5 +1,3 @@
-import { sql } from 'drizzle-orm'
-import type { SQL, SQLChunk } from 'drizzle-orm'
 import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1'
 import * as schema from './schema'
 import { MAX_D1_BATCH_STATEMENTS } from './d1-limits'
@@ -42,38 +40,20 @@ function isWrappedDb(client: DbClient): client is AppDb {
   return '$client' in client
 }
 
-function ensureDb(client: DbClient): AppDb {
-  if (isWrappedDb(client)) return client
-  return createDb(client)
-}
-
 function rawClient(client: DbClient): D1Database {
   return isWrappedDb(client) ? client.$client : client
 }
 
-export function bindSql(query: string, params: unknown[] = []): SQL {
-  const parts = query.split('?')
-  const chunks: SQLChunk[] = []
-
-  for (let index = 0; index < parts.length; index += 1) {
-    const part = parts[index]
-    if (part) chunks.push(sql.raw(part))
-    if (index < params.length) chunks.push(params[index] as SQLChunk)
-  }
-
-  return sql.join(chunks)
+export async function queryFirst<T>(db: DbClient, query: string, params: unknown[] = []): Promise<T | undefined> {
+  return (await rawClient(db).prepare(query).bind(...params).first<T>()) ?? undefined
 }
 
-export async function queryFirst<T>(db: DbClient, query: string, params: unknown[] = []) {
-  return await ensureDb(db).get<T>(bindSql(query, params))
-}
-
-export async function queryAll<T>(db: DbClient, query: string, params: unknown[] = []) {
-  return await ensureDb(db).all<T>(bindSql(query, params))
+export async function queryAll<T>(db: DbClient, query: string, params: unknown[] = []): Promise<T[]> {
+  return (await rawClient(db).prepare(query).bind(...params).all<T>()).results
 }
 
 export async function execute(db: DbClient, query: string, params: unknown[] = []) {
-  return await ensureDb(db).run(bindSql(query, params))
+  return await rawClient(db).prepare(query).bind(...params).run()
 }
 
 type PreparedStatementResult<T> = {

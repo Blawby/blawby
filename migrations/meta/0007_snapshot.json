@@ -1,6 +1,6 @@
 {
-  "id": "5d5bc802-0673-40c0-8467-8f3c12024371",
-  "prevId": "508415a2-12cb-4ac5-b0e2-aac1bc8ab3ea",
+  "id": "0ea6fd75-0c70-47b0-a3cf-4471d839e6b9",
+  "prevId": "86b24808-1685-4f8e-899f-b426497ed801",
   "version": "6",
   "dialect": "sqlite",
   "tables": {
@@ -2382,6 +2382,14 @@
             "organization_id"
           ],
           "isUnique": false
+        },
+        "channel_threads_org_product_idx": {
+          "name": "channel_threads_org_product_idx",
+          "columns": [
+            "organization_id",
+            "product_id"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -4291,6 +4299,14 @@
           "columns": [
             "organization_id",
             "last_message_at"
+          ],
+          "isUnique": false
+        },
+        "conversations_org_location_idx": {
+          "name": "conversations_org_location_idx",
+          "columns": [
+            "organization_id",
+            "location_id"
           ],
           "isUnique": false
         },

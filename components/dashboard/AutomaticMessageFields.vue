@@ -9,7 +9,7 @@
         <UAlert v-if="editor.offeringsError.value" color="error" :title="`${scopeLabel} could not be loaded`" :description="editor.offeringsError.value" />
         <UFormField :label="scopeLabel"><USelectMenu v-model="selected" :items="offeringItems" value-key="value" multiple :placeholder="`Select ${scopeLabel.toLowerCase()}`" class="w-full" :disabled="!editor.manage.value || editor.saving.value || !!editor.offeringsError.value" /></UFormField>
         <template v-if="editor.draft.value.schedule.trigger !== 'booking_received'">
-          <UFormField label="Timing"><USelect :model-value="offset ?? undefined" :items="offsets" class="w-full" :disabled="!editor.manage.value || editor.saving.value" @update:model-value="setOffset" /></UFormField>
+          <UFormField label="Timing"><USelectMenu :model-value="offset ?? undefined" :items="offsets" value-key="value" :search-input="{ placeholder: 'Search timing' }" class="w-full" :disabled="!editor.manage.value || editor.saving.value" @update:model-value="setOffset" /></UFormField>
           <UFormField v-if="'local_time' in editor.draft.value.schedule" label="Local time"><UInput v-model="editor.draft.value.schedule.local_time" type="time" class="w-full" :disabled="!editor.manage.value || editor.saving.value" /></UFormField>
         </template>
         <p class="text-sm text-muted" role="status">{{ messageScheduleLabel(schedule, editor.vertical.value) }}</p>

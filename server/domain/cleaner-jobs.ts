@@ -56,7 +56,9 @@ function lines(view: TaskView): string {
   const head = view.kind === 'turnover' ? [view.detail]
     : view.kind === 'maintenance' ? [`${jobPhrase(view, 'at', '')}.`.replace(/^./, letter => letter.toUpperCase()), view.sheet.date ? `Due ${view.sheet.date}` : null, view.detail]
       : [`${view.sheet.heading}: ${view.sheet.title}`, view.sheet.date, view.when, view.detail]
-  return [...head, view.notes].filter((line): line is string => Boolean(line)).join('\n')
+  // A clean handed on: who could not do it, and why (#2091).
+  const declined = (view.confirmation?.declined ?? []).map(decline => `${decline.name} can’t do it${decline.reason ? `: ${decline.reason}` : ''}.`)
+  return [...head, view.notes, ...declined].filter((line): line is string => Boolean(line)).join('\n')
 }
 
 /** How a post names the job in a sentence: "maintenance at Ocean Avenue Studio: AC not cooling", "follow up with Sam, 2:00 PM". */

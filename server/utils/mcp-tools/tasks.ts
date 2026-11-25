@@ -1,6 +1,8 @@
 import { memberAccessPrincipal } from '~/server/utils/member-access'
 import { closeTask, createTask, getTask, listTaskAssignees, listTasks, parseTaskListQuery, taskViewer, updateTask, TASK_KINDS } from '~/server/domain/tasks'
 import { copyHomeChecklist, readHomeChecklist, saveHomeChecklist } from '~/server/domain/home-checklists'
+import { readHomeTeam, setHomeCleaning } from '~/server/domain/home-cleaning'
+import { setListingAccess } from '~/server/domain/conversation-participants'
 import { listTurnoverSubmissions, photoImage, readTurnoverSubmission } from '~/server/domain/turnover-submissions'
 import { stayAccessFor } from '~/server/domain/stays'
 import { renderStructuredResponse } from '~/server/utils/mcp-render'
@@ -48,10 +50,18 @@ const task = { type: 'object', properties: {
   starts_at: nullableText, due_at: nullableText, timezone: text, notes: nullableText,
   action: { type: ['object', 'null'] }, path: nullableText,
   product_id: nullableText, location_id: nullableText, booking_id: nullableText, product_session_id: text, conversation_id: nullableText,
-  can: { type: 'object', properties: { complete: { type: 'boolean' }, skip: { type: 'boolean' }, reopen: { type: 'boolean' }, assign: { type: 'boolean' }, edit: { type: 'boolean' } }, required: ['complete', 'skip', 'reopen', 'assign', 'edit'] },
+  can: { type: 'object', properties: { complete: { type: 'boolean' }, skip: { type: 'boolean' }, reopen: { type: 'boolean' }, assign: { type: 'boolean' }, edit: { type: 'boolean' },
+    accept: { type: 'boolean', description: 'A clean you can accept, or take while it is offered to the home’s cleaners.' }, decline: { type: 'boolean', description: 'A clean you can hand on with Can’t do it.' } }, required: ['complete', 'skip', 'reopen', 'assign', 'edit'] },
   checklist: taskChecklist,
+  confirmation: { anyOf: [{ type: 'object', properties: { state: { type: 'string', enum: ['confirmed', 'not_confirmed', 'offered'] }, label: { ...text, description: '"Confirmed by Ann", "Not confirmed yet" or "Offered to the home’s cleaners".' },
+    declined: { type: 'array', items: { type: 'object', properties: { name: text, reason: nullableText }, required: ['name', 'reason'] }, description: 'Who could not do this clean and why, in order.' } }, required: ['state', 'label', 'declined'] }, { type: 'null' }],
+    description: 'An open clean: whether its cleaner has accepted it. Null for any other task.' },
 }, required: ['id', 'kind', 'status', 'version', 'image_url', 'status_line', 'title', 'place', 'when', 'detail', 'error', 'person', 'assignee', 'sheet', 'starts_at', 'due_at', 'timezone', 'notes', 'action', 'path', 'product_id', 'location_id', 'booking_id', 'conversation_id', 'can'] }
 const taskResult = { type: 'object', properties: { task }, required: ['task'] }
+const homeTeam = { type: 'object', properties: { product_id: text, host: { type: 'object', properties: { member_id: text, name: text }, required: ['member_id', 'name'] },
+  members: { type: 'array', items: { type: 'object', properties: { member_id: text, name: text, role: text, access: text, cleaner: { type: 'boolean' } }, required: ['member_id', 'name', 'role', 'access', 'cleaner'] } },
+  cleaner_ids: { type: 'array', items: text, description: 'The home’s cleaners, first first.' }, offer_cleans_to_all: { type: 'boolean' } },
+required: ['product_id', 'host', 'members', 'cleaner_ids', 'offer_cleans_to_all'] }
 const opportunity = { type: 'object', properties: { id: text, status_line: text, title: text, detail: text, icon: text, path: text, product_id: nullableText, location_id: nullableText,
   conversation_id: { type: ['string', 'null'], description: 'The guest conversation a welcome is sent in; null for a setup item.' },
   message: { type: ['string', 'null'], description: 'The message it pre-writes from the business’s own records. Review it, then send it with send_message in conversation_id’s conversation; nothing is sent until then.' } },
@@ -106,6 +116,18 @@ export const TASK_TOOLS: McpToolDefinition[] = [
     inputSchema: { task_id: { ...text, minLength: 1 }, item_ids: { type: 'array', minItems: 1, items: { ...text, minLength: 1 } } }, required: ['task_id'],
     outputSchema: { type: 'object', properties: { submission, images: { type: 'array', description: 'The images that follow, in order.', items: { type: 'object', properties: { item_id: text, title: text, kind: { type: 'string', enum: ['photo', 'reference'] } }, required: ['item_id', 'title', 'kind'] } } }, required: ['submission', 'images'] },
   }),
+  organizationTool({ name: 'get_home_team', domain: 'tasks', minimumRole: 'member', description: 'Read a place to stay’s team: each member with their role and access, which of them are its cleaners (the cleaner role with task access) in order, its host, and whether it offers each clean to all its cleaners. A new clean goes to the first cleaner; Can’t do it hands it to the next, then to the host; with no cleaner it goes to the host.',
+    inputSchema: { product_id: { ...text, minLength: 1 } }, required: ['product_id'],
+    outputSchema: { type: 'object', properties: { team: homeTeam }, required: ['team'] },
+  }),
+  organizationTool({ name: 'set_home_team_member', domain: 'tasks', minimumRole: 'admin', description: 'Put a member on a place to stay’s team with an access level, or take them off it (access null). Owners only. A member with the cleaner role and tasks access becomes one of its cleaners: to say "Maria cleans the Sandy rooms", set her on each of those homes with access tasks. The home’s open cleans that have not started go to whoever cleans it now, and their conversations move with them. Invite a new cleaner with invite_organization_member, role cleaner.',
+    inputSchema: { product_id: { ...text, minLength: 1 }, member_id: { ...text, minLength: 1, description: 'A membership ID from list_organization_members.' }, access: { type: ['string', 'null'], enum: ['messaging', 'tasks', 'calendar', 'calendar_and_messaging', 'operations', null] } }, required: ['product_id', 'member_id', 'access'],
+    outputSchema: { type: 'object', properties: { team: homeTeam }, required: ['team'] },
+  }),
+  organizationTool({ name: 'set_home_cleaning', domain: 'tasks', minimumRole: 'admin', description: 'Set the order of a place to stay’s cleaners (every one of them, first first) and whether it offers each clean to all of them, first to accept takes it (off by default). Open cleans that have not started go to whoever cleans the home now.',
+    inputSchema: { product_id: { ...text, minLength: 1 }, cleaner_ids: { type: 'array', items: { ...text, minLength: 1 }, description: 'All the home’s cleaners from get_home_team, first first.' }, offer_cleans_to_all: { type: 'boolean' } }, required: ['product_id'],
+    outputSchema: { type: 'object', properties: { team: homeTeam }, required: ['team'] },
+  }),
   organizationTool({ name: 'list_opportunities', domain: 'tasks', minimumRole: 'admin', description: 'List what Today suggests: setup the business has not finished (connecting payments, adding a first offering, a price for each experience without one); and a welcome for each booked guest or client who has not heard from the business since booking. Each one goes away when that setup is done or the business messages the guest.',
     inputSchema: { location_id: { ...text, minLength: 1 } },
     outputSchema: { type: 'object', properties: { opportunities: { type: 'array', items: opportunity } }, required: ['opportunities'] },
@@ -141,6 +163,15 @@ export async function handleTaskTools(ctx: McpExecutorContext): Promise<unknown>
       return { checklist: await saveHomeChecklist(db, await stayAccessFor(principal), requiredString(args, 'product_id'), { items: args.items, expected_revision: args.expected_revision }) }
     case 'copy_home_turnover_checklist':
       return await copyHomeChecklist(db, await stayAccessFor(principal), requiredString(args, 'product_id'), { product_ids: args.to_product_ids })
+    case 'get_home_team':
+      return { team: await readHomeTeam(db, await stayAccessFor(principal), requiredString(args, 'product_id')) }
+    case 'set_home_team_member': {
+      const productId = requiredString(args, 'product_id')
+      await setListingAccess(db, env, principal, { listingId: productId, memberId: requiredString(args, 'member_id'), access: args.access as never })
+      return { team: await readHomeTeam(db, await stayAccessFor(principal), productId) }
+    }
+    case 'set_home_cleaning':
+      return { team: await setHomeCleaning(db, env, await stayAccessFor(principal), requiredString(args, 'product_id'), { cleaner_ids: args.cleaner_ids, offer_cleans_to_all: args.offer_cleans_to_all }) }
     case 'get_turnover_requirements': {
       const view = await getTask(db, await taskViewer(principal), requiredString(args, 'task_id'))
       return { task_id: view.id, checklist: view.checklist }

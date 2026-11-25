@@ -172,7 +172,10 @@ export function submissionView(stored: unknown, photos: ReadonlyArray<{ id: stri
  * alias of the arriving stay in a projection that reads it.
  */
 export function turnoverBeforeSql(booking: string): string {
-  return `(SELECT json_object('task_id', t.id, 'status', t.status, 'short', EXISTS (SELECT 1 FROM messages m, json_each(m.payload_json, '$.checklist.items') item
+  return `(SELECT json_object('task_id', t.id, 'status', t.status,
+      'confirmed', t.accepted_member_id IS NOT NULL AND t.accepted_member_id = t.assigned_member_id,
+      'cleaner', (SELECT u.name FROM member m JOIN user u ON u.id = m.userId WHERE m.id = t.assigned_member_id),
+      'short', EXISTS (SELECT 1 FROM messages m, json_each(m.payload_json, '$.checklist.items') item
       WHERE m.organization_id = t.organization_id AND m.dedupe_key = 'task-closed:' || t.id || ':' || t.version AND json_extract(item.value, '$.flagged') = 1))
     FROM tasks t JOIN bookings left_stay ON left_stay.organization_id = t.organization_id AND left_stay.id = t.subject_id
     WHERE t.organization_id = ${booking}.organization_id AND t.kind = 'turnover' AND t.product_id = ${booking}.product_id

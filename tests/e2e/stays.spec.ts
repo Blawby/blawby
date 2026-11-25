@@ -88,7 +88,7 @@ async function createStayHome(page: Page, baseURL: string, options: { selectDiff
     }
     await page.getByRole('textbox', { name: 'Sleeps' }).fill('4')
     await page.getByRole('textbox', { name: 'Minimum nights' }).fill('2')
-    await page.getByRole('combobox', { name: 'Who cleans this home*', exact: true }).click()
+    await page.getByRole('combobox', { name: 'Looked after by*', exact: true }).click()
     await page.getByRole('option', { name: ownerName, exact: true }).click()
     const creation = page.waitForResponse(response => response.request().method() === 'POST'
       && new URL(response.url()).pathname === productEndpoint)

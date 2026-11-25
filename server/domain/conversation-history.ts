@@ -27,7 +27,7 @@ type TranscriptViewer = { conversationId: string; userId: string; organizationId
 type MessageContext = Pick<ConversationHistory, 'photos' | 'deliveriesByMessage'>
 type HistoryContext = { organization_name: string; timezone: string; record_title: string | null; place_product_id: string | null; place_location_id: string | null; booking_type: 'booking' | 'stay' | null; booking_assigned: number; support: number; airbnb: number; roster: string | null; jobs: string | null; review: number | null; reservation: string | null }
 
-type ConversationJob = { task_id: string; version: number; message_id: string | null }
+type ConversationJob = { task_id: string; version: number; message_id: string | null; respond: 0 | 1 }
 
 type ReservationFacts = {
   created_at: string; starts_at: string; ends_at: string; timezone: string; party_size: number; status: string; stay: 0 | 1; product_kind: ProductKind; vertical: string | null
@@ -185,6 +185,7 @@ function presentEntries(
     projected.job = isPlatformMessageAuthor(message.author_kind) && typeof payload.key === 'string' && payload.key.startsWith('job:')
     if (projected.job) {
       projected.job_status = message.job_status ?? null
+      projected.job_confirmation = message.job_confirmation ?? null
     }
     // A turnover checklist submitted with Done is the closer's message with its answers.
     if (payload.checklist !== undefined) {
@@ -239,9 +240,11 @@ export async function loadConversationPage(
             (SELECT ct.product_id FROM channel_threads ct WHERE ct.organization_id = c.organization_id AND ct.conversation_id = c.id)))` : 'NULL'} AS record_title,
         -- A job action belongs to its latest assignment post in the current team's conversation.
         ${head ? `CASE WHEN c.viewer_role = 'member' AND (c.booking_id IS NOT NULL OR (c.kind = 'team' AND c.location_id IS NOT NULL)) THEN (
-          SELECT json_group_array(json_object('task_id', job.task_id, 'version', job.version, 'message_id', job.message_id))
+          SELECT json_group_array(json_object('task_id', job.task_id, 'version', job.version, 'message_id', job.message_id, 'respond', job.respond))
           FROM (
-            SELECT t.id AS task_id, t.version, CASE WHEN c.kind = 'team' AND EXISTS (
+            SELECT t.id AS task_id, t.version,
+              t.kind = 'turnover' AND t.assigned_member_id = c.member_id AND t.accepted_member_id IS NOT c.member_id AS respond,
+              CASE WHEN c.kind = 'team' AND EXISTS (
               SELECT 1 FROM conversation_participants seat JOIN member assigned
                 ON assigned.id = t.assigned_member_id AND assigned.organizationId = seat.organization_id AND assigned.userId = seat.user_id
               WHERE seat.conversation_id = c.id AND seat.role = 'member'
@@ -300,6 +303,7 @@ export async function loadConversationPage(
   const jobs = context.jobs === null ? [] : JSON.parse(context.jobs) as ConversationJob[]
   const job = jobs[0]
   const jobActions = Object.fromEntries(jobs.flatMap(({ message_id, task_id }) => message_id === null ? [] : [[message_id, task_id] as const]))
+  const jobResponses = Object.fromEntries(jobs.flatMap(({ message_id, task_id, version, respond }) => message_id === null || !respond ? [] : [[message_id, { task_id, version }] as const]))
   const managesBookingGuests = context.booking_type !== null || (role === 'member' && conversation.kind === 'booking' && conversation.booking_id !== null)
   const activityPath = context.booking_type ? accountActivityPath(context.booking_type, conversation.id) : null
   const [groupCapabilities, bookingScope, createsTasks] = await Promise.all([
@@ -333,6 +337,7 @@ export async function loadConversationPage(
     capabilities: { ...groupCapabilities, can_invite_guest: managesBookingGuests && conversation.blocked_at === null },
     work: job ? { type: 'done' as const, task_id: job.task_id, version: job.version } : context.review ? { type: 'review' as const } : null,
     ...(Object.keys(jobActions).length ? { job_actions: jobActions } : {}),
+    ...(Object.keys(jobResponses).length ? { job_responses: jobResponses } : {}),
     // A guest's message can become a maintenance job for whoever creates tasks.
     ...(createsTasks ? { maintenance: { product_id: context.place_product_id, location_id: context.place_location_id, guest: firstName(guestName) } } : {}),
   }

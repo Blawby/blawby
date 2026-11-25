@@ -49,6 +49,8 @@ export interface ConversationMessage {
   /** Blawby's post of a job: the card the job's Done is on. */
   job: boolean
   job_status?: 'open' | 'done' | 'skipped' | 'cancelled' | null
+  /** An open clean: whether its cleaner has accepted it (#2091). */
+  job_confirmation?: 'confirmed' | 'not_confirmed' | null
   /** A turnover checklist submitted with Done: each item as required and answered, flagged first, its photo one of `photos`. */
   checklist?: ChecklistSubmissionView
   sent_at: string
@@ -124,6 +126,8 @@ export interface ConversationPage extends Omit<ConversationEntriesPage, 'convers
   work: { type: 'done'; task_id: string; version: number } | { type: 'review' } | null
   /** The open task each actionable job message represents, keyed by message ID. */
   job_actions?: Record<string, string>
+  /** The cleans the viewer can accept or hand back, by job message ID: their task and its version. */
+  job_responses?: Record<string, { task_id: string; version: number }>
   /** For whoever creates tasks in a guest conversation: where a guest's report is, to make a maintenance job of it. */
   maintenance?: { product_id: string | null; location_id: string | null; guest: string }
 }

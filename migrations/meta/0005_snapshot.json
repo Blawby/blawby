@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "0644f749-0b88-44b1-b98b-d345ea0d073a",
+  "id": "a6415cfc-d800-451b-a81d-b5e30c3c8d83",
   "prevId": "3847547d-b61d-4525-8639-12b8ed4eed93",
   "tables": {
     "account": {
@@ -5326,6 +5326,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'messaging'"
+        },
+        "cleaning_order": {
+          "name": "cleaning_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "created_at": {
           "name": "created_at",
@@ -13011,6 +13018,14 @@
           "autoincrement": false,
           "default": "'[]'"
         },
+        "offer_cleans_to_all": {
+          "name": "offer_cleans_to_all",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -16472,6 +16487,20 @@
         },
         "claim_role": {
           "name": "claim_role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "accepted_member_id": {
+          "name": "accepted_member_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "accepted_at": {
+          "name": "accepted_at",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

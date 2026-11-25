@@ -51,6 +51,7 @@ export type HistoryRow = Pick<MessageRow, 'id' | 'organization_id' | 'conversati
   photo_rows: string
   delivery_rows: string | null
   job_status?: TaskStatus | null
+  job_confirmation?: 'confirmed' | 'not_confirmed' | null
 }
 
 const receiptFields = HISTORY_DELIVERY_FIELDS.map(field => `'${field}', d.${field}`).join(', ')
@@ -93,7 +94,14 @@ export function conversationHistorySql(
       CASE WHEN m.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND instr(json_extract(m.payload_json, '$.key'), 'job:') = 1
         THEN (SELECT t.status FROM tasks t WHERE t.organization_id = m.organization_id
           AND t.id = substr(json_extract(m.payload_json, '$.key'), 5, instr(substr(json_extract(m.payload_json, '$.key'), 5) || ':', ':') - 1))
-        END AS job_status
+        END AS job_status,
+      -- An open clean: whether its cleaner has accepted it (#2091).
+      CASE WHEN m.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND instr(json_extract(m.payload_json, '$.key'), 'job:') = 1
+        THEN (SELECT CASE WHEN t.kind <> 'turnover' OR t.status <> 'open' THEN NULL
+            WHEN t.accepted_member_id IS NOT NULL AND t.accepted_member_id = t.assigned_member_id THEN 'confirmed' ELSE 'not_confirmed' END
+          FROM tasks t WHERE t.organization_id = m.organization_id
+          AND t.id = substr(json_extract(m.payload_json, '$.key'), 5, instr(substr(json_extract(m.payload_json, '$.key'), 5) || ':', ':') - 1))
+        END AS job_confirmation
     FROM display m LEFT JOIN authors a ON a.id = m.author_user_id ${visibleAuthors} ORDER BY m.sequence`,
   params: [...(scope.params ?? []), ...(window.before === null ? [] : [window.before]), window.limit + 1, window.limit] }
 }

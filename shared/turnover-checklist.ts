@@ -165,21 +165,28 @@ export interface TurnoverReadiness {
   label: string
   shortage: boolean
   urgent: boolean
+  /** Whether the cleaner has accepted the clean (#2091 section 8); true once it is done. */
+  confirmed: boolean
   task_id: string
 }
 
 export const READINESS_WARNING_MS = 2 * 3_600_000
 
-export function turnoverReadiness(stored: { task_id: string; status: string; short: number } | null, arrivesAt: string, now: Date): TurnoverReadiness | null {
+export interface StoredTurnover { task_id: string; status: string; short: number; confirmed: number; cleaner: string | null }
+
+export function turnoverReadiness(stored: StoredTurnover | null, arrivesAt: string, now: Date): TurnoverReadiness | null {
   if (!stored || (stored.status !== 'done' && stored.status !== 'open')) return null
   if (stored.status === 'done') {
     const shortage = stored.short === 1
-    return { state: 'ready', label: shortage ? 'Ready · shortage flagged' : 'Ready', shortage, urgent: false, task_id: stored.task_id }
+    return { state: 'ready', label: shortage ? 'Ready · shortage flagged' : 'Ready', shortage, urgent: false, confirmed: true, task_id: stored.task_id }
   }
-  return { state: 'not_cleaned', label: 'Not cleaned yet', shortage: false, urgent: now.getTime() >= Date.parse(arrivesAt) - READINESS_WARNING_MS, task_id: stored.task_id }
+  const confirmed = stored.confirmed === 1
+  const cleaner = stored.cleaner?.trim().split(/\s+/)[0] ?? null
+  return { state: 'not_cleaned', label: `Not cleaned yet · ${confirmed ? `${cleaner ?? 'Cleaner'} confirmed` : 'not confirmed yet'}`, shortage: false,
+    urgent: now.getTime() >= Date.parse(arrivesAt) - READINESS_WARNING_MS, confirmed, task_id: stored.task_id }
 }
 
 export function isTurnoverReadiness(value: unknown): value is TurnoverReadiness {
   return isRecord(value) && (value.state === 'ready' || value.state === 'not_cleaned') && isText(value.label)
-    && typeof value.shortage === 'boolean' && typeof value.urgent === 'boolean' && isText(value.task_id)
+    && typeof value.shortage === 'boolean' && typeof value.urgent === 'boolean' && typeof value.confirmed === 'boolean' && isText(value.task_id)
 }

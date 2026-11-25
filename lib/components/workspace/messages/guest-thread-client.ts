@@ -91,6 +91,7 @@ export function isConversationEntry(value: unknown): value is ConversationEntry 
     && isNullableText(value.receipt) && typeof value.retryable === 'boolean' && isCount(value.unshown_files)
     && isNullableText(value.author_user_id) && typeof value.automatic === 'boolean'
     && (value.job_status === undefined || value.job_status === null || isText(value.job_status))
+    && (value.job_confirmation === undefined || value.job_confirmation === null || value.job_confirmation === 'confirmed' || value.job_confirmation === 'not_confirmed')
     && (value.checklist === undefined || isChecklistSubmissionView(value.checklist))
     && Array.isArray(value.deliveries) && value.deliveries.every(delivery => isRecord(delivery)
       && isText(delivery.id) && isText(delivery.channel) && isText(delivery.status)
@@ -103,6 +104,7 @@ export function isConversationPage(value: unknown): value is ConversationPage {
     || !Array.isArray(value.entries) || !value.entries.every(isConversationEntry) || !isRecord(value.page)
     || !isRecord(value.capabilities)) return false
   if (value.job_actions !== undefined && (!isRecord(value.job_actions) || !Object.values(value.job_actions).every(isText))) return false
+  if (value.job_responses !== undefined && (!isRecord(value.job_responses) || !Object.values(value.job_responses).every(job => isRecord(job) && isText(job.task_id) && Number.isSafeInteger(job.version)))) return false
   const { can_manage_participants, can_invite_guest, can_leave } = value.capabilities
   if (typeof can_manage_participants !== 'boolean' || typeof can_invite_guest !== 'boolean'
     || typeof can_leave !== 'boolean') return false

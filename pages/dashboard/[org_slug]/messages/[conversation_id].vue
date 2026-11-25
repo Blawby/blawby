@@ -19,7 +19,11 @@
 
     <UAlert v-if="doneError" color="error" variant="soft" title="Done could not be saved" :description="getErrorMessage(doneError, 'The request failed')" class="mx-4 mb-2" />
     <OrderPanel v-if="!personalScope && conversation?.order_id" :key="conversation.order_id" :conversation-id="threadId" class="mx-4 mb-3" @fulfilled="refresh()" />
-    <ConversationThread :key="threadId" :thread-id="threadId" :history="history" :personal-scope="personalScope" :reservation-to="reservationTo" :closing="closing" @done="done" />
+    <ConversationThread :key="threadId" :thread-id="threadId" :history="history" :personal-scope="personalScope" :reservation-to="reservationTo" :closing="closing" @done="done" @accept="accept" @decline="declining = $event" />
+    <DashboardListItemDialog :open="declining !== null" title="Can’t do it" save-label="Hand it on" :saving="closing" :error="doneError ? getErrorMessage(doneError, 'The clean could not be handed on') : null" @update:open="value => { if (!value) declining = null }" @save="decline">
+      <p class="mb-3 text-sm text-muted">It goes to the home’s next cleaner, or back to the host.</p>
+      <UTextarea v-model="declineReason" variant="none" :rows="3" :maxlength="500" placeholder="Why (optional)" class="w-full" />
+    </DashboardListItemDialog>
     <TurnoverChecklistSheet v-if="checklist" :key="checklist.path" v-model:open="checklistOpen" :checklist="checklist.checklist" :path="checklist.path" @done="checklist = null; refresh()" />
     <ConversationSheet v-if="data" v-model:open="sheetOpen" v-model:manage-guests="manageGuests" :can-manage-guests="canManageGuests" :booking-party="bookingParty" :page="data" :history="history" :on-left="left" :booking-to="reservationTo" @moved="moved" @participants-changed="refresh()" />
   </DashboardIndexPanel>
@@ -30,6 +34,7 @@ import ConversationThread from '~/lib/components/workspace/messages/Conversation
 import ConversationSheet from '~/lib/components/workspace/messages/ConversationSheet.vue'
 import InboxAvatar from '~/lib/components/workspace/messages/InboxAvatar.vue'
 import OrderPanel from '~/components/dashboard/OrderPanel.vue'
+import DashboardListItemDialog from '~/components/dashboard/DashboardListItemDialog.vue'
 import TurnoverChecklistSheet from '~/lib/components/workspace/messages/TurnoverChecklistSheet.vue'
 import { isTaskChecklist, type TaskChecklist } from '~/shared/turnover-checklist'
 import { manageReservationGuestsKey, removeInboxConversationKey } from '~/lib/components/workspace/messages/guest-thread-client'
@@ -110,6 +115,29 @@ async function done(messageId: string) {
     closing.value = false
   }
 }
+
+// A clean given to you: accept it, or hand it on with a reason.
+const declining = ref<string | null>(null)
+const declineReason = ref('')
+async function respond(messageId: string, action: 'accept' | 'decline', body: Record<string, unknown>) {
+  const job = data.value?.job_responses?.[messageId]
+  if (!job || !conversation.value || closing.value) return
+  closing.value = true
+  doneError.value = null
+  try {
+    await applicationFetch(`/api/organizations/${encodeURIComponent(conversation.value.organization_id)}/tasks/${encodeURIComponent(job.task_id)}/${action}`, { method: 'POST', body: { version: job.version, ...body },
+      validate: (value: unknown): value is { task: { id: string } } => isRecord(value) && isRecord(value.task) && value.task.id === job.task_id })
+    declining.value = null
+    declineReason.value = ''
+    await refresh()
+  } catch (cause) {
+    doneError.value = cause
+  } finally {
+    closing.value = false
+  }
+}
+const accept = (messageId: string) => respond(messageId, 'accept', {})
+const decline = () => declining.value ? respond(declining.value, 'decline', { reason: declineReason.value.trim() || null }) : undefined
 
 async function left() {
   removeInboxConversation?.(threadId.value)

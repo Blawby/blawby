@@ -1,5 +1,5 @@
 import { turnoverBeforeSql } from '~/server/domain/turnover-checklists'
-import { turnoverReadiness, type TurnoverReadiness } from '~/shared/turnover-checklist'
+import { turnoverReadiness, type StoredTurnover, type TurnoverReadiness } from '~/shared/turnover-checklist'
 import { PLATFORM_MESSAGE_AUTHOR_KIND } from '~/shared/messages-contract'
 import { listingGrantSql, listingLevelSql } from '~/server/domain/listing-access'
 import { bookingReviewDueAt, historicalNoShowAtSql } from '~/server/utils/review-requests'
@@ -1365,7 +1365,7 @@ export function stayDetailFrom<A extends StayAccess>(access: A, row: unknown): S
     & Pick<StayDetail, 'guest_image_url'> & { offline_payments_json?: string; online_payments_json?: string; installments_json?: string | null; turnover_before: string | null }
   const stay = mapStay(record)
   // Whether the home is ready for this stay: the stored status of the turnover before it.
-  const readiness = turnoverReadiness(before === null ? null : JSON.parse(before) as { task_id: string; status: string; short: number }, stay.starts_at, new Date())
+  const readiness = turnoverReadiness(before === null ? null : JSON.parse(before) as StoredTurnover, stay.starts_at, new Date())
   if (!access.manage) return { ...stayTurnover(stay), readiness } as StayDetailView<A>
   if (offline === undefined || online === undefined) throw new Error('The stay detail query did not return its payment data')
   const money = stayMoney(stay, { offline_payments_json: offline, online_payments_json: online, installments_json: plan ?? null })

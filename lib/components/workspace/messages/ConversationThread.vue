@@ -39,12 +39,19 @@
                       <UBadge v-if="message.job_status === 'done'" label="Done" color="success" variant="subtle" size="sm" />
                       <UBadge v-else-if="message.job_status === 'cancelled'" label="Cancelled" color="neutral" variant="subtle" size="sm" />
                       <UBadge v-else-if="message.job_status === 'skipped'" label="Skipped" color="neutral" variant="subtle" size="sm" />
+                      <UBadge v-else-if="message.job_confirmation === 'confirmed'" label="Confirmed" color="success" variant="subtle" size="sm" />
+                      <UBadge v-else-if="message.job_confirmation === 'not_confirmed'" label="Not confirmed yet" color="warning" variant="subtle" size="sm" />
                     </div>
                     <p class="mt-0.5 whitespace-pre-wrap break-words text-base font-semibold text-highlighted">{{ message.body }}</p>
                     <div v-if="message.photos.length" class="mt-3 grid gap-1" :class="message.photos.length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
                       <button v-for="(photo, at) in message.photos" :key="photo.id" type="button" class="block overflow-hidden rounded-2xl bg-accented" :aria-label="`Open photo ${at + 1} of ${message.photos.length}`" @click="viewer = { photos: message.photos.map(item => ({ url: item.url })), at }">
                         <img :src="photo.thumbnail_url" alt="" loading="lazy" class="size-full object-cover" :class="message.photos.length > 1 ? 'aspect-square' : 'max-h-64'">
                       </button>
+                    </div>
+                    <!-- A clean given to you: accept it, or hand it to the home's next cleaner. -->
+                    <div v-if="data?.job_responses?.[message.id]" class="mt-3 grid grid-cols-2 gap-2">
+                      <UButton label="Accept" color="neutral" block class="rounded-xl" :loading="closing" data-testid="conversation-job-accept" @click="emit('accept', message.id)" />
+                      <UButton label="Can’t do it" color="neutral" variant="outline" block class="rounded-xl" :disabled="closing" data-testid="conversation-job-decline" @click="emit('decline', message.id)" />
                     </div>
                     <UButton v-if="data?.job_actions?.[message.id]" label="Done" color="neutral" variant="soft" block class="mt-3 rounded-xl" :loading="closing" data-testid="conversation-job-done" @click="emit('done', message.id)" />
                   </div>
@@ -200,7 +207,7 @@ function prefetchReservation(to: string) {
   const id = router.resolve(to).params.record_id
   if (typeof id === 'string') reservationRead.prefetch(id)
 }
-const emit = defineEmits<{ done: [messageId: string] }>()
+const emit = defineEmits<{ done: [messageId: string]; accept: [messageId: string]; decline: [messageId: string] }>()
 
 const dashboard = useDashboardOrganization()
 const route = useRoute()

@@ -22,7 +22,7 @@ import { organizationPublicUrl } from '~/server/utils/domains'
 import { createPreviewToken, PREVIEW_TOKEN_QUERY, PREVIEW_TOKEN_TTL_MS, previewSecretOf, PUBLIC_WEBSITE_QUERY } from '~/server/utils/preview-token'
 import { isDemoOrganization } from '~/shared/demo'
 import { turnoverBeforeSql } from '~/server/domain/turnover-checklists'
-import { turnoverReadiness } from '~/shared/turnover-checklist'
+import { turnoverReadiness, type StoredTurnover } from '~/shared/turnover-checklist'
 
 /*
   Today and Upcoming for the person looking: the bookings they host in the
@@ -130,7 +130,7 @@ async function presentToday(
     return record.party_size === 1 ? noun : `${noun}s`
   }
 
-  const turnovers = new Map((readinessResult!.results as Array<{ id: string; turnover: string | null }>).map(row => [row.id, row.turnover === null ? null : JSON.parse(row.turnover) as { task_id: string; status: string; short: number }]))
+  const turnovers = new Map((readinessResult!.results as Array<{ id: string; turnover: string | null }>).map(row => [row.id, row.turnover === null ? null : JSON.parse(row.turnover) as StoredTurnover]))
   const cards: Card[] = []
   const byBooking = new Map<string, Card>()
   const byClass = new Map<string, { card: Card; party: number }>()
@@ -302,9 +302,20 @@ async function presentToday(
     if (work.kind === 'consultation_follow_up' && range === 'upcoming') continue
     // A job always has someone. Another person's clean is the action of its booking's card on that day ("Casey is cleaning");
     // the viewer's own job is its own card, which opens the job's conversation, where its Done is.
+    const confirmed = work.accepted_member_id !== null && work.accepted_member_id === work.assigned_member_id
     if (!work.assigned_to_viewer) {
+      // A clean offered to the home's cleaners: any of them accepts it from its card; the first to do so has it.
+      if (work.kind === 'turnover' && work.claim_role !== null && work.accepted_member_id === null && !manage) {
+        add({ id: `task:${work.id}`, noun: 'clean', order: [0, at ?? untimed ?? ''], bookings: [], day,
+          when: at ? visitWhen(at, work.timezone) : range === 'today' ? 'Today' : formatTimestamp(`${day}T12:00:00.000Z`, 'en', 'UTC', { weekday: 'short', month: 'short', day: 'numeric' }),
+          image_url: picture('product', work.product_id), icon: iconOf(work.product_kind), headline: `Clean up after ${group}`, line: work.product_name,
+          action: { title: 'Available to accept', detail: 'The first cleaner to accept has it' }, to: null, draft: null,
+          claim: { path: taskUpdatePath(viewer.organization_id, work.id), version: work.version, label: 'Accept' } })
+        continue
+      }
       const held = work.kind === 'turnover' && work.booking_id ? byBooking.get(work.booking_id) : undefined
-      if (held?.day === day) held.action = { title: `${first(work.assignee_name) ?? 'A teammate'} is cleaning`, detail: guest && work.viewer_seated ? `Message ${guest}` : held.action.detail }
+      const cleaner = first(work.assignee_name) ?? 'A teammate'
+      if (held?.day === day) held.action = { title: confirmed ? `${cleaner} is cleaning` : `${cleaner} hasn’t confirmed yet`, detail: guest && work.viewer_seated ? `Message ${guest}` : held.action.detail }
       continue
     }
     // Prep is the host's own preparation for a visit already on their list.
@@ -324,7 +335,8 @@ async function presentToday(
       image_url: picture('product', work.product_id), icon: iconOf(work.product_kind), headline: headline.charAt(0).toUpperCase() + headline.slice(1),
       line: work.booking_unit === 'nights' ? work.product_name : work.location_id === null ? 'Online' : work.location_title,
       // The host's own job has nobody to message: it opens the job, where its Done is.
-      action: manage ? { title: 'Open the job', detail: 'Tap Done when it’s finished' }
+      action: work.kind === 'turnover' && !confirmed && !manage ? { title: 'Accept or hand it back', detail: 'Open the job to confirm you can clean' }
+        : manage ? { title: 'Open the job', detail: 'Tap Done when it’s finished' }
         : { title: 'Message the host', detail: range === 'today' ? 'Send photos when you’re done' : 'Ask anything before the day' },
       // The job's conversation is written with the job; a job read before it exists is not linked anywhere else.
       to: team ? guestConversationPath(viewer.slug, team) : null, draft: null,

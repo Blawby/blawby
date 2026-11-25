@@ -304,7 +304,7 @@ crons = []
 
 [env.staging.vars]
 # Empty disables the iOS minimum. Otherwise: marketing version (build), e.g. "1.8.7 (51)".
-IOS_MINIMUM_VERSION = ""
+IOS_MINIMUM_VERSION = "1.8.7 (52)"
 STRIPE_BILLING_METER_MIGRATION = "true"
 # Channex staging, where the Airbnb test accounts live. CHANNEX_API_KEY is a secret.
 CHANNEX_BASE_URL = "https://staging.channex.io/api/v1"

@@ -63,7 +63,7 @@
         <p v-else-if="!foundBookings.length" class="py-4 text-center text-sm text-muted">No results for “{{ bookingSearch }}”</p>
         <ul v-else class="divide-y divide-default overflow-hidden rounded-xl ring ring-default">
           <li v-for="booking in foundBookings" :key="booking.booking_id">
-            <NuxtLink :to="`/dashboard/${route.params.org_slug}/bookings/${booking.unit === 'nights' ? 'stay' : 'booking'}/${booking.booking_id}`" class="flex items-center justify-between gap-3 px-4 py-3 hover:bg-elevated/60" :data-booking-result="booking.booking_id">
+            <NuxtLink :to="bookingEditorPath(String(route.params.org_slug), booking.booking_id)" @click="openFoundBooking(booking, $event)" class="flex items-center justify-between gap-3 px-4 py-3 hover:bg-elevated/60" :data-booking-result="booking.booking_id">
               <span class="min-w-0">
                 <span class="block truncate text-sm font-medium text-highlighted">{{ booking.guest_name ?? booking.product_name }}</span>
                 <span class="block truncate text-xs text-muted">{{ [booking.product_name, formatCalendarDate(booking.day, 'en', { month: 'short', day: 'numeric', year: 'numeric' })].join(' · ') }}</span>
@@ -301,6 +301,7 @@ export const calendarSessionsKey = Symbol('calendar-sessions') as InjectionKey<{
 </script>
 
 <script setup lang="ts">
+import { bookingEditorPath } from '~/shared/messages-contract'
 import { NuxtLink } from '#components'
 import { CalendarDate, getDayOfWeek, getLocalTimeZone, parseDate, today } from '@internationalized/date'
 import AgendaRow from '~/lib/components/workspace/dashboard/AgendaRow.vue'
@@ -615,6 +616,12 @@ const foundBookings = shallowRef<FoundBooking[]>([])
 const foundNext = ref<number | null>(null)
 const foundError = ref<unknown>(null)
 const finding = ref(false)
+async function openFoundBooking(booking: FoundBooking, event: MouseEvent): Promise<void> {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return
+  event.preventDefault()
+  await router.replace({ path: route.path, query: { ...route.query, date: booking.day, month: booking.day.slice(0, 7) } })
+  await navigateTo(bookingEditorPath(String(route.params.org_slug), booking.booking_id))
+}
 async function findBookings(q: string, offset: number): Promise<void> {
   finding.value = true
   foundError.value = null

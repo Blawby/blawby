@@ -4,13 +4,14 @@ import test from 'node:test'
 import { Miniflare } from 'miniflare'
 import { requestInsertQueries, threadPayloadForGuest } from '../../server/domain/requests.ts'
 import { openingSentence } from '../../server/domain/guest-threads/opening.ts'
-import { appendMessage, markConversationRead } from '../../server/domain/conversations.ts'
+import { appendMessage, markConversationRead, messageQueries } from '../../server/domain/conversations.ts'
 import { loadConversationPage } from '../../server/domain/conversation-history.ts'
 import { acceptConversationGuestInvite, createConversationGuestInvite, removeConversationGuest } from '../../server/domain/conversation-participants.ts'
 import { conversationPageFor } from './support/conversation-page.ts'
 import { archiveConversation, listConversations, readGuestInbox } from '../../server/domain/guest-threads/repository.ts'
 import { memberAccessPrincipal } from '../../server/utils/member-access.ts'
 import type { CloudflareEnv } from '../../server/utils/auth.ts'
+import { searchMatchSql, searchIndexMatch } from '../../server/domain/search.ts'
 import { applySchema } from './support/schema.ts'
 
 async function guestUnread(db: Parameters<typeof readGuestInbox>[0], userId: string) {
@@ -28,7 +29,7 @@ async function guestUnread(db: Parameters<typeof readGuestInbox>[0], userId: str
 const ORG = 'org', OWNER = 'owner'
 const CREATED = '2026-11-03T09:00:00.000Z'
 
-test('a table booking opens with its own message and the guest note, written once', { timeout: 120_000 }, async () => {
+test('a table booking opens with its own message and the guest note, written once', { timeout: 300_000 }, async t => {
   const runtime = new Miniflare({ workers: [{ config: {
     name: 'conversation-opening', compatibilityDate: '2024-11-01',
     manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: 'export default { fetch() { return new Response("ok") } }' } } },
@@ -92,12 +93,18 @@ test('a table booking opens with its own message and the guest note, written onc
     // The live message writer updates the index; search reaches Past, short
     // Unicode terms, long terms beyond D1's GLOB limit, and separate words.
     const longTerm = 'confirmationreference' + '0123456789'.repeat(8)
-    await appendMessage(db, { conversationId: 'new', authorKind: 'guest', authorUserId: null, channel: 'web', body: `Émile José ЖΩ ${longTerm}` })
+    const indexedMessage = await appendMessage(db, { conversationId: 'new', authorKind: 'guest', authorUserId: null, channel: 'web', body: `Émile José ЖΩ ${longTerm}` })
     await archiveConversation(db, { organizationId: ORG, conversationId: 'new', userId: OWNER, archived: true })
     for (const q of ['jose emile', 'ÉMILE jose', 'Ω', 'жω', longTerm, 'filip@example.test jose']) {
       assert.deepEqual((await listConversations(db, ORG, { userId: OWNER, mailbox: 'current', q })).map(row => row.id), ['new'], q)
     }
     assert.deepEqual(await listConversations(db, ORG, { userId: OWNER, q: 'jose nevermentioned' }), [])
+
+    await db.prepare("UPDATE conversations SET payload_json = json_set(payload_json, '$.guest.name', 'Álvaro Éclair') WHERE id = 'new'").run()
+    assert.deepEqual((await listConversations(db, ORG, { userId: OWNER, q: 'alvaro eclair' })).map(row => row.id), ['new'])
+    await db.prepare('UPDATE messages SET body = ? WHERE id = ?').bind(`Élodie José ЖΩ ${longTerm}`, indexedMessage.id).run()
+    assert.deepEqual(await listConversations(db, ORG, { userId: OWNER, q: 'emile' }), [])
+    assert.deepEqual((await listConversations(db, ORG, { userId: OWNER, q: 'elodie jose' })).map(row => row.id), ['new'])
 
     // Accept through the normal write, then read using the request's canonical seat and transcript projection.
     const booker = { id: 'booker', email: 'filip@example.test', name: 'Filip Heurckmans', emailVerified: true }
@@ -171,6 +178,46 @@ test('a table booking opens with its own message and the guest note, written onc
     // In the other reservation the same account is a workspace admin with no stored seat.
     const hostInvite = await createConversationGuestInvite(db, { organizationId: ORG, userId: booker.id }, { conversationId: 'new', email: traveler.email })
     assert.deepEqual(await acceptConversationGuestInvite(db, publication, { token: hostInvite.token, user: traveler }), { conversation_id: 'new', organization_id: ORG })
+    // Grow the same canonical message history and measure the actual indexed
+    // read and write boundaries, including the largest recorded staging body.
+    const measurements: unknown[] = []
+    let added = 0
+    for (const count of [100, 1000, 5000]) {
+      const writeStart = performance.now()
+      while (added < count) {
+        const batch = []
+        const through = Math.min(added + 100, count)
+        for (; added < through; added++) {
+          const message = messageQueries({ conversationId: 'new', authorKind: 'guest', authorUserId: null, channel: 'web', body: `Background message ${added}: the arrival time and instructions are unchanged.`, occurredAt: CREATED })
+          batch.push(...message.queries.map(query => db.prepare(query.query).bind(...(query.params ?? []))))
+        }
+        await db.batch(batch)
+      }
+      const writeMs = performance.now() - writeStart
+      const reads = []
+      for (const q of ['jose elodie', 'Ω', 'жω', longTerm]) {
+        const samples = []
+        for (let repeat = 0; repeat < 5; repeat++) {
+          const start = performance.now()
+          assert.deepEqual((await listConversations(db, ORG, { userId: OWNER, q })).map(row => row.id), ['new'])
+          samples.push(performance.now() - start)
+        }
+        const search = searchMatchSql(q, term => searchIndexMatch('messages', 'e', term))!
+        const result = await db.prepare(`SELECT e.id FROM messages e WHERE ${search.sql}`).all()
+        assert.deepEqual(result.results, [{ id: indexedMessage.id }])
+        reads.push({ q, median_ms: samples.sort((a, b) => a - b)[2], rows_read: result.meta.rows_read })
+      }
+      const started = performance.now()
+      const large = await appendMessage(db, { conversationId: 'new', authorKind: 'guest', authorUserId: null, channel: 'web', body: 'A'.repeat(2000) })
+      const insertMs = performance.now() - started
+      const updateStarted = performance.now()
+      await db.prepare('UPDATE messages SET body = ? WHERE id = ?').bind('É'.repeat(2000), large.id).run()
+      const updateMs = performance.now() - updateStarted
+      await db.prepare('DELETE FROM messages WHERE id = ?').bind(large.id).run()
+      const totals = await db.prepare('SELECT count(*) AS messages, sum(length(body)) AS characters FROM messages').first()
+      measurements.push({ added_messages: count, totals, batch_write_ms: writeMs, insert_2000_ms: insertMs, update_unicode_2000_ms: updateMs, reads })
+    }
+    t.diagnostic(`SEARCH_BENCHMARK ${JSON.stringify(measurements)}`)
   } finally {
     await runtime.dispose()
   }

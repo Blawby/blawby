@@ -20,11 +20,13 @@ export function searchIndexSchema(): string {
   // FTS's trigram tokenizer indexes the folded text. Encoded one/two-character
   // terms give short searches an index too, without changing substring semantics.
   const values = (raw: string) => `WITH RECURSIVE input_text(value) AS (SELECT ${raw}),
-    folded(position, value) AS (
-      SELECT 1, '' UNION ALL
-      SELECT position + 1, folded.value || COALESCE(json_extract((SELECT characters FROM search_character_folds), '$."' || unicode(substr(input_text.value, position, 1)) || '"'), substr(input_text.value, position, 1))
-      FROM folded, input_text WHERE position <= length(input_text.value)
-    ), text(value) AS (SELECT value FROM folded ORDER BY position DESC LIMIT 1),
+    characters(position) AS (SELECT 1 UNION ALL SELECT position + 1 FROM characters, input_text WHERE position < length(input_text.value)),
+    text(value) AS MATERIALIZED (
+      SELECT COALESCE(group_concat(CASE WHEN unicode(substr(input_text.value, position, 1)) < 128
+        THEN lower(substr(input_text.value, position, 1))
+        ELSE COALESCE(json_extract((SELECT characters FROM search_character_folds), '$."' || unicode(substr(input_text.value, position, 1)) || '"'), substr(input_text.value, position, 1)) END, ''), '')
+      FROM characters, input_text
+    ),
     positions(position) AS (SELECT 1 UNION ALL SELECT position + 1 FROM positions, text WHERE position < length(text.value)),
     terms(value) AS (
       SELECT 'u' || printf('%06x', unicode(substr(text.value, position, 1))) || ';' FROM positions, text WHERE position <= length(text.value)

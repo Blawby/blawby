@@ -124,7 +124,7 @@ export async function resolvePublicPageIdentity(env: CloudflareEnv, db: AppDb, i
       if (!representations.some(item => item.locale === routing.localeSegment && item.route_path === pagePath)) return null
       const page = await resolveCanonicalTenantPageIdentity(db, organizationId, routing.sourcePath, routing.localeSegment)
       return { ...base, locale: routing.localeSegment, pageId: page?.page_id ?? null,
-        documentId: page?.id ?? null, pageType: page?.page_type ?? null, recipe: page?.recipe ?? null, productId: null }
+        documentId: page?.id ?? null, pageType: page?.page_type ?? null, recipe: page?.recipe ?? null, productId: page?.product_id ?? null }
     }
     let route: Awaited<ReturnType<typeof resolveLocalizedPublicRoute>>
     try {
@@ -137,9 +137,10 @@ export async function resolvePublicPageIdentity(env: CloudflareEnv, db: AppDb, i
     }
     const representation = route.representation
     if (representation.kind === 'document') {
-      const root = await queryFirst<{ page_type: string | null; recipe: string | null }>(db, `SELECT json_extract(metadata_json, '$.page_type') AS page_type, json_extract(metadata_json, '$.recipe') AS recipe
+      const root = await queryFirst<{ page_type: string | null; recipe: string | null; product_id: string | null }>(db, `SELECT product_id, json_extract(metadata_json, '$.page_type') AS page_type, json_extract(metadata_json, '$.recipe') AS recipe
         FROM content_documents WHERE id = ? AND organization_id = ? LIMIT 1`, [representation.resource_id, organizationId])
-      return { ...base, locale: route.locale, pageId: representation.resource_id, documentId: representation.document_id, pageType: root?.page_type ?? null, recipe: root?.recipe ?? null, productId: null }
+      if (!root) throw new Error('Published page root is unavailable')
+      return { ...base, locale: route.locale, pageId: representation.resource_id, documentId: representation.document_id, pageType: root.page_type, recipe: root.recipe, productId: root.product_id }
     }
     const source = route.locale_representations.find(item => item.source === 'source')
     if (!source) throw new Error('Published localized resource source route is unavailable')
@@ -151,7 +152,7 @@ export async function resolvePublicPageIdentity(env: CloudflareEnv, db: AppDb, i
   const sourceLocale = await getSourceLocale(db, organizationId)
   if (input.requestedLocale && input.requestedLocale !== sourceLocale) return null
   const page = await resolveCanonicalTenantPageIdentity(db, organizationId, routing.sourcePath, sourceLocale)
-  if (page) return { ...base, locale: sourceLocale, pageId: page.page_id, pageType: page.page_type, recipe: page.recipe, documentId: null, productId: null }
+  if (page) return { ...base, locale: sourceLocale, pageId: page.page_id, pageType: page.page_type, recipe: page.recipe, documentId: null, productId: page.product_id }
 
   const siteProduct = parseSiteProductPath(routing.sourcePath)
   if (siteProduct) {

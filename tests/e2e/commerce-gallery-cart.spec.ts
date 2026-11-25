@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { openTenantPage } from './helpers'
+import { openTenantPage, waitForNuxtHydration } from './helpers'
 import { seededTenant } from './seed/manifest'
 import { seededSiteHeaders, seededSiteURL } from './test-env'
 
@@ -136,6 +136,7 @@ test('recently viewed and cart cards stay private, tenant-scoped and consented w
   expect(other.status(), await other.text()).toBe(200)
   expect(await other.json()).toEqual({ items: [] })
   await page.goto(`${base}/products/${product.slug}`)
+  await waitForNuxtHydration(page)
   await page.getByRole('button', { name: 'Large', exact: true }).click()
   await expect(page).toHaveURL(/[?&]variant=/)
   await page.getByRole('button', { name: 'Add to cart', exact: true }).click()
@@ -162,4 +163,26 @@ test('recently viewed and cart cards stay private, tenant-scoped and consented w
   expect(await declined.json()).toEqual({ items: [] })
   // This read adds no identity, history or personalization cookie.
   expect((await context.cookies()).map(cookie => cookie.name).filter(name => !cookies.includes(name))).toEqual([`cart_${tenant.organizationId}`].filter(name => !cookies.includes(name)))
+})
+
+test('authored practice-area pages record their linked offering for recently viewed', async ({ page, context }) => {
+  const tenant = seededTenant('legal')
+  const product = tenant.products['family-law']!
+  const base = seededSiteURL('legal')
+  const headers = seededSiteHeaders('legal')
+  await openTenantPage(page, base + '/', headers)
+  await context.addCookies([{ name: 'kc_analytics_consent', value: encodeURIComponent(JSON.stringify({ kc_analytics: true })), url: base }])
+  const recorded = page.waitForResponse(response => response.url().endsWith('/api/analytics/track')
+    && response.request().method() === 'POST' && response.request().postDataJSON()?.event_type === 'pageview'
+    && response.request().postDataJSON()?.page_path === '/services/family')
+  await page.goto(base + '/services/family')
+  expect((await recorded).status()).toBe(200)
+  await page.goto(base + '/')
+  const row = page.locator('[data-recently-viewed]')
+  await expect(row.getByText(product.name, { exact: true })).toBeVisible()
+  await expect(row.locator('[data-carousel-item]').first()).toHaveAttribute('href', '/services/family')
+  const response = await context.request.get(base + '/api/public/products?recently_viewed=true&locale=en', { headers })
+  expect(response.status(), await response.text()).toBe(200)
+  expect((await response.json()).items.map((item: { id: string }) => item.id)).toEqual([product.id])
+  expect(Number(response.headers()['x-d1-round-trip-count'])).toBe(1)
 })

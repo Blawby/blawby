@@ -251,6 +251,12 @@ test('a guest change request lands once in the stay conversation, survives a rel
     const changeTask = await db.prepare('SELECT id FROM tasks WHERE dedupe_key = ?').bind(`booking_change:${request!.id}`).first<string>('id')
     assert.ok(changeTask)
     const setup = ['payments.connect:org', 'Set up payments', 'Connect with Stripe', '/dashboard/org/payments/payout-method']
+    const homeId = await db.prepare('SELECT product_id FROM bookings WHERE id = ?').bind(stayId).first<string>('product_id')
+    assert.ok(homeId)
+    const quietSuggestions = [setup,
+      ['business_location.photo:location', 'Add photos of “Cabin”', 'Help people see what to expect', '/dashboard/org/locations/cabin/photos'],
+      [`product.photo:${homeId}`, 'Add photos of “Cabin”', 'Help people see what to expect', `/dashboard/org/products/${homeId}/photo`],
+    ]
     assert.deepEqual(await today(), [[`task:${changeTask}`, 'Lee’s group of 2 asked to change their stay', 'Review the change', `/dashboard/org/messages/${stay.conversation_id}`], setup])
 
     // Assignment allows the conversation and turnover to be read. Deciding the request is still a stay manager's action.
@@ -286,13 +292,13 @@ test('a guest change request lands once in the stay conversation, survives a rel
       'the conversation remains unread after a booking decision')
     assert.deepEqual((await reservation(stay.id)).booking.pending_changes, [])
     // An answered change is not Today's work any more.
-    assert.deepEqual(await today(), [setup])
+    assert.deepEqual(await today(), quietSuggestions)
 
     // Answering again, or the feed seeing it resolved, changes nothing and sends nothing to Channex.
     assert.equal((await answer(stay.id, request!.id, 'accept_change')).status, 204)
     assert.deepEqual(await runAlterationRequestFeed(db, env), { recorded: 0, reconciled: 0 })
     assert.equal(channex.resolutions.length, 1)
-    assert.deepEqual(await today(), [setup])
+    assert.deepEqual(await today(), quietSuggestions)
 
     // Declining a later request resolves it on Channex and leaves the stay as it is.
     channex.requests.set('alt-2', { booking: 'bk-1', after: { arrival: '2027-01-11', departure: '2027-01-15', adults: 3, amount: '600.00' }, status: null })

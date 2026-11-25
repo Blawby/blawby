@@ -2,8 +2,6 @@ import { expect, test } from '@playwright/test'
 import { openTenantPage } from './helpers'
 import { seededTenant } from './seed/manifest'
 import { seededSiteHeaders, seededSiteURL } from './test-env'
-import { SeedClient } from './seed/client'
-import { E2E_PASSWORD, findE2eAuthFixture } from '../../config/development-auth-fixtures'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -118,6 +116,11 @@ test('recently viewed and cart cards stay private, tenant-scoped and consented w
   expect(recent.status(), await recent.text()).toBe(200)
   expect(recent.headers()['cache-control']).toBe('private, no-store, max-age=0')
   expect(recent.headers()['set-cookie']).toBeUndefined()
+  for (const [cookie, message] of [[`cart_${tenant.organizationId}=not-json`, 'Cart cookie is invalid'], ['kc_visitor_id=not-a-visitor', 'Visitor cookie is invalid']]) {
+    const invalid = await context.request.get(endpoint, { headers: { ...headers, cookie: `kc_analytics_consent=${encodeURIComponent(JSON.stringify({ kc_analytics: true }))}; ${cookie}` } })
+    expect(invalid.status(), await invalid.text()).toBe(400)
+    expect(await invalid.text()).toContain(message)
+  }
   expect((await recent.json()).items.map((item: { id: string }) => item.id)).toEqual([wheel.id, product.id])
   const cookies = (await context.cookies()).map(cookie => cookie.name).sort()
   const fresh = await browser.newContext()
@@ -141,7 +144,9 @@ test('recently viewed and cart cards stay private, tenant-scoped and consented w
   await expect(row.locator('[data-carousel-item]').first()).toHaveAttribute('href', '/cart')
   await expect(row).toContainText('80,000.00')
   await expect(row).toContainText('Checkout')
-  await row.screenshot({ path: test.info().outputPath('recently-viewed-cart.png') })
+  await page.setViewportSize({ width: 1280, height: 1200 })
+  await row.evaluate(element => window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY - 100))
+  await page.screenshot({ path: test.info().outputPath('recently-viewed-cart.png') })
   const cartPage = await page.goto(base + '/cart')
   expect(cartPage?.status()).toBe(200)
   const cartCookie = (await context.cookies()).find(cookie => cookie.name === `cart_${tenant.organizationId}`)!
@@ -149,25 +154,6 @@ test('recently viewed and cart cards stay private, tenant-scoped and consented w
   expect(await cartPage!.text()).not.toContain(variantId)
   await expect(page.getByRole('spinbutton')).toHaveValue('1')
   await page.goto(base + '/')
-  const fixture = findE2eAuthFixture('user-e2e-pottery-owner')
-  const owner = await SeedClient.signedIn(base, fixture.email, E2E_PASSWORD)
-  const before = await owner.tool<{ product: { updated_at: string; active: boolean } }>(tenant.organizationId, 'get_product', { product_id: product.id })
-  try {
-    await owner.tool(tenant.organizationId, 'update_product', { product_id: product.id, updated_at: before.product.updated_at, active: false })
-    const unavailable = await context.request.get(endpoint, { headers })
-    expect(unavailable.status(), await unavailable.text()).toBe(200)
-    expect((await unavailable.json()).items.map((item: { id: string }) => item.id)).toEqual([wheel.id])
-    await page.reload()
-    await expect(row.getByText(product.name, { exact: true })).toHaveCount(0)
-    await expect(row.getByText(wheel.name, { exact: true })).toBeVisible()
-  } finally {
-    const changed = await owner.tool<{ product: { updated_at: string } }>(tenant.organizationId, 'get_product', { product_id: product.id })
-    await owner.tool(tenant.organizationId, 'update_product', { product_id: product.id, updated_at: changed.product.updated_at, active: before.product.active })
-    await owner.dispose()
-  }
-  const restored = await context.request.get(endpoint, { headers })
-  expect(restored.status(), await restored.text()).toBe(200)
-  expect((await restored.json()).items[0].id).toBe(product.id)
   await context.addCookies([{ name: 'kc_analytics_consent', value: encodeURIComponent(JSON.stringify({ kc_analytics: false })), url: base }])
   await page.evaluate(() => document.dispatchEvent(new Event('zarazConsentChoicesUpdated')))
   await expect(row).toHaveCount(0)

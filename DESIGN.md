@@ -699,6 +699,7 @@ A Products block can use the Recently viewed source instead of selected products
 or a collection. The page owns its placement and heading, edited through the
 existing block settings and content-block operation. It shows the visitor's
 available cart items first, then recently viewed offerings, only after consent.
-New home pages place it below the hero; product pages include it at the bottom
+Home pages place it below the hero unless their authored content places one;
+product pages include it at the bottom
 unless their authored content already places one. Product records, prices,
 publication and inventory remain the sources of the cards.

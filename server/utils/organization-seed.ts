@@ -104,9 +104,6 @@ export async function seedNewOrganization(
         },
       },
     ];
-    if (definition.path === '/') {
-      blocks.push({ id: uid('block'), type: 'product_grid', position: 1, data: { source: 'recently_viewed' } })
-    }
     if (definition.path === '/qa') {
       blocks.push({
         id: uid('block'),

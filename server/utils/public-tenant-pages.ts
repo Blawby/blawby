@@ -308,6 +308,13 @@ function projectBlocks(
   // collections, and a flat union rendered both collections in both grids.
   const currency = organizationRow.default_currency
   const homepage = pagePath === '/' && site.slug !== 'platform'
+  if (homepage && !blocks.some(block => block.type === 'product_grid' && block.data.source === 'recently_viewed')) {
+    const afterHero = blocks.findIndex(block => block.type === 'hero') + 1
+    blocks = [...blocks.slice(0, afterHero), {
+      id: 'homepage-recently-viewed', type: 'product_grid', position: afterHero,
+      data: { source: 'recently_viewed' }, media: [],
+    }, ...blocks.slice(afterHero)]
+  }
   const homepageMenu = homepage && !legalPractice
   for (const service of defaultServices ? productCatalog.products.filter(product => product.kind === 'service') : []) {
     if (!service.page) throw new HTTPError({ statusCode: 500, statusMessage: 'Published service page is unavailable', data: { code: 'SERVICE_PAGE_MISSING', product_id: service.id } })
@@ -678,6 +685,7 @@ export function prepareRecentlyViewedProducts(
   const excludeProductId = typeof exclude === 'string' ? exclude : null
   const cookies = parseCookie(cookieHeader)
   const visitorId = cookies[VISITOR_COOKIE]
+  if (visitorId !== undefined && !isCanonicalEventId(visitorId)) throw new HTTPError({ statusCode: 400, statusMessage: 'Visitor cookie is invalid' })
   const targetSql = typeof target === 'string' ? '?' : `(${target.query})`
   const targetParams = typeof target === 'string' ? [target] : target.params ?? []
   const scope = `SELECT o.id AS organization_id, o.theme_id, o.vertical, o.default_currency,
@@ -703,7 +711,7 @@ export function prepareRecentlyViewedProducts(
     ) recent
   ), candidates AS (SELECT * FROM raw_candidates WHERE product_id IS NOT ?)`
   const cartCookies = Object.fromEntries(Object.entries(cookies).filter(([name]) => name.startsWith('cart_')))
-  const params = [JSON.stringify(cartCookies), ...targetParams, locale, visitorId && isCanonicalEventId(visitorId) ? visitorId : null, excludeProductId]
+  const params = [JSON.stringify(cartCookies), ...targetParams, locale, visitorId ?? null, excludeProductId]
   const organization = { sql: '(SELECT organization_id FROM personalization_scope)' }
   const catalog = prepareTenantPageCatalog(organization, { sql: 'NULL' }, { sql: '?', params: [locale] }, false,
     'p.id IN (SELECT product_id FROM candidates) AND p.active=1')
@@ -726,6 +734,8 @@ export function prepareRecentlyViewedProducts(
       try { cartValue = JSON.parse(site.cart_json) }
       catch { throw new HTTPError({ statusCode: 400, statusMessage: 'Cart cookie is invalid' }) }
       if (!cartLinesSchema.safeParse(cartValue).success) throw new HTTPError({ statusCode: 400, statusMessage: 'Cart cookie is invalid' })
+      const candidates = rows[1]!.results as Array<{ product_id: string; product_variant_id: string | null; quantity: number }>
+      if (!candidates.length) return { items: [] }
       const organizationId = site.organization_id
       if (!isCurrencyCode(site.default_currency)) throw new Error('The public catalog requires a supported currency')
       const localizations = site.source_locale === locale ? null : indexStoredPublicLocalizations(rows.at(-1)!.results as StoredPublicLocalizationRow[])
@@ -734,7 +744,6 @@ export function prepareRecentlyViewedProducts(
       })
       const products = new Map(source.products.map(product => [product.id, product]))
       const cards = new Map(tenantPageProductRows(source, { productIds: [...products.keys()] }, site.default_currency).map(card => [card.id, card]))
-      const candidates = rows[1]!.results as Array<{ product_id: string; product_variant_id: string | null; quantity: number }>
       const seen = new Set<string>()
       const items = []
       for (const candidate of candidates) {

@@ -18,7 +18,7 @@ export function useCart(organizationId: string) {
   const lines = computed(() => cartLinesSchema.parse(state.value))
   const count = computed(() => lines.value.reduce((sum, line) => sum + line.quantity, 0))
   function write(next: CartLine[]) {
-    while (next.length > 1 && encodeURIComponent(JSON.stringify(next)).length > MAX_BYTES) next.shift()
+    while (next.length > 1 && (next.length > 50 || encodeURIComponent(JSON.stringify(next)).length > MAX_BYTES)) next.shift()
     state.value = next
     cookie.value = next
   }

@@ -9,7 +9,7 @@ approval signal.
 A pull request deploys nothing, a push to `staging` deploys the staging Worker,
 and a push to `main` deploys production. Each environment gets one ordinary
 Cloudflare Worker deployment. GitHub workflow runs and Cloudflare's deployment
-history are the release record; do not add release manifests, version headers,
+history are the release record; do not add release manifests, server release headers,
 release locks or rollback scripts.
 
 1. Keep one coherent change in one pull request targeting `staging`.
@@ -59,12 +59,27 @@ additively and use this sequence for a release that affects the native app.
 4. **Installed app.** With the previous banner-capable App Store version still
    installed, confirm **Update available** appears and **Update** opens the
    listing with an available update. Dismiss the banner and reopen the app to
-   confirm it stays dismissed for that version. Install the update from the
-   listing, confirm the banner is gone, and repeat the affected production
+   confirm it stays dismissed for seven days for that version and returns if
+   still behind. Install the update from the listing, confirm the banner is gone, and repeat the affected production
    journeys in the new release. The first release that includes the banner
    establishes the installed build for this check when the next version ships.
    iOS manages automatic updates on each device, and customers can manually
    update during a phased release. [Apple's update settings](https://support.apple.com/en-us/102629) · [Phased releases](https://developer.apple.com/help/app-store-connect/update-your-app/release-a-version-update-in-phases)
+
+5. **Minimum supported iOS version.** In the same server promotion checklist,
+   when retiring or changing an API an installed build uses, first verify the
+   replacement version is live and downloadable from the App Store in the
+   affected storefronts, and available to the existing TestFlight group. Then
+   raise `IOS_MINIMUM_VERSION` in that environment's `wrangler.toml` vars to the
+   replacement's marketing version and build, for example `"1.8.7 (51)"`.
+   Raising this one value is the release step; no per-route change is needed.
+   Empty disables the minimum. Never raise it for a build still in review.
+   Requests carrying `X-Blawby-App-Version: 1.8.7 (51)` below the minimum get
+   HTTP 426 `APP_UPDATE_REQUIRED`; web and MCP requests without the header are
+   unaffected. Verify two unrelated API routes and the app's blocking update
+   screen before promoting. Builds released before the header was added cannot
+   be identified by this mechanism: retain the API contracts they use until
+   those builds are no longer supported.
 
 Retire an old route or field once supported builds no longer use it.
 

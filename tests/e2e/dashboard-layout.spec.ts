@@ -108,10 +108,17 @@ test.describe('dashboard pane hierarchy', () => {
     await expect(editor.getByText('1 hour before the reservation starts', { exact: true })).toBeVisible()
   })
 
-  test('task creation uses one form and team messaging names its recipients', async ({ page }) => {
+  test('task creation uses one form and team messaging names its recipients', async ({ page }, testInfo) => {
     const tenant = seededTenant('restaurant')
     await page.setViewportSize(PHONE)
-    await open(page, `/dashboard/${tenant.slug}`)
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme })
+      await page.setViewportSize(WIDE)
+      await open(page, `/dashboard/${tenant.slug}`)
+      await expect(page.getByTestId('today-item').first()).toBeVisible()
+      await page.screenshot({ path: testInfo.outputPath(`today-cards-${colorScheme}.png`), fullPage: true })
+    }
+    await page.setViewportSize(PHONE)
     await page.getByRole('button', { name: 'Add task', exact: true }).click()
     const task = page.getByRole('dialog', { name: 'Add a task', exact: true })
     await expect(task.getByLabel(/^What needs doing/)).toBeVisible()

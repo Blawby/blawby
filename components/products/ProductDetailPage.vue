@@ -386,7 +386,7 @@
 
       <div v-else class="rounded-2xl bg-elevated p-6 sm:p-10 lg:p-12">
         <div :class="galleryItems.length ? ['grid min-w-0 gap-10 items-start', product.kind === 'item' ? 'lg:grid-cols-[minmax(0,1.85fr)_minmax(0,1fr)] lg:gap-12' : 'lg:grid-cols-2'] : 'max-w-3xl'">
-          <MediaGallery v-if="galleryItems.length" ref="mediaGallery" :items="galleryItems" :title="displayTitle" class="min-w-0" />
+          <MediaGallery v-if="galleryItems.length" ref="mediaGallery" :items="galleryItems" :title="displayTitle" :layout="product.kind === 'item' ? 'product' : 'mosaic'" class="min-w-0" />
           <div class="py-2" :class="product.kind === 'item' ? 'lg:sticky lg:top-24' : undefined">
             <p class="tenant-kicker">{{ collectionName }}</p>
             <h1 class="tenant-display tenant-italic mt-3 text-3xl sm:text-4xl lg:text-5xl text-default leading-tight">{{ product.name }}</h1>
@@ -424,6 +424,7 @@
                 <dd class="mt-1 text-sm text-muted">{{ detail.values.join(', ') }}</dd>
               </div>
             </dl>
+            <ShareButton v-if="product.kind === 'item' && !previewAuthorized" class="mt-5" :title="displayTitle" :url="publicShareUrl" />
           </div>
         </div>
       </div>
@@ -1026,7 +1027,11 @@ const structuredDataType = computed(() => {
 // tenant's own domain.
 const requestURL = useRequestURL()
 const publicRoute = useRoute()
-const publicShareUrl = computed(() => new URL(publicRoute.path, requestURL.origin).toString())
+const publicShareUrl = computed(() => {
+  const url = new URL(publicRoute.path, requestURL.origin)
+  if (props.product.kind === 'item' && chosenVariantId.value) url.searchParams.set('variant', chosenVariantId.value)
+  return url.toString()
+})
 // A place to stay has no external link: it is booked on this page, which is its canonical URL.
 const canonicalProductUrl = computed(() => new URL(
   props.product.order_url || localePath(props.presentation.productPath(props.location?.slug ?? '', props.product.slug)),

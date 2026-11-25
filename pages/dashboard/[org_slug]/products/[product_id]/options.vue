@@ -32,7 +32,7 @@
               <span class="size-7 shrink-0 rounded-full ring-1 ring-default" :style="option.swatches[value] ? { background: swatchBackground(option.swatches[value]!) } : undefined" />
               <span class="min-w-0 flex-1 truncate text-sm text-highlighted">{{ value }}</span>
               <input type="color" class="size-8 cursor-pointer rounded" :aria-label="`${value} colour`" :value="option.swatches[value]?.[0] ?? '#000000'" @input="setSwatch(option, value, 0, $event)">
-              <input type="color" class="size-8 cursor-pointer rounded" :aria-label="`${value} second colour`" :value="option.swatches[value]?.[1] ?? '#ffffff'" @input="setSwatch(option, value, 1, $event)">
+              <input type="color" class="size-8 cursor-pointer rounded" :class="{ 'opacity-30': !option.swatches[value]?.[1] }" :aria-label="`${value} second colour`" :value="option.swatches[value]?.[1] ?? '#ffffff'" @input="setSwatch(option, value, 1, $event)">
               <UButton v-if="option.swatches[value]" color="neutral" variant="ghost" size="sm" icon="i-lucide-x" :aria-label="`Remove ${value} swatch`" @click="delete option.swatches[value]" />
             </div>
           </div>

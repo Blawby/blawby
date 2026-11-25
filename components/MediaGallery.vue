@@ -4,6 +4,24 @@
       <TenantIcon :name="emptyIcon" class="size-16 text-dimmed" />
     </div>
 
+    <div v-else-if="layout === 'product'" class="relative">
+      <UCarousel
+        :key="items[0]?.url"
+        :items="items"
+        :arrows="items.length > 1"
+        :breakpoints="{ '(min-width: 1024px)': { active: false } }"
+        :ui="{ container: 'ms-0 lg:grid lg:grid-cols-2 lg:gap-2', item: 'ps-0 basis-full lg:first:col-span-2', controls: 'relative mt-3 lg:hidden', arrows: 'flex justify-between', prev: 'static translate-y-0', next: 'static translate-y-0' }"
+        @select="productIndex = $event"
+      >
+        <template #default="{ item, index }">
+          <button type="button" class="relative block w-full overflow-hidden border-0 bg-transparent p-0 text-left" :aria-label="item.kind === 'video' ? `Play video, ${title}` : `Open media, ${title}`" @click="openLightbox(index)">
+            <MediaPreview :item="item" :fill="false" fit="contain" :loading="index === 0 ? 'eager' : 'lazy'" />
+          </button>
+        </template>
+      </UCarousel>
+      <p v-if="items.length > 1" class="pointer-events-none absolute inset-x-12 bottom-1.5 text-center text-sm tabular-nums text-muted lg:hidden" aria-live="polite">{{ productIndex + 1 }} / {{ items.length }}</p>
+    </div>
+
     <button
       v-else-if="items.length === 1"
       type="button"
@@ -83,11 +101,11 @@
       </div>
     </div>
 
-    <button v-if="items.length === 1 && photoGroups.length" type="button" class="absolute bottom-4 right-4 z-10 inline-flex items-center gap-2 rounded-lg border border-black/80 bg-white/95 px-3.5 py-1.5 text-xs font-semibold text-gray-900 shadow-sm" @click="openAllPhotos">
+    <button v-if="layout !== 'product' && items.length === 1 && photoGroups.length" type="button" class="absolute bottom-4 right-4 z-10 inline-flex items-center gap-2 rounded-lg border border-black/80 bg-white/95 px-3.5 py-1.5 text-xs font-semibold text-gray-900 shadow-sm" @click="openAllPhotos">
       <TenantIcon name="squares-2x2" class="size-3.5" />{{ t('site.photos.show_all', { count: items.length }) }}
     </button>
     <!-- Crawlable image elements for all gallery items beyond the initial mosaic -->
-    <div v-if="items.length > 5" class="sr-only">
+    <div v-if="layout !== 'product' && items.length > 5" class="sr-only">
       <template v-for="(item, index) in items.slice(5)" :key="`${item.url}-${index}`">
         <img
           v-if="item.kind !== 'video'"
@@ -118,9 +136,11 @@ interface GalleryItem extends MediaPreviewItem {
 const props = withDefaults(defineProps<{
   items: GalleryItem[]
   title: string
+  layout?: 'mosaic' | 'product'
   emptyIcon?: TenantIconName
   photoGroups?: MediaGalleryGroup[]
 }>(), {
+  layout: 'mosaic',
   emptyIcon: 'sparkles',
   photoGroups: () => [],
 })
@@ -140,6 +160,8 @@ const items = computed(() => {
   })
 })
 const visibleItems = computed(() => items.value.slice(0, items.value.length >= 5 ? 5 : items.value.length))
+const productIndex = ref(0)
+watch(() => items.value[0]?.url, () => { productIndex.value = 0 })
 const lightboxOpen = ref(false)
 const lightboxIndex = ref(0)
 const lightboxOverview = ref(false)

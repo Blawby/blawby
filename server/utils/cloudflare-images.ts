@@ -154,14 +154,12 @@ export async function signedImageUrls(env: CloudflareImagesEnv, imageId: string)
   return { url, thumbnail_url }
 }
 
-/** Read the stored base image through the authenticated provider API, never a public variant. */
+/** Read the stored original through the Images binding. */
 export async function downloadImageBuffer(env: CloudflareImagesEnv, imageId: string): Promise<Uint8Array<ArrayBuffer> | null> {
-  assertCloudflareImagesConfigured(env)
-  const res = await fetch(`${apiBase(env)}/v1/${encodeURIComponent(imageId)}/blob`, { headers: authHeader(env), redirect: 'error' })
-  if (res.status === 404) return null
-  if (!res.ok) throw new Error(`CF Images download error ${res.status}: ${await res.text()}`)
-  if (Number(res.headers.get('content-length')) > MAX_IMAGE_BYTES) throw new Error(`CF Images download ${imageId} exceeds the message photo limit`)
-  const bytes = new Uint8Array(await res.arrayBuffer())
+  if (!env.IMAGES) throw new Error('The Cloudflare Images binding is required to read an original image')
+  const original = await env.IMAGES.hosted.image(imageId).bytes()
+  if (!original) return null
+  const bytes = new Uint8Array(await new Response(original).arrayBuffer())
   if (bytes.byteLength > MAX_IMAGE_BYTES) throw new Error(`CF Images download ${imageId} exceeds the message photo limit`)
   return bytes
 }

@@ -50,6 +50,7 @@ function bindings(envName: string | undefined) {
 const target = bindings(values.staging ? 'staging' : undefined)
 const production = values.staging ? bindings(undefined) : null
 const session = await startRemoteProxySession({
+  IMAGES: { type: 'images' },
   DB: { type: 'd1', database_id: target.databaseId },
   ...(production ? { PRODUCTION_DB: { type: 'd1', database_id: production.databaseId } } : {}),
   MEDIA_BUCKET: { type: 'r2_bucket', bucket_name: target.publicBucket },
@@ -63,6 +64,7 @@ const runtime = new Miniflare({
       compatibilityDate: target.compatibilityDate,
       manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: 'export default { fetch() { return new Response("ok") } }' } } },
       env: {
+        IMAGES: { type: 'images', dev: { remote: true } },
         DB: { type: 'd1', id: target.databaseId, dev: { remote: true } },
         ...(production ? { PRODUCTION_DB: { type: 'd1', id: production.databaseId, dev: { remote: true } } } : {}),
         MEDIA_BUCKET: { type: 'r2', name: target.publicBucket, dev: { remote: true } },

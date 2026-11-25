@@ -128,8 +128,8 @@ function inboxScope(organizationId: string | { sql: string } | null, opts: Omit<
   if (opts.assignedMemberId) { where += ' AND op.assigned_member_id = ?'; params.push(opts.assignedMemberId) }
   if (opts.type) where += threadTypeWhere(opts.type)
   if (opts.kind) where += kindWhere(opts.kind)
-  // Search covers Current and Past (#2103): the mailbox narrows only a list nobody is searching. Blocked stays out unless it is the list.
-  const search = opts.q ? searchMatchSql(opts.q, term => `(${searchIndexMatch('conversations', 'gt', term)}
+  // Search covers Current and Past (#2103): the mailbox narrows only a list nobody is searching. Blocked stays out of search.
+  const search = opts.q ? searchMatchSql(opts.q, term => `((${opts.buyerAudience ? 'gt.user_id = me.user_id AND ' : ''}${searchIndexMatch('conversations', 'gt', term)})
     OR EXISTS (SELECT 1 FROM business_locations search_location WHERE search_location.id = gt.location_id AND ${searchIndexMatch('business_locations', 'search_location', term)})
     ${opts.buyerAudience ? '' : `OR EXISTS (SELECT 1 FROM product_stay_configs search_home WHERE search_home.organization_id = gt.organization_id
       AND search_home.product_id = COALESCE(op.product_id, (SELECT channel.product_id FROM channel_threads channel WHERE channel.organization_id = gt.organization_id AND channel.conversation_id = gt.id))

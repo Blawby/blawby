@@ -138,6 +138,7 @@ test('a table booking opens with its own message and the guest note, written onc
     assert.deepEqual([travelerRow?.id, travelerRow?.preview, travelerRow?.when, travelerRow?.unread], ['shared', '', null, false])
     assert.deepEqual(await list('Private booking note'), [])
     assert.deepEqual(await list(privateWords), [])
+    assert.deepEqual(await list('filip@example.test'), [], 'a companion cannot infer the booker’s private contact details through search')
     assert.equal(await guestUnread(db, traveler.id), 0)
     await assert.rejects(markConversationRead(db, { organizationId: ORG, conversationId: 'shared', userId: traveler.id, throughMessageId: payment.id }), { statusCode: 422 })
 

@@ -82,7 +82,7 @@
       <!-- Airbnb's own: a full-bleed row at the foot of the list. Past conversations are a place you go to. -->
       <!-- A search reads Current and Past together, so it has no other mailbox to go to. -->
       <NuxtLink
-        v-if="page && (!search || blockedOnly)"
+        v-if="page && !search"
         :to="{ path: listRoute, query: pastOnly || blockedOnly ? withoutArchived : { ...route.query, archived: '' } }"
         class="-mx-4 mt-2 flex items-center justify-between gap-3 border-t border-default px-4 py-4 text-sm font-medium text-highlighted transition hover:bg-elevated/60 sm:-mx-6 sm:px-6"
       >
@@ -162,8 +162,8 @@ const emptyDescription = computed(() => {
 const listQuery = computed(() => ({
   kind: props.personalScope ? undefined : kind.value ?? undefined,
   q: search.value ?? undefined,
-  // A search reads Current and Past together (#2103); Blocked stays its own list.
-  mailbox: blockedOnly.value ? 'blocked' as const : search.value ? undefined : pastOnly.value ? 'past' as const : 'current' as const,
+  // A search reads Current and Past together; Blocked is excluded.
+  mailbox: search.value ? undefined : blockedOnly.value ? 'blocked' as const : pastOnly.value ? 'past' as const : 'current' as const,
   unread: unreadOnly.value ? '1' as const : undefined,
 }))
 

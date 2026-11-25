@@ -610,7 +610,11 @@ function itemsOn(dayKey: string): CalendarItem[] {
 type FoundBooking = { unit: 'nights' | 'slot'; booking_id: string; status: string; product_name: string; guest_name: string | null; day: string }
 type FoundBookings = { bookings: FoundBooking[]; pagination: { next_offset: number | null } }
 const isFoundBookings = (value: unknown): value is FoundBookings => isRecord(value) && Array.isArray(value.bookings) && isRecord(value.pagination)
-  && value.bookings.every(booking => isRecord(booking) && typeof booking.booking_id === 'string' && typeof booking.day === 'string' && typeof booking.product_name === 'string')
+  && (value.pagination.next_offset === null || (Number.isInteger(value.pagination.next_offset) && Number(value.pagination.next_offset) >= 0))
+  && value.bookings.every(booking => isRecord(booking) && typeof booking.booking_id === 'string' && Boolean(booking.booking_id.trim())
+    && typeof booking.day === 'string' && isValidCalendarDate(booking.day)
+    && typeof booking.product_name === 'string' && Boolean(booking.product_name.trim()) && typeof booking.status === 'string'
+    && (booking.guest_name === null || typeof booking.guest_name === 'string'))
 const bookingSearch = computed(() => props.personalScope || props.sessionProduct ? '' : search.value.trim())
 const foundBookings = shallowRef<FoundBooking[]>([])
 const foundNext = ref<number | null>(null)

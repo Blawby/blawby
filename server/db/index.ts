@@ -44,8 +44,8 @@ function rawClient(client: DbClient): D1Database {
   return isWrappedDb(client) ? client.$client : client
 }
 
-export async function queryFirst<T>(db: DbClient, query: string, params: unknown[] = []): Promise<T | undefined> {
-  return (await rawClient(db).prepare(query).bind(...params).first<T>()) ?? undefined
+export async function queryFirst<T>(db: DbClient, query: string, params: unknown[] = []): Promise<T | null> {
+  return await rawClient(db).prepare(query).bind(...params).first<T>()
 }
 
 export async function queryAll<T>(db: DbClient, query: string, params: unknown[] = []): Promise<T[]> {
@@ -61,7 +61,7 @@ type PreparedStatementResult<T> = {
 }
 
 type BoundCompatStatement = {
-  first<T = QueryResultRow>(): Promise<T | undefined>
+  first<T = QueryResultRow>(): Promise<T | null>
   all<T = QueryResultRow>(): Promise<PreparedStatementResult<T>>
   run(): Promise<Awaited<ReturnType<AppDb['run']>>>
 }

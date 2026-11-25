@@ -940,9 +940,10 @@ export const EXPECTED_TOOL_ANNOTATIONS = {
   skip_task: D,
   list_opportunities: R,
   get_home_turnover_checklist: R,
-  // Replaces the home's checklist and its reference photos.
-  set_home_turnover_checklist: { ...D, idempotentHint: true },
-  copy_home_turnover_checklist: { ...D, idempotentHint: true },
+  // Replaces the home's checklist and its reference photos; a new item gets a new id each time.
+  set_home_turnover_checklist: D,
+  // Copies the source as it is when called.
+  copy_home_turnover_checklist: D,
   get_turnover_requirements: R,
   list_turnover_submissions: R,
   get_turnover_submission_photos: R,

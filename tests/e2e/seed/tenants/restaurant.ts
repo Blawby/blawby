@@ -14,6 +14,10 @@ export async function seedRestaurant(createTenant: CreateTenant): Promise<SeedTe
     const address = (street: string) => ({ regionCode: 'US', addressLines: [street], locality: 'Brooklyn', administrativeArea: 'NY', postalCode: '11201' })
     const brooklyn = await seedLocation(tool, tenant, 'brooklyn', { title: 'Ember & Slice Brooklyn', email: 'brooklyn@ember-slice.example', phone: '+12025550123', hours: everyDay(11, 22), address: address('120 Atlantic Avenue') }, location_id)
 
+    // A second physical location exercises calendar scope changes without hiding online bookings.
+    await seedLocation(tool, tenant, 'west-village', { title: 'Ember & Slice West Village', hours: everyDay(11, 22),
+      address: { regionCode: 'US', addressLines: ['35 Carmine Street'], locality: 'New York', administrativeArea: 'NY', postalCode: '10014' } })
+
     // The dining room's tables: one table product, seated through its opening hours with a 90-minute
     // seating every half hour that still ends by close, forty guests per seating, no deposit.
     const chefMemberId = tenant.memberIds['user-e2e-demo-owner']

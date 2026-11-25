@@ -58,6 +58,7 @@ test.describe('dashboard pane hierarchy', () => {
   test('a phone moves a dish through the initially opened Move dialog', async ({ page }, testInfo) => {
     const tenant = seededTenant('restaurant')
     const release = await acquireTenantMutationLock(testInfo, tenant.organizationId)
+    try {
     const endpoint = `/api/editor/organizations/${tenant.organizationId}`
     const read = async () => {
       const response = await page.request.get(`${endpoint}/products?include=collections`)
@@ -87,14 +88,15 @@ test.describe('dashboard pane hierarchy', () => {
       expect(members(after, source.id)).toEqual(members(before, source.id).filter(id => id !== dish.id))
       expect(members(after, target.id)).toEqual([...members(before, target.id), dish.id])
     } finally {
-      try {
         const current = await read()
         for (const collection of [source, target]) {
           const restored = await page.request.put(`${endpoint}/collections/${collection.id}/products`, { data: { product_ids: members(before, collection.id), expected_product_ids: members(current, collection.id) } })
           expect(restored.status(), await restored.text()).toBe(200)
         }
-      } finally { await release() }
+        const restored = await read()
+        for (const collection of [source, target]) expect(members(restored, collection.id)).toEqual(members(before, collection.id))
     }
+    } finally { await release() }
   })
 
   test('a phone opens its sole location and moves between days across a month boundary', async ({ page }, testInfo) => {
@@ -119,8 +121,11 @@ test.describe('dashboard pane hierarchy', () => {
     const response = await page.request.get(`/api/dashboard/locations?org=${tenant.slug}&organization=true`)
     expect(response.status(), await response.text()).toBe(200)
     const { locations } = await response.json() as { locations: DashboardLocation[] }
-    expect(locations).toHaveLength(2)
-    const [first, second] = locations as [DashboardLocation, DashboardLocation]
+    const first = locations.find(location => location.id === tenant.locations.brooklyn!.id)
+    const second = locations.find(location => location.id === tenant.locations['west-village']!.id)
+    expect(first).toBeDefined()
+    expect(second).toBeDefined()
+    if (!first || !second) throw new Error('The restaurant’s seeded locations were not returned')
     await page.setViewportSize(PHONE)
     await open(page, `/dashboard/${tenant.slug}/calendar/2026-11-25?location_id=${first.id}`)
     const day = page.locator('#dashboard-panel-calendar-day')

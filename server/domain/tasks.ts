@@ -1419,7 +1419,7 @@ export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string
          WHERE later.conversation_id = c.id AND later.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND later.sequence > m.sequence))
      ORDER BY m.created_at DESC, m.id DESC LIMIT 1`, [viewer.principal.userId, organizationId, view.booking_id, privatePrep ? 1 : 0, current.assigned_member_id,
     jobKey(current), `${jobKey(current)}:after:`, privatePrep ? 1 : 0, d1JsonStringSet(jobEndKeys(current.id))]) : null
-  if ((note !== null || photos.length > 0 || checked !== null) && !thread) fail(422, 'TASK_OUTCOME_REQUIRES_CONVERSATION', 'Notes, photos and a checklist need the job’s team conversation', checked ? 'checklist' : photos.length ? 'photos' : 'note')
+  if ((note !== null || photos.length > 0 || checked !== null || skippedChecklist) && !thread) fail(422, 'TASK_OUTCOME_REQUIRES_CONVERSATION', 'Notes, photos and a checklist need the job’s team conversation', checked ? 'checklist' : photos.length ? 'photos' : 'note')
   const assetIds = await uploadMessagePhotos(db, input.env, organizationId, photos, { source: 'uploaded', userId: viewer.principal.userId }, MAX_MESSAGE_PHOTOS + itemOrder.length).catch((error: unknown) => {
     if (error instanceof MessagePhotoRejection) fail(422, 'INVALID_PHOTO', error.message, 'photos')
     throw error

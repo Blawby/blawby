@@ -59,7 +59,12 @@
               <p class="mb-1 mt-3 text-xs text-muted"><span class="font-semibold text-highlighted">{{ [item.runs[0]!.author, item.runs[0]!.side === 'business' ? titleOf(item.runs[0]!.author_user_id) : null].filter(Boolean).join(' · ') }}</span> {{ item.runs[0]!.time }}</p>
               <div v-for="message in item.runs" :key="settledKeys[message.id] ?? message.id" class="group/message flex min-w-0 flex-col" :class="item.mine ? 'items-end' : 'items-start'" :data-team-message="thread.kind === 'team' ? message.id : undefined" :data-automatic="message.automatic || undefined">
                 <!-- A turnover checklist submitted with Done: one card, its photos beside their references. -->
-                <TurnoverChecklistCard v-if="message.checklist" :checklist="message.checklist" :sent-at="message.sent_at" @view="(photos, at) => viewer = { photos: photos.map(photo => ({ url: photo.url })), at }" />
+                <div v-if="message.checklist" class="flex w-full min-w-0 items-start gap-2" :class="item.mine ? 'flex-row-reverse' : ''">
+                  <TurnoverChecklistCard :checklist="message.checklist" :sent-at="message.sent_at" @view="(photos, at) => viewer = { photos: photos.map(photo => ({ url: photo.url })), at }" />
+                  <UDropdownMenu v-if="messageActions(message, item.mine).length" :items="messageActions(message, item.mine)" :content="{ align: item.mine ? 'end' : 'start' }">
+                    <UButton icon="i-lucide-ellipsis" color="neutral" variant="outline" square size="sm" class="shrink-0 rounded-full" :aria-label="`Actions for ${message.author}'s message`" />
+                  </UDropdownMenu>
+                </div>
                 <div v-else-if="message.photos.length" class="grid max-w-sm gap-1" :class="[message.photos.length > 1 ? 'grid-cols-2' : 'grid-cols-1', message.sending ? 'opacity-60' : '']">
                   <button
                     v-for="(photo, at) in message.photos"

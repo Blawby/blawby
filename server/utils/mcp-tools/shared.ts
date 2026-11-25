@@ -213,7 +213,7 @@ export function mediaPlacementSlotInputSchema(ownerType: EditableMediaPlacementO
     && (options.single === undefined || isSingleMediaPlacement({ owner_type: ownerType, slot }) === options.single)
     && !options.excludedFixedSlots?.includes(slot))
   const indexedSlots = INDEXED_MEDIA_PLACEMENT_SLOTS.filter(entry => entry.ownerType === ownerType)
-    .map(entry => ({ type: 'string', pattern: entry.runtime.source, examples: [entry.sqlGlob.replace('[0-9]*', '0')] }))
+    .map(entry => ({ type: 'string', pattern: entry.runtime.source, examples: [entry.sqlGlob.replace('[0-9]*', '0').replace(/\*$/, 'item_1')] }))
     .filter(entry => options.single === undefined || isSingleMediaPlacement({ owner_type: ownerType, slot: entry.examples[0]! }) === options.single)
   if (!slots.length && !indexedSlots.length) return null
   const fixedSlots = { type: 'string', enum: slots }

@@ -1,8 +1,8 @@
 import { d1JsonStringSet, executeBatch, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
-import { buildMediaPlacementInsertQuery } from '~/server/utils/media-asset-manager'
+import { MAX_D1_BATCH_STATEMENTS } from '~/server/db/d1-limits'
 import { organizationEventQuery } from '~/server/utils/organization-events'
 import { requireManager, visibleHomes, type StayAccess } from '~/server/domain/stays'
-import { checkedItem, checklistColumnsSql, checklistOf, fail, referenceSlot, SLOT, type ChecklistColumns } from '~/server/domain/turnover-checklists'
+import { checkedItem, checklistColumnsSql, checklistOf, fail, SLOT, type ChecklistColumns } from '~/server/domain/turnover-checklists'
 import { CHECKLIST_LIMITS, checklistRevision, type HomeTurnoverChecklist, type TurnoverChecklistItem } from '~/shared/turnover-checklist'
 
 /*
@@ -11,9 +11,13 @@ import { CHECKLIST_LIMITS, checklistRevision, type HomeTurnoverChecklist, type T
   are server/domain/turnover-checklists.ts.
 */
 
+/** A home's reference photo placements as one comparable value, so a save can check they are as it read them. */
+const referencesKeySql = (home: string) => `(SELECT COALESCE(group_concat(slot || '=' || asset_id, ','), '') FROM (SELECT mp.slot, mp.asset_id FROM media_placements mp
+  WHERE mp.organization_id = ${home}.organization_id AND mp.owner_type = 'product' AND mp.owner_id = ${home}.product_id AND mp.slot GLOB '${SLOT}*' ORDER BY mp.slot))`
+
 const homeQuery = (access: StayAccess, productId: string): BatchQuery => {
   const scope = visibleHomes(access)
-  return { query: `SELECT c.product_id, c.location_id, ${checklistColumnsSql('c')} FROM product_stay_configs c
+  return { query: `SELECT c.product_id, c.location_id, ${checklistColumnsSql('c')}, ${referencesKeySql('c')} AS references_key FROM product_stay_configs c
     WHERE c.organization_id = ? AND c.product_id = ? AND ${scope.sql}`, params: [access.organizationId, productId, ...scope.params] }
 }
 
@@ -26,19 +30,45 @@ export async function readHomeChecklist(db: DbClient, access: StayAccess, produc
   return { product_id: row.product_id, items, revision: checklistRevision(items) }
 }
 
-/** The checklist's placements for some homes, replaced: each item with a photo gets its slot. */
-function referencePlacements(organizationId: string, productId: string, references: Array<{ itemId: string; assetId: string }>, now: string): BatchQuery[] {
+/** A statement that fails the batch unless the one before it changed exactly `count` rows. */
+const changed = (count: number): BatchQuery => ({ query: `SELECT CASE WHEN changes() = ${count} THEN NULL ELSE json('CHECKLIST_CHANGED') END` })
+
+/**
+ * The writes that give `homes` this checklist and these reference photos, as one batch that fails whole:
+ * the checklist, then its placements, each checked. `read` names the checklist and photos a save read, so
+ * a change made since refuses the save instead of being overwritten.
+ */
+function checklistWrites(organizationId: string, actorId: string, homes: string[], stored: string, references: Array<{ itemId: string; assetId: string }>, now: string, read?: { checklist: string; references: string }): BatchQuery[] {
+  const targets = d1JsonStringSet(homes)
   return [{
-    query: `DELETE FROM media_placements WHERE organization_id = ? AND owner_type = 'product' AND owner_id = ? AND slot GLOB '${SLOT}*'`,
-    params: [organizationId, productId],
-  }, ...references.map(({ itemId, assetId }) => buildMediaPlacementInsertQuery({
-    organizationId, ownerType: 'product', ownerId: productId, slot: referenceSlot(itemId), assetId, sortOrder: 0, createdAt: now,
-  }))]
+    query: `UPDATE product_stay_configs SET turnover_checklist = ?, updated_at = ?, updated_by = ?
+      WHERE organization_id = ? AND product_id IN (SELECT value FROM json_each(?))${read ? ` AND turnover_checklist = ? AND ${referencesKeySql('product_stay_configs')} = ?` : ''}`,
+    params: [stored, now, actorId, organizationId, targets, ...(read ? [read.checklist, read.references] : [])],
+  }, changed(homes.length), {
+    query: `DELETE FROM media_placements WHERE organization_id = ? AND owner_type = 'product' AND owner_id IN (SELECT value FROM json_each(?)) AND slot GLOB '${SLOT}*'`,
+    params: [organizationId, targets],
+  }, {
+    query: `INSERT INTO media_placements (id, organization_id, owner_type, owner_id, slot, asset_id, sort_order, status, created_at, updated_at)
+      SELECT lower(hex(randomblob(16))), ma.organization_id, 'product', home.value, '${SLOT}' || json_extract(ref.value, '$.item'), ma.id, 0, 'active', ?, ?
+        FROM json_each(?) home JOIN json_each(?) ref
+        JOIN media_assets ma ON ma.organization_id = ? AND ma.id = json_extract(ref.value, '$.asset') AND ma.kind = 'image' AND ma.status = 'active'`,
+    params: [now, now, targets, JSON.stringify(references.map(ref => ({ item: ref.itemId, asset: ref.assetId }))), organizationId],
+  }, changed(homes.length * references.length)]
+}
+
+/** Run checklist writes; a check that failed is a change made since the checklist was read. */
+async function runChecklistWrites(db: DbClient, queries: BatchQuery[], operation: string): Promise<void> {
+  try {
+    await executeBatch(db, queries, { operation })
+  } catch (error) {
+    if (/malformed JSON/.test(error instanceof Error ? error.message : String(error))) fail(409, 'CHECKLIST_CHANGED', 'The checklist or a home changed since you opened it; reload it', 'expected_revision')
+    throw error
+  }
 }
 
 function checklistEvent(access: StayAccess, locationId: string, productId: string, items: number, copiedFrom?: string): BatchQuery {
   return organizationEventQuery({ organizationId: access.organizationId, locationId, actorId: access.actorId, eventType: 'stay.checklist_updated', entityType: 'stay_home', entityId: productId,
-    metadata: { items, ...(copiedFrom ? { copied_from: copiedFrom } : {}) }, onlyIfPreviousChangedOneRow: true })
+    metadata: { items, ...(copiedFrom ? { copied_from: copiedFrom } : {}) } })
 }
 
 /**
@@ -67,7 +97,7 @@ export async function saveHomeChecklist(db: DbClient, access: StayAccess, produc
     query: `SELECT id FROM media_assets WHERE organization_id = ? AND id IN (SELECT value FROM json_each(?)) AND kind = 'image' AND status = 'active' AND public_url IS NOT NULL`,
     params: [access.organizationId, d1JsonStringSet(assetIds)],
   }], { operation: 'Read a turnover checklist to save' })).map(result => result.results as Array<Record<string, string>>)
-  const current = homeRows![0] as (ChecklistColumns & { product_id: string; location_id: string }) | undefined
+  const current = homeRows![0] as (ChecklistColumns & { product_id: string; location_id: string; references_key: string }) | undefined
   if (!current) fail(404, 'HOME_NOT_FOUND', 'That place to stay is not in this organization')
   if (checklistRevision(checklistOf(current, productId)) !== body.expected_revision) fail(409, 'CHECKLIST_CHANGED', 'The checklist changed since you opened it; reload it', 'expected_revision')
   const found = new Set(assetRows!.map(row => row.id))
@@ -77,15 +107,15 @@ export async function saveHomeChecklist(db: DbClient, access: StayAccess, produc
     id: item.id, title: item.title, instructions: item.instructions, type: item.type, minimum: item.minimum, per_guest: item.per_guest, baseline: item.baseline, photo_required: item.photo_required,
   }))
   const now = new Date().toISOString()
-  const [updated] = await executeBatch(db, [{
-    query: 'UPDATE product_stay_configs SET turnover_checklist = ?, updated_at = ?, updated_by = ? WHERE organization_id = ? AND product_id = ? AND turnover_checklist = ?',
-    params: [JSON.stringify(stored), now, access.actorId, access.organizationId, productId, current.turnover_checklist],
-  }, checklistEvent(access, current.location_id, productId, stored.length),
-  ...referencePlacements(access.organizationId, productId, items.flatMap(item => item.reference_photo_id ? [{ itemId: item.id, assetId: item.reference_photo_id }] : []), now),
-  ], { operation: 'Save turnover checklist' })
-  if (updated?.meta.changes !== 1) fail(409, 'CHECKLIST_CHANGED', 'The checklist changed since you opened it; reload it', 'expected_revision')
+  const references = items.flatMap(item => item.reference_photo_id ? [{ itemId: item.id, assetId: item.reference_photo_id }] : [])
+  await runChecklistWrites(db, [
+    ...checklistWrites(access.organizationId, access.actorId, [productId], JSON.stringify(stored), references, now, { checklist: current.turnover_checklist, references: current.references_key }),
+    checklistEvent(access, current.location_id, productId, stored.length),
+  ], 'Save turnover checklist')
   return readHomeChecklist(db, access, productId)
 }
+
+const MAX_COPY_HOMES = MAX_D1_BATCH_STATEMENTS - 10
 
 /**
  * Copy a home's checklist, reference photos included, to other homes: each
@@ -100,6 +130,8 @@ export async function copyHomeChecklist(db: DbClient, access: StayAccess, produc
     fail(422, 'INVALID_CHECKLIST_COPY', 'product_ids must list the other homes to copy the checklist to, each once', 'product_ids')
   }
   if (targets.includes(productId)) fail(422, 'INVALID_CHECKLIST_COPY', 'A home cannot copy its checklist to itself', 'product_ids')
+  // Each home is one recorded event in the copy's one batch.
+  if (targets.length > MAX_COPY_HOMES) fail(422, 'INVALID_CHECKLIST_COPY', `Copy to at most ${MAX_COPY_HOMES} homes at a time`, 'product_ids')
   const source = await readHomeChecklist(db, access, productId)
   const homes = await queryAll<{ product_id: string; location_id: string }>(db, `SELECT product_id, location_id FROM product_stay_configs
     WHERE organization_id = ? AND product_id IN (SELECT value FROM json_each(?))`, [access.organizationId, d1JsonStringSet(targets as string[])])
@@ -108,13 +140,10 @@ export async function copyHomeChecklist(db: DbClient, access: StayAccess, produc
   const stored = JSON.stringify(source.items.map(({ reference_photo: _reference, ...item }) => item))
   const references = source.items.flatMap(item => item.reference_photo ? [{ itemId: item.id, assetId: item.reference_photo.id }] : [])
   const now = new Date().toISOString()
-  const results = await executeBatch(db, homes.flatMap(home => [{
-    query: 'UPDATE product_stay_configs SET turnover_checklist = ?, updated_at = ?, updated_by = ? WHERE organization_id = ? AND product_id = ?',
-    params: [stored, now, access.actorId, access.organizationId, home.product_id],
-  }, checklistEvent(access, home.location_id, home.product_id, source.items.length, productId),
-  ...referencePlacements(access.organizationId, home.product_id, references, now)]), { operation: 'Copy turnover checklist' })
-  const perHome = 2 + 1 + references.length
-  if (homes.some((_, index) => results[index * perHome]?.meta.changes !== 1)) fail(409, 'HOME_CHANGED', 'A home changed before the checklist was copied; reload and try again', 'product_ids')
+  await runChecklistWrites(db, [
+    ...checklistWrites(access.organizationId, access.actorId, homes.map(home => home.product_id), stored, references, now),
+    ...homes.map(home => checklistEvent(access, home.location_id, home.product_id, source.items.length, productId)),
+  ], 'Copy turnover checklist')
   return { product_ids: homes.map(home => home.product_id), checklist: source }
 }
 

@@ -19,7 +19,7 @@
             <UButton label="Not done" color="neutral" :variant="answers[item.id]?.confirmed === false ? 'solid' : 'outline'" @click="answers[item.id] = { confirmed: false }" />
           </template>
           <template v-else>
-            <UInputNumber :model-value="answers[item.id]?.counted ?? undefined" :min="0" :max="9999" :aria-label="`${item.title} counted`" class="w-36" @update:model-value="value => answers[item.id] = { counted: value ?? undefined }" />
+            <UInputNumber :model-value="answers[item.id]?.counted ?? undefined" :min="0" :aria-label="`${item.title} counted`" class="w-36" @update:model-value="value => answers[item.id] = { counted: value ?? undefined }" />
             <span class="text-sm text-muted">of {{ item.required }} required</span>
             <span v-if="shortage(item) > 0" class="text-sm font-medium text-error">Short by {{ shortage(item) }}</span>
           </template>

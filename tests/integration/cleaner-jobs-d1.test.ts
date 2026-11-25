@@ -25,7 +25,7 @@ import { createAuth, type CloudflareEnv } from '../../server/utils/auth.ts'
 import completeTaskRoute from '../../server/api/organizations/[organization_id]/tasks/[task_id]/complete.post.ts'
 import readTaskRoute from '../../server/api/organizations/[organization_id]/tasks/[task_id]/read.post.ts'
 import { applySchema } from './support/schema.ts'
-import { saveHomeChecklist } from '../../server/domain/home-checklists.ts'
+import { copyHomeChecklist, readHomeChecklist, saveHomeChecklist } from '../../server/domain/home-checklists.ts'
 import { checklistRevision } from '../../shared/turnover-checklist.ts'
 
 // A cleaner's job is a team conversation: the job is posted there when it is
@@ -340,6 +340,16 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     ], expected_revision: checklistRevision([]) })
     assert.equal(saved.items[0]!.reference_photo?.id, reference)
     const [bed, remote, towels, paper] = saved.items.map(item => item.id) as [string, string, string, string]
+    // A save made against an older read is refused; a copy gives another home the same items and reference photo.
+    await assert.rejects(saveHomeChecklist(db, manager, cabin.id, { items: [], expected_revision: checklistRevision([]) }), { status: 409, data: { code: 'CHECKLIST_CHANGED', field: 'expected_revision' } })
+    await db.prepare(`INSERT INTO business_locations (id, organization_id, slug, title, status, timezone, created_at, updated_at)
+      VALUES ('loft-site', ?, 'loft', 'Loft', 'active', ?, '2026-10-15T00:00:00.000Z', '2026-10-15T00:00:00.000Z')`).bind(ORG, ZONE).run()
+    const loft = await createProduct(db, { env, organizationId: ORG, actor: { actorId: 'owner' }, product: {
+      kind: 'stay', name: 'Loft', variants: [{ name: 'Loft', prices: [{ unit_amount: 12_000, currency: 'USD' }] }],
+      stay: { location_id: 'loft-site', check_in_time: '15:00', check_out_time: '10:00', max_guests: 2, min_nights: 1, assigned_member_id: 'm-owner' },
+    } })
+    assert.deepEqual((await copyHomeChecklist(db, manager, cabin.id, { product_ids: [loft.id] })).product_ids, [loft.id])
+    assert.deepEqual((await readHomeChecklist(db, manager, loft.id)).items, saved.items)
     const ann = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'ann', check_in_date: day(10), check_out_date: day(12), adults: 2, guest_name: 'Ann', guest_email: 'ann@example.test', total_minor: 30_000 })
     const bo = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'bo', check_in_date: day(13), check_out_date: day(14), adults: 3, children: 1, guest_name: 'Bo', guest_email: 'bo@example.test', total_minor: 15_000 })
     const annTurnover = (await taskRow(`turnover:${ann.id}`))!

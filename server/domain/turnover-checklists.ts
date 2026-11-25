@@ -18,7 +18,6 @@ import {
 */
 
 export const SLOT = 'turnover_checklist.'
-export const referenceSlot = (itemId: string) => `${SLOT}${itemId}`
 const ITEM_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 export function fail(statusCode: number, code: string, message: string, field?: string, extra: Record<string, unknown> = {}): never {
@@ -134,7 +133,7 @@ export function checkedSubmission(taskId: string, checklist: TaskChecklist, raw:
   const items = checklist.items.map((item) => {
     const answer = answers.get(item.id)
     const confirmed = item.type === 'confirm' && typeof answer?.confirmed === 'boolean' ? answer.confirmed : null
-    const counted = item.type === 'count' && Number.isSafeInteger(answer?.counted) && (answer!.counted as number) >= 0 && (answer!.counted as number) <= 9999 ? answer!.counted as number : null
+    const counted = item.type === 'count' && Number.isSafeInteger(answer?.counted) && (answer!.counted as number) >= 0 ? answer!.counted as number : null
     if (item.type === 'confirm' ? confirmed === null : counted === null) missing.push({ id: item.id, title: item.title, missing: 'answer' })
     if (item.photo_required && !photos.has(item.id)) missing.push({ id: item.id, title: item.title, missing: 'photo' })
     const shortage = item.type === 'count' && counted !== null ? Math.max(0, item.required! - counted) : null

@@ -23,7 +23,7 @@
       -->
       <UCard v-if="!sessionProduct && location" variant="subtle">
         <div class="flex items-center justify-between gap-3">
-          <p class="text-sm text-muted">{{ availability.open ? 'Available' : 'Unavailable' }}</p>
+          <p class="text-sm text-muted">{{ availability.open ? 'Open' : 'Closed' }}</p>
           <span v-if="!availability.open" class="size-2 rounded-full bg-primary" aria-hidden="true" />
         </div>
         <p class="mt-2 text-lg font-medium text-highlighted">{{ availability.reason }}</p>
@@ -72,7 +72,6 @@
 import { closureOnDate, datedHours, getDateIntervals, parseOpeningHours, parseSpecialHours, type SpecialHours } from '~/shared/reservation-hours'
 import { addLocalDays, formatCalendarDate } from '~/utils/timezone'
 import { getErrorMessage } from '~/utils/errors'
-import { getVerticalCopy } from '~/utils/vertical-copy'
 import { calendarDayKey, calendarSessionsKey } from './CalendarPage.vue'
 
 // The business's day can be blocked or opened; the account's day only lists its visits.
@@ -86,7 +85,6 @@ function adjacentDay(offset: number) {
 }
 const dashboardApi = props.personalScope ? applicationFetch : useDashboardApi()
 const calendarSessions = inject(calendarSessionsKey, null)
-const { organization } = useDashboardOrganization()
 const sessionProduct = computed(() => calendarSessions?.product.value)
 const day = computed(() => String(route.params.day ?? ''))
 const title = computed(() => formatCalendarDate(day.value, 'en', { weekday: 'long', month: 'long', day: 'numeric' }))
@@ -122,8 +120,7 @@ const availability = computed<{ open: boolean; reason: string; action: 'open' | 
   if (intervals !== null && intervals.length === 0) {
     return { open: false, reason: `Closed on ${formatCalendarDate(day.value, 'en', { weekday: 'long' })}s in your hours.`, action: 'hours' }
   }
-  const party = getVerticalCopy(organization.value?.vertical).guestsLabelPlural
-  return { open: true, reason: `${party.charAt(0).toUpperCase()}${party.slice(1)} can book this date.`, action: 'block' }
+  return { open: true, reason: 'This date is open in your calendar.', action: 'block' }
 })
 
 const saving = ref(false)

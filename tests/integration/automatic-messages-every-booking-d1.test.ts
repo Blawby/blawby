@@ -127,7 +127,7 @@ test('consultations, classes and table bookings are sent their automatic message
     const options = await read(`/offerings?org=${law.organizationId}`)
     assert.deepEqual(options.offerings, [{ id: consultation, kind: 'service', name: 'Initial consultation', timezone: null }])
     assert.deepEqual(options.triggers.map((trigger: { label: string }) => trigger.label), [
-      '5 minutes after a new consultation', 'Around the start of the consultation', 'Around the end of the consultation',
+      '5 minutes after a new consultation', 'Consultation start', 'Consultation end',
     ])
     assert.deepEqual(options.offset_hours.find((offset: { value: number }) => offset.value === -2), { value: -2, label: '2 hours before' })
     for (const [org, productId, template, label] of [

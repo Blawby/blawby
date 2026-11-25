@@ -1,18 +1,21 @@
 <template>
-  <DashboardLeafPanel id="new-team-conversation" title="New conversation" save-label="Start" :disabled="!selected.length || !!membersError || !!stayError" :saving="saving" :error="actionError" @save="start">
+  <DashboardLeafPanel id="new-team-conversation" title="Message your team" save-label="Start" :disabled="!selected.length || !!membersError || !!stayError" :saving="saving" :error="actionError" @save="start">
     <UAlert v-if="membersError || stayError" class="mb-6" color="error" title="Conversation could not be prepared" :description="getErrorMessage(membersError || stayError, 'Team members could not be loaded')" />
     <template v-if="members">
       <UFormField v-if="selected.length >= 2 && !stayId && !locationId" label="Conversation name" class="mb-6">
         <UInput v-model="name" aria-label="Conversation name" placeholder="Optional" :maxlength="100" :disabled="saving" class="w-full" />
       </UFormField>
-      <UInput v-model="search" icon="i-lucide-search" placeholder="Search teammates" aria-label="Search teammates" class="mb-6 w-full" />
+      <p class="mb-6 text-sm text-muted">Start a conversation with someone already on your team. Guest messages appear with their enquiries and bookings.</p>
+      <UInput v-if="teammates.length" v-model="search" icon="i-lucide-search" placeholder="Search teammates" aria-label="Search teammates" class="mb-6 w-full" />
       <div class="divide-y divide-default">
         <div v-for="member in visibleMembers" :key="member.id" class="flex items-center gap-3 py-4">
           <UAvatar :src="member.image ?? undefined" :alt="member.name" size="md" />
           <UCheckbox :model-value="selected.includes(member.id)" :label="member.name" :description="member.email" :disabled="saving" class="min-w-0 flex-1" :ui="{ root: 'flex-row-reverse justify-between', wrapper: 'min-w-0 flex-1' }" @update:model-value="toggle(member.id, $event === true)" />
         </div>
       </div>
-      <p v-if="!visibleMembers.length" class="py-6 text-muted">{{ search ? 'No teammates match' : 'There are no other members in this workspace' }}</p>
+      <p v-if="!visibleMembers.length" class="py-6 text-muted">{{ search ? 'No teammates match your search.' : 'You’re the only person on this team.' }}</p>
+      <UButton v-if="!teammates.length && permissions?.invite" label="Invite a teammate" :to="`/dashboard/${route.params.org_slug}/team/invite`" color="neutral" variant="soft" />
+      <p v-else-if="!teammates.length" class="text-sm text-muted">Ask the business owner to invite a teammate.</p>
       <p v-if="location" class="mt-8 text-base text-muted">About {{ location.title }}</p>
       <p v-if="stay" class="mt-8 text-base text-muted">About {{ stay.check_in_date }} – {{ stay.check_out_date }}</p>
     </template>
@@ -27,6 +30,7 @@ import type { StayTurnover } from '~/server/domain/stays'
 definePageMeta({ layout: 'dashboard', tab: 'messages' })
 const route = useRoute()
 const dashboard = useDashboardOrganization()
+const { permissions } = useOrganizationSettingsNavigation(dashboard.organization, ref(null))
 const session = authClient.useSession()
 // The member picker must know its caller before offering anyone as a recipient.
 if (session.value.isPending) await session.value.refetch()
@@ -53,7 +57,8 @@ const { data: stayData, error: stayError } = await useAsyncData(`team-compose-st
   validate: (value): value is { booking: Omit<StayTurnover, 'id'> & { booking_id: string } } => isRecord(value) && isRecord(value.booking) && value.booking.booking_id === stayId && typeof value.booking.check_in_date === 'string' && typeof value.booking.check_out_date === 'string',
 }) : Promise.resolve(null))
 const stay = computed(() => stayData.value?.booking)
-const visibleMembers = computed(() => members.value?.members.filter(member => member.id !== session.value.data?.user.id && `${member.name} ${member.email}`.toLocaleLowerCase().includes(search.value.toLocaleLowerCase())) ?? [])
+const teammates = computed(() => members.value?.members.filter(member => member.id !== session.value.data?.user.id) ?? [])
+const visibleMembers = computed(() => teammates.value.filter(member => `${member.name} ${member.email}`.toLocaleLowerCase().includes(search.value.toLocaleLowerCase())))
 function toggle(id: string, checked: boolean) { selected.value = checked ? [...selected.value, id] : selected.value.filter(memberId => memberId !== id) }
 async function start() {
   if (saving.value || !selected.value.length) return

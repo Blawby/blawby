@@ -192,3 +192,15 @@ export function usePostEditor(organizationId: string, locationId: Ref<string | n
 
   return { form, record, updatedAt, saving, publishing, creationRejected, isDirty, error, loadFrom, reload, save, publish, remove }
 }
+
+export interface SocialConnection { channel: SocialChannel; connected: boolean; target_id: string | null; target_name: string | null; connection_revision: string | null; problems: Array<{ code: string; message: string }>; connect_url: string }
+
+/** Posts and their composer read the same authorized publishing destinations. */
+export function usePostConnections(organizationId: string, locationId: MaybeRefOrGetter<string | null>, enabled: MaybeRefOrGetter<boolean> = true) {
+  const api = useDashboardApi()
+  return useWebsiteIndexData(
+    () => `post-publish-targets:${organizationId}:${toValue(locationId) ?? ''}`,
+    () => api('/api/integrations/social-connections', { query: { locationId: toValue(locationId) ?? '' }, validate: (value): value is { channels: SocialConnection[] } => isRecord(value) && Array.isArray(value.channels) }),
+    { lazy: true, enabled },
+  )
+}

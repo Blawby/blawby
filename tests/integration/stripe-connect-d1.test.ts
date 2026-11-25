@@ -114,13 +114,14 @@ test('Today suggests Stripe setup until the account is ready, and a price for ea
     const principal = memberAccessPrincipal(membership, { env })
     // What Today suggests the owner, by id: before Stripe, the payment setup.
     const suggested = async () => (await listOpportunities(db, principal)).opportunities.map(item => item.id)
-    assert.deepEqual(await suggested(), ['payments.connect:org'])
+    assert.deepEqual(await suggested(), ['payments.connect:org', `product.photo:${free.id}`, `product.photo:${paid.id}`])
     // An experience with no price cannot be booked until it has one; one booked on another site needs none.
     const unpriced = await createProduct(db, { organizationId: 'org', actor: { actorId: 'owner' }, env, product: { kind: 'experience', name: 'Unpriced Walk' } })
-    await createProduct(db, { organizationId: 'org', actor: { actorId: 'owner' }, env, product: { kind: 'experience', name: 'Partner Tour', order_url: 'https://partner.example/tour' } })
-    assert.deepEqual(await suggested(), ['payments.connect:org', `product.readiness:${unpriced.id}`])
+    const partner = await createProduct(db, { organizationId: 'org', actor: { actorId: 'owner' }, env, product: { kind: 'experience', name: 'Partner Tour', order_url: 'https://partner.example/tour' } })
+    assert.deepEqual(await suggested(), ['payments.connect:org', `product.readiness:${unpriced.id}`, `product.photo:${free.id}`, `product.photo:${partner.id}`, `product.photo:${unpriced.id}`])
     await updateProduct(db, { organizationId: 'org', actor: { actorId: 'owner' }, env, productId: unpriced.id, patch: { active: false, updated_at: unpriced.updated_at } })
-    assert.deepEqual(await suggested(), ['payments.connect:org'], 'an inactive experience needs no price')
+    const photos = [`product.photo:${free.id}`, `product.photo:${partner.id}`, `product.photo:${paid.id}`]
+    assert.deepEqual(await suggested(), ['payments.connect:org', ...photos], 'an inactive experience needs neither a price nor photos')
     const app = new H3()
     app.post('/api/dashboard/connect', connectStartRoute)
     app.post('/api/dashboard/connect/status', connectStatusRoute)
@@ -198,6 +199,10 @@ test('Today suggests Stripe setup until the account is ready, and a price for ea
       assert.equal((await call('', { cookie })).status, 403)
       assert.equal((await call('', app_, { return_to: 'web' })).status, 422)
       assert.equal(created, false)
+      const unsupported = await call('', app_, { country: 'VN', return_to: 'app' })
+      assert.equal(unsupported.status, 422)
+      assert.deepEqual(unsupported.body.data, { code: 'STRIPE_COUNTRY_UNSUPPORTED', field: 'country' })
+      assert.equal(created, false, 'An unsupported country is rejected before Stripe account creation')
       const starting = call('', app_, { country: 'US', return_to: 'app' })
       await createStarted
       // A second Add payout method while Stripe is still creating the account is refused in words, not with Stripe's idempotency error.
@@ -223,13 +228,13 @@ test('Today suggests Stripe setup until the account is ready, and a price for ea
       const pending = await call('/status', app_)
       assert.equal(pending.status, 200)
       assert.equal((pending.body.account as { status: string }).status, 'pending_review')
-      assert.deepEqual(await suggested(), [], 'Stripe review is not another owner setup task')
+      assert.deepEqual(await suggested(), photos, 'Stripe review leaves only the existing photo suggestions')
       account.configuration.merchant.capabilities.card_payments.status = 'active'
       const ready = await call('/status', app_)
       assert.equal(ready.status, 200)
       assert.equal((ready.body.account as { status: string }).status, 'ready')
       // Payments are ready: only the experience with a price above zero is offered taking payment at booking.
-      assert.deepEqual(await suggested(), [], 'ready payments leave nothing to set up')
+      assert.deepEqual(await suggested(), photos, 'ready payments leave only the existing photo suggestions')
 
       const earnings = async (query: string) => {
         const response = await app.request(Object.assign(new Request(`https://proof.example/api/dashboard/payments?org=cliff&${query}`, { headers: { cookie } }),

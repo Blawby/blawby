@@ -8,7 +8,7 @@ const ATTORNEY_ID = 'user-e2e-ncls-owner'
 // one Raleigh office, two attorneys and practice areas clients request
 // consultations for.
 export async function seedLegal(createTenant: CreateTenant): Promise<SeedTenant> {
-  const { owner, tenant } = await createTenant({
+  const { owner, tenant, location_id } = await createTenant({
     key: 'legal', name: 'Harbor Legal Aid', slug: 'harbor-legal-aid', subdomain: SEED_SUBDOMAINS.legal,
     vertical: 'service', currency: 'USD', timezone: 'America/New_York', subscription: 'growth',
   })
@@ -17,7 +17,7 @@ export async function seedLegal(createTenant: CreateTenant): Promise<SeedTenant>
     const office = await seedLocation(tool, tenant, 'raleigh', {
       title: 'Raleigh Office', email: 'raleigh@harbor-legal.example', phone: '+19195550123', hours: everyDay(9, 17, [1, 2, 3, 4, 5]),
       address: { regionCode: 'US', addressLines: ['200 Fayetteville Street'], locality: 'Raleigh', administrativeArea: 'NC', postalCode: '27601' },
-    })
+    }, location_id)
 
     const attorneyMemberId = tenant.memberIds[ATTORNEY_ID]
     if (!attorneyMemberId) throw new Error('The Harbor Legal Aid attorney is not a member')

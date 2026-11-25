@@ -451,11 +451,8 @@ function prepareDashboardTenant(event: H3Event, db: D1Database, env: ReturnType<
     }, query) : null
   const editorScope = { organizationId: { sql: `CASE WHEN ${roleMatchesSql(BATCH_VIEWER.role!, catalogRoles)} THEN ${BATCH_VIEWER.organization} END` }, assignedUserId: { user: BATCH_VIEWER.user,
     unrestricted: roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ products: ['read'] })) } }
-  const editorCatalogs = [
-    ...(menuDocument ? [{ key: `dish:${typeof query.location_id === 'string' ? query.location_id : 'all'}`,
-      plan: prepareEditorCatalog({ ...editorScope, kind: 'dish', locationId: typeof query.location_id === 'string' ? query.location_id : undefined }) }] : []),
-    ...(catalogEditor && (!menuDocument || /^\/products\/menu\/[^/]+/.test(panel)) ? [{ key: 'all', plan: prepareEditorCatalog(editorScope) }] : []),
-  ]
+  const editorCatalogs = catalogEditor ? [{ key: 'all', plan: prepareEditorCatalog(editorScope) }] : []
+
   const locationSlug = dashboardLocationSlug(panel)
   const location = locationSlug ? prepareDashboardLocationOverview({ slug: locationSlug }, /^\/locations\/[^/]+\/photos\/?$/.test(panel)) : null
   const productCreation = rendersProductCreation(panel, query)

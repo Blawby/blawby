@@ -73,7 +73,7 @@ import DashboardResourceLocalization from '~/components/dashboard/DashboardResou
 import DashboardContentPreview from '~/components/dashboard/DashboardContentPreview.vue'
 import PostMediaFields from '~/components/dashboard/PostMediaFields.vue'
 import MediaGallery from '~/components/MediaGallery.vue'
-import { normalizePostMediaForForm, postListKey, usePostEditor, type PostMediaFormItem, type PublishOutcome, type PublishTarget, type SocialChannel } from '~/composables/usePostEditor'
+import { normalizePostMediaForForm, postListKey, usePostEditor, usePostConnections, type PostMediaFormItem, type PublishOutcome, type PublishTarget, type SocialChannel } from '~/composables/usePostEditor'
 import { articlePostFields, parsePostInput, POST_BODY_MAX, POST_TITLE_MAX, POST_CALL_TO_ACTION_LABEL_MAX } from '~/shared/posts'
 import { isBlogPostResponse } from '~/lib/components/workspace/blog/blog-response-contracts'
 import { businessChanged } from '~/composables/useDashboardInvalidations'
@@ -150,12 +150,7 @@ const locationItems = computed(() => [{ label: 'Whole website', value: WHOLE_WEB
 const locationChoice = computed({ get: () => editor.form.location_id ?? WHOLE_WEBSITE, set: (value: string) => { editor.form.location_id = value === WHOLE_WEBSITE ? null : value; selected.value = selected.value.filter(channel => channel === 'organization') } })
 const previewMedia = computed(() => editor.form.media.filter((item): item is PostMediaFormItem & { public_url: string } => Boolean(item.asset_id && item.public_url)).map(item => ({ asset_id: item.asset_id, url: item.public_url, poster: item.thumbnail_url ?? undefined, kind: item.kind === 'video' ? 'video' as const : 'image' as const, alt: item.alt_text, description: editor.form.body })))
 
-interface Channel { channel: SocialChannel; connected: boolean; target_id: string | null; target_name: string | null; connection_revision: string | null; problems: Array<{ code: string; message: string }>; connect_url: string }
-const { data: connections, error: connectionFailure, status: connectionStatus, refresh: refreshConnections } = await useWebsiteIndexData(
-  () => `post-publish-targets:${organizationId}:${editor.form.location_id ?? ''}`,
-  () => dashboardApi('/api/integrations/social-connections', { query: { locationId: editor.form.location_id ?? '' }, validate: (value): value is { channels: Channel[] } => isRecord(value) && Array.isArray(value.channels) }),
-  { lazy: true },
-)
+const { data: connections, error: connectionFailure, status: connectionStatus, refresh: refreshConnections } = await usePostConnections(organizationId, () => editor.form.location_id)
 useEventListener(import.meta.client ? window : undefined, 'focus', () => refreshConnections())
 const connectionsError = computed(() => connectionFailure.value ? getErrorMessage(connectionFailure.value, 'Failed to read connections') : null)
 const lastOutcomes = ref<PublishOutcome[]>([])

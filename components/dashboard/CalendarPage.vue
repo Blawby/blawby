@@ -255,6 +255,8 @@ export interface CalendarLocation {
 export const calendarDayKey = Symbol('calendar-day') as InjectionKey<{
   location: Ref<CalendarLocation | null | undefined>
   refreshLocation: () => Promise<void>
+  locations: ComputedRef<{ label: string; value: string }[]>
+  locationError: Ref<unknown>
   read: (date: string) => { items: CalendarItem[]; status: 'loading' | 'ready' | 'error'; error: unknown }
 }>
 
@@ -414,13 +416,14 @@ function addTo(date?: string) {
 }
 const addAvailabilityTo = computed(() => addTo(openDay.value ?? undefined))
 
-const { data: chosenLocation, error: locationError, refresh: refreshLocation } = await useAsyncData(
-  () => `calendar-location:${organizationId}:${filters.locationId}`,
-  async () => props.sessionProduct || filters.locationId === AGENDA_FILTER_ALL || !organizationId
+const availabilityLocationId = computed(() => filters.locationId === AGENDA_FILTER_ALL && locations.value.length === 1 ? locations.value[0]!.id : filters.locationId)
+const { data: locationReply, error: locationError, refresh: refreshLocation } = await useAsyncData(
+  () => `calendar-location:${organizationId}:${availabilityLocationId.value}`,
+  async () => props.sessionProduct || availabilityLocationId.value === AGENDA_FILTER_ALL || !organizationId
     ? null
-    : (await dashboardApi<{ location: CalendarLocation }>(`/api/organizations/${organizationId}/locations/${filters.locationId}`, { validate: isLocationHours })).location,
-  { watch: [() => filters.locationId] },
+    : (await dashboardApi<{ location: CalendarLocation }>(`/api/organizations/${organizationId}/locations/${availabilityLocationId.value}`, { validate: isLocationHours })).location,
 )
+const chosenLocation = computed(() => locationReply.value?.id === availabilityLocationId.value ? locationReply.value : null)
 function isUnavailableKey(key: string): boolean {
   if (sessionProduct.value) return false
   const record = chosenLocation.value
@@ -595,6 +598,8 @@ const level = useRouteLevel()
 const openDay = computed(() => typeof route.params.day === 'string' ? route.params.day : null)
 provide(calendarDayKey, {
   location: chosenLocation,
+  locations: computed(() => locationItems.value.filter(item => item.value !== AGENDA_FILTER_ALL)),
+  locationError,
   refreshLocation,
   read(date) {
     const block = calendarData.value.get(dayReadKey(date)) ?? EMPTY_MONTH

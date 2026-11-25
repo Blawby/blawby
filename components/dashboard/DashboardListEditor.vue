@@ -69,7 +69,9 @@
       </li>
     </ul>
 
-    <UEmpty v-else-if="!items.length" :icon="emptyIcon" :title="emptyTitle" data-testid="list-editor-empty" />
+    <slot v-else-if="!items.length" name="empty">
+      <UEmpty :icon="emptyIcon" :title="emptyTitle" data-testid="list-editor-empty" />
+    </slot>
 
     <ul v-else class="divide-y divide-default border-y border-default">
       <li v-for="(item, index) in items" :key="item.id" class="flex items-center gap-3 py-4">

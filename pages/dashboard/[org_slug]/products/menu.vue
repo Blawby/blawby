@@ -16,6 +16,7 @@
         <CatalogProductList :products="unsectioned" :collections="catalog.collections.value" :locations="locations" :price-label="priceLabel" :active-item="level.child.value" :item-heading-level="3" />
       </section>
     </div>
+    <p v-else role="status" class="text-sm text-muted">Loading menu…</p>
   </DashboardIndexPanel>
 </template>
 
@@ -30,13 +31,13 @@ const router = useRouter()
 const level = useRouteLevel()
 const organizationId = useDashboardOrganizationId()
 const locationId = useLocationScope()
-const catalog = useProductCatalog(organizationId, locationId, true, true)
+const catalog = useProductCatalog(organizationId, locationId)
 await catalog.load
 const { locations, error: locationsError } = await useOrganizationLocations({ includeInactive: true })
 const { priceLabel } = useCatalogPrice(locationId, locations)
 const unsectioned = computed(() => {
   const visibleSections = new Set(catalog.collections.value.filter(collection => !locationId.value || collection.location_id === null || collection.location_id === locationId.value).map(collection => collection.id))
-  return catalog.products.value.filter(product => !product.collections.some(membership => visibleSections.has(membership.collection_id)))
+  return catalog.products.value.filter(product => product.kind === 'dish' && !product.collections.some(membership => visibleSections.has(membership.collection_id)))
 })
 
 watchEffect(() => {

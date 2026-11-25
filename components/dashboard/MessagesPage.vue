@@ -10,7 +10,7 @@
     <template #right>
       <UButton icon="i-lucide-search" color="neutral" variant="soft" class="rounded-full" :aria-label="searching ? 'Close search' : 'Search messages'" :aria-pressed="searching" @click="toggleSearch" />
       <UButton v-if="!personalScope && canManageMessages" icon="i-lucide-settings" color="neutral" variant="soft" class="rounded-full" aria-label="Messaging settings" @click="settingsOpen = true" />
-      <UButton v-if="!personalScope && hasWorkspaceMembership" :to="`${listPath}/new`" icon="i-lucide-square-pen" color="neutral" variant="soft" class="rounded-full" aria-label="New conversation" />
+      <UButton v-if="!personalScope && hasWorkspaceMembership" :to="`${listPath}/new`" icon="i-lucide-square-pen" color="neutral" variant="soft" class="rounded-full" aria-label="Message your team" />
     </template>
     <ConversationList v-if="session.data?.user.id && (personalScope || hasWorkspaceMembership)" ref="conversationList" :personal-scope="personalScope" @first="firstThread = $event">
       <template #filters><ReuseControls /></template>

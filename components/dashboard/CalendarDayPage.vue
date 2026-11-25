@@ -1,10 +1,16 @@
 <template>
   <DashboardIndexPanel :id="personalScope ? 'account-calendar-day' : 'calendar-day'" :title="title" column="leaf">
-    <template v-if="sessionProduct" #right>
+    <template #right>
+      <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" :to="adjacentDay(-1)" aria-label="Previous day" />
+      <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" :to="adjacentDay(1)" aria-label="Next day" />
       <UButton v-if="!calendarSessions?.providerHours.value && calendarSessions?.canCreate.value" label="Add availability" icon="i-lucide-plus" :to="calendarSessions.addTo(day)" />
-      <UButton v-else-if="calendarSessions?.providerHours.value && sessionProduct.booking" label="Bookable times" icon="i-lucide-clock" :to="sessionProduct.booking.assigned_member_id ? `/dashboard/${route.params.org_slug}/team/${sessionProduct.booking.assigned_member_id}/hours` : `/dashboard/${route.params.org_slug}/team`" />
+      <UButton v-else-if="calendarSessions?.providerHours.value && sessionProduct?.booking" label="Bookable times" icon="i-lucide-clock" :to="sessionProduct.booking.assigned_member_id ? `/dashboard/${route.params.org_slug}/team/${sessionProduct.booking.assigned_member_id}/hours` : `/dashboard/${route.params.org_slug}/team`" />
     </template>
     <div class="space-y-6">
+      <DashboardLocationFilter v-if="!sessionProduct && !personalScope && calendar.locations.value.length > 1" v-model="filters.locationId" :items="[{ label: 'All locations', value: AGENDA_FILTER_ALL }, ...calendar.locations.value]" />
+      <p v-else-if="!sessionProduct && !personalScope && calendar.locations.value.length === 1" class="text-sm text-muted">{{ calendar.locations.value[0]?.label }}</p>
+      <UAlert v-if="calendar.locationError.value" color="error" :description="getErrorMessage(calendar.locationError.value, 'The location could not be loaded')" />
+      <p v-else-if="!sessionProduct && !personalScope && !location && calendar.locations.value.length > 1" class="text-sm text-muted">Choose a location above to manage availability.</p>
       <UAlert v-if="errorMessage" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="errorMessage" />
       <p v-if="calendarSessions?.creationUnavailable.value" data-testid="calendar-availability-state" class="text-sm text-muted">
         {{ calendarSessions.creationUnavailable.value.message }}
@@ -17,7 +23,7 @@
       -->
       <UCard v-if="!sessionProduct && location" variant="subtle">
         <div class="flex items-center justify-between gap-3">
-          <p class="text-sm text-muted">{{ availability.open ? 'Available' : 'Unavailable' }}</p>
+          <p class="text-sm text-muted">{{ availability.open ? 'Open' : 'Closed' }}</p>
           <span v-if="!availability.open" class="size-2 rounded-full bg-primary" aria-hidden="true" />
         </div>
         <p class="mt-2 text-lg font-medium text-highlighted">{{ availability.reason }}</p>
@@ -41,7 +47,6 @@
           @click="toggleClosure"
         />
       </UCard>
-      <p v-else-if="!sessionProduct && !personalScope" class="text-sm text-muted">Choose a location to manage this day's availability.</p>
 
       <p v-if="status === 'loading'" role="status" class="text-sm text-muted">Loading scheduled times…</p>
 
@@ -67,16 +72,19 @@
 import { closureOnDate, datedHours, getDateIntervals, parseOpeningHours, parseSpecialHours, type SpecialHours } from '~/shared/reservation-hours'
 import { addLocalDays, formatCalendarDate } from '~/utils/timezone'
 import { getErrorMessage } from '~/utils/errors'
-import { getVerticalCopy } from '~/utils/vertical-copy'
 import { calendarDayKey, calendarSessionsKey } from './CalendarPage.vue'
 
 // The business's day can be blocked or opened; the account's day only lists its visits.
 const props = defineProps<{ personalScope?: boolean }>()
 
 const route = useRoute()
+const { filters } = useAgendaFilters()
+function adjacentDay(offset: number) {
+  const date = addLocalDays(day.value, offset)
+  return { path: route.path.replace(/[^/]+$/, date), query: { ...route.query, month: date.slice(0, 7) } }
+}
 const dashboardApi = props.personalScope ? applicationFetch : useDashboardApi()
 const calendarSessions = inject(calendarSessionsKey, null)
-const { organization } = useDashboardOrganization()
 const sessionProduct = computed(() => calendarSessions?.product.value)
 const day = computed(() => String(route.params.day ?? ''))
 const title = computed(() => formatCalendarDate(day.value, 'en', { weekday: 'long', month: 'long', day: 'numeric' }))
@@ -112,8 +120,7 @@ const availability = computed<{ open: boolean; reason: string; action: 'open' | 
   if (intervals !== null && intervals.length === 0) {
     return { open: false, reason: `Closed on ${formatCalendarDate(day.value, 'en', { weekday: 'long' })}s in your hours.`, action: 'hours' }
   }
-  const party = getVerticalCopy(organization.value?.vertical).guestsLabelPlural
-  return { open: true, reason: `${party.charAt(0).toUpperCase()}${party.slice(1)} can book this date.`, action: 'block' }
+  return { open: true, reason: 'This date is open in your calendar.', action: 'block' }
 })
 
 const saving = ref(false)

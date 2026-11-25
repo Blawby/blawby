@@ -15,6 +15,7 @@ import type { GuestThreadSubmissionType, InboxRow, ListGuestThreadsOptions } fro
 import { calendarDate, clockTime, firstName, initial, listTime, localDateKey, providerInstant, stayWhen } from './presentation'
 import { formatCalendarRange } from '~/utils/timezone'
 import { pastByRuleSql, pastSql, type GuestThreadMailbox } from './mailbox'
+import { globAny, searchMatchSql } from '~/server/domain/search'
 
 const REPLY_CHANNEL_SQL = "CASE WHEN EXISTS (SELECT 1 FROM channel_threads ct WHERE ct.conversation_id = gt.id AND ct.organization_id = gt.organization_id) OR EXISTS (SELECT 1 FROM bookings st WHERE st.id = gt.booking_id AND st.organization_id = gt.organization_id AND st.owner = 'channel') THEN 'airbnb' ELSE 'email' END"
 
@@ -127,19 +128,15 @@ function inboxScope(organizationId: string | { sql: string } | null, opts: Omit<
   if (opts.assignedMemberId) { where += ' AND op.assigned_member_id = ?'; params.push(opts.assignedMemberId) }
   if (opts.type) where += threadTypeWhere(opts.type)
   if (opts.kind) where += kindWhere(opts.kind)
-  if (opts.q) {
-    const visible = opts.buyerAudience ? ` AND ${guestVisibleSql('e', 'gt.user_id = me.user_id')}` : ''
-    const like = `%${opts.q.toLowerCase().replace(/[\\%_]/g, char => `\\${char}`)}%`
-    where += ` AND (LOWER(COALESCE(json_extract(gt.payload_json, '$.guest.name'), '')) LIKE ? ESCAPE '\\'
-      OR LOWER(COALESCE(gt.name, '')) LIKE ? ESCAPE '\\'
-      OR LOWER(COALESCE(json_extract(gt.payload_json, '$.participant.title'), '')) LIKE ? ESCAPE '\\'
-      OR LOWER(COALESCE(${threadLocationTitleSql(opts.buyerAudience)}, '')) LIKE ? ESCAPE '\\'
-      OR EXISTS (SELECT 1 FROM messages e WHERE e.conversation_id = gt.id${visible}
-        AND (LOWER(COALESCE(e.body, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(json_extract(e.payload_json, '$.meta.name'), '')) LIKE ? ESCAPE '\\')))`
-    params.push(like, like, like, like, like, like)
-  }
+  // Search covers Current and Past (#2103): the mailbox narrows only a list nobody is searching. Blocked stays out unless it is the list.
+  const search = opts.q ? searchMatchSql(opts.q, pattern => `(${globAny([
+    "json_extract(gt.payload_json, '$.guest.name')", "json_extract(gt.payload_json, '$.guest.email')", 'gt.name',
+    "json_extract(gt.payload_json, '$.participant.title')", threadLocationTitleSql(opts.buyerAudience),
+  ], pattern)} OR EXISTS (SELECT 1 FROM messages e WHERE e.conversation_id = gt.id${opts.buyerAudience ? ` AND ${guestVisibleSql('e', 'gt.user_id = me.user_id')}` : ''}
+      AND ${globAny(['e.body', "json_extract(e.payload_json, '$.meta.name')"], pattern)}))`) : null
+  if (search) { where += ` AND ${search.sql}`; params.push(...search.params) }
   where += ` AND (${HAS_CONVERSATION_SQL}${opts.buyerAudience ? ' OR gt.user_id IS NOT me.user_id' : ''})`
-  const mailbox = mailboxWhere(opts.mailbox ?? null, now, opts.buyerAudience)
+  const mailbox = mailboxWhere(search && opts.mailbox !== 'blocked' ? null : opts.mailbox ?? null, now, opts.buyerAudience)
   where += mailbox.sql
   params.push(...mailbox.params)
   return { from, where, params }

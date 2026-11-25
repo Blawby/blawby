@@ -33,7 +33,7 @@
             </div>
           </div>
         </div>
-        <p v-else-if="windowData && !rows.length" class="py-10 text-center text-sm text-muted">{{ search ? words.noMatch : words.none }}</p>
+        <p v-else-if="windowData && !rows.length" class="py-10 text-center text-sm text-muted">{{ search ? `No results for “${search}”` : words.none }}</p>
         <!-- The grid is its own scroller on both axes, edge to edge like Airbnb's multi-calendar: the day header pins to its top and the home column to its left, the corner over both. -->
         <div v-else-if="windowData" class="-mx-4 min-h-0 overflow-auto overscroll-contain border-y border-default sm:-mx-6" :aria-busy="status === 'pending'" :inert="!hasRequestedWindow" :data-testid="`${words.testId}-grid`">
           <div
@@ -166,6 +166,7 @@
 </template>
 
 <script setup lang="ts">
+import { matchesSearch } from '~/shared/search'
 import { getLocalTimeZone, parseDate, today, type CalendarDate } from '@internationalized/date'
 import { useEventListener } from '@vueuse/core'
 import type { LocationQueryRaw, RouteLocationRaw } from 'vue-router'
@@ -197,8 +198,8 @@ interface GridRow { id: string; name: string; to: RouteLocationRaw; cells: GridC
 const props = defineProps<{ view: 'homes' | 'places' }>()
 const homesView = props.view === 'homes'
 const words = homesView
-  ? { rows: 'homes', span: 'nights', unit: 'night', units: 'nights', none: 'No homes yet.', noMatch: 'No homes match these filters.', gridLabel: 'Nights at every home', loadError: 'The homes calendar could not be loaded', testId: 'stay-homes' }
-  : { rows: 'places', span: 'dates', unit: 'date', units: 'dates', none: 'No places yet.', noMatch: 'No places match these filters.', gridLabel: 'Days at every place', loadError: 'The places calendar could not be loaded', testId: 'places' }
+  ? { rows: 'homes', span: 'nights', unit: 'night', units: 'nights', none: 'No homes yet.', gridLabel: 'Nights at every home', loadError: 'The homes calendar could not be loaded', testId: 'stay-homes' }
+  : { rows: 'places', span: 'dates', unit: 'date', units: 'dates', none: 'No places yet.', gridLabel: 'Days at every place', loadError: 'The places calendar could not be loaded', testId: 'places' }
 
 // Today and thirty days after it, paged by a week or a month; the URL keeps where you were and what is selected.
 const WINDOW_DAYS = 31
@@ -305,7 +306,7 @@ const guestName = (stay: GridStay) => stay.guest_name || 'Guest name not provide
 // Adults and children count as guests; infants do not, as Airbnb counts them.
 const guestCount = (stay: GridStay) => `${stay.adults + stay.children} ${stay.adults + stay.children === 1 ? 'guest' : 'guests'}`
 const addressOf = (home: Home) => home.address ? [home.address.address, home.address.city].filter(Boolean).join(', ') : 'No address'
-const matches = (name: string, detail: string) => !appliedSearch.value || `${name} ${detail}`.toLowerCase().includes(appliedSearch.value.toLowerCase())
+const matches = (name: string, detail: string) => matchesSearch(appliedSearch.value, [name, detail])
 const staysById = computed(() => new Map((homesData.value?.bookings ?? []).map(stay => [stay.booking_id, stay])))
 const stayTo = (id: string) => router.resolve({
   path: bookingEditorPath(orgSlug, id),

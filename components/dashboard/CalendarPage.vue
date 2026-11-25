@@ -56,6 +56,26 @@
           <UButton icon="i-lucide-settings" color="neutral" variant="soft" square class="size-10 justify-center rounded-full" aria-label="Schedule settings" :to="{ path: `/dashboard/${route.params.org_slug}/products/${sessionProduct.id}/booking/schedule`, query: { location_id: physicalLocation.id } }" />
         </UTooltip>
       </div>
+      <!-- A booking search reads every date (#2103): a booking found outside this month opens its day, and the calendar moves there. -->
+      <section v-if="bookingSearch" class="mb-6" aria-label="Bookings found" data-testid="calendar-booking-search">
+        <UAlert v-if="foundError" color="error" variant="soft" title="Bookings could not be searched" :description="getErrorMessage(foundError, 'Booking search failed')" />
+        <USkeleton v-else-if="finding && !foundBookings.length" class="h-16 w-full" />
+        <p v-else-if="!foundBookings.length" class="py-4 text-center text-sm text-muted">No results for “{{ bookingSearch }}”</p>
+        <ul v-else class="divide-y divide-default overflow-hidden rounded-xl ring ring-default">
+          <li v-for="booking in foundBookings" :key="booking.booking_id">
+            <NuxtLink :to="dayTo(booking.day)" class="flex items-center justify-between gap-3 px-4 py-3 hover:bg-elevated/60" :data-booking-result="booking.booking_id">
+              <span class="min-w-0">
+                <span class="block truncate text-sm font-medium text-highlighted">{{ booking.guest_name ?? booking.product_name }}</span>
+                <span class="block truncate text-xs text-muted">{{ [booking.product_name, formatCalendarDate(booking.day, 'en', { month: 'short', day: 'numeric', year: 'numeric' })].join(' · ') }}</span>
+              </span>
+              <span v-if="booking.status !== 'confirmed'" class="shrink-0 text-xs capitalize text-muted">{{ booking.status }}</span>
+            </NuxtLink>
+          </li>
+        </ul>
+        <div v-if="foundNext !== null" class="flex justify-center pt-2">
+          <UButton color="neutral" variant="ghost" :loading="finding" @click="findBookings(bookingSearch, foundNext)">More bookings</UButton>
+        </div>
+      </section>
       <UAlert
         v-if="locationError && view !== 'homes'"
         class="mb-6"
@@ -292,6 +312,8 @@ import { addLocalDays, formatCalendarDate, formatTimestamp, isValidCalendarDate,
 import { getErrorMessage } from '~/utils/errors'
 import { isSessionsResponse, sessionCalendarMonth } from '~/utils/session-contract'
 import { mediaStillUrl } from '~/shared/media-placement-contract'
+import { matchesSearch } from '~/shared/search'
+import { watchDebounced } from '@vueuse/core'
 
 useSeoMeta({ title: 'Calendar | Blawby', robots: 'noindex, nofollow' })
 
@@ -580,9 +602,40 @@ function setSearch(value: string | number) {
 }
 function itemsOn(dayKey: string): CalendarItem[] {
   const items = itemsByDay.value.get(dayKey) ?? []
-  const query = search.value.toLowerCase()
-  return query ? items.filter(item => [item.title, item.subtitle, item.location_title].some(text => text?.toLowerCase().includes(query))) : items
+  return search.value ? items.filter(item => matchesSearch(search.value, [item.title, item.subtitle, item.location_title, 'name' in item ? item.name : null])) : items
 }
+
+// The business's bookings found by the search, across every date, newest first.
+type FoundBooking = { booking_id: string; status: string; product_name: string; guest_name: string | null; day: string }
+type FoundBookings = { bookings: FoundBooking[]; pagination: { next_offset: number | null } }
+const isFoundBookings = (value: unknown): value is FoundBookings => isRecord(value) && Array.isArray(value.bookings) && isRecord(value.pagination)
+  && value.bookings.every(booking => isRecord(booking) && typeof booking.booking_id === 'string' && typeof booking.day === 'string' && typeof booking.product_name === 'string')
+const bookingSearch = computed(() => props.personalScope || props.sessionProduct || gridView.value ? '' : search.value.trim())
+const foundBookings = shallowRef<FoundBooking[]>([])
+const foundNext = ref<number | null>(null)
+const foundError = ref<unknown>(null)
+const finding = ref(false)
+async function findBookings(q: string, offset: number): Promise<void> {
+  finding.value = true
+  foundError.value = null
+  try {
+    const page = await dashboardApi<FoundBookings>('/api/dashboard/bookings/search', { query: { q, offset }, validate: isFoundBookings })
+    if (q !== bookingSearch.value) return
+    foundBookings.value = offset ? [...foundBookings.value, ...page.bookings] : page.bookings
+    foundNext.value = page.pagination.next_offset
+  } catch (error) {
+    if (q === bookingSearch.value) foundError.value = error
+  } finally {
+    if (q === bookingSearch.value) finding.value = false
+  }
+}
+watchDebounced(bookingSearch, q => {
+  foundBookings.value = []
+  foundNext.value = null
+  foundError.value = null
+  finding.value = false
+  if (q) void findBookings(q, 0)
+}, { debounce: 250, immediate: true })
 // A tile counts what is still happening; a cancelled booking is listed on its
 // day, marked, and not counted.
 function countFor(dayKey: string): number {

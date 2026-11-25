@@ -427,7 +427,9 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     const hostPost = await db.prepare(`SELECT m.id, m.body FROM messages m JOIN conversation_participants seat ON seat.conversation_id = m.conversation_id AND seat.user_id = 'cook'
       WHERE m.author_kind = ? AND json_extract(m.payload_json, '$.key') = ? ORDER BY m.sequence DESC LIMIT 1`).bind(PLATFORM_MESSAGE_AUTHOR_KIND, jobKey(eveClean)).first<{ id: string; body: string }>()
     assert.match(hostPost!.body, /Cara can’t do it: Away that week\.\nDot can’t do it\./)
-    assert.equal(await alerted(hostPost!.id), 1, 'the host is alerted')
+    // One alert, sent to the host and nobody else.
+    assert.deepEqual((await db.prepare(`SELECT status, json_extract(email_json, '$.message.to') AS recipient FROM guest_thread_deliveries
+      WHERE message_id = ? AND purpose = 'owner_alert'`).bind(hostPost!.id).all()).results, [{ status: 'sent', recipient: 'cook@example.test' }], 'the host is alerted')
     // Accept makes a clean confirmed, by name.
     const fayClean = (await taskRow(`turnover:${fay.id}`))!
     await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:32'))

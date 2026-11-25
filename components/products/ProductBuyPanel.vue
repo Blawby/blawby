@@ -5,15 +5,26 @@
   -->
   <div class="space-y-6">
     <fieldset v-for="(option, index) in product.options" :key="option.name" class="space-y-2">
-      <legend class="text-sm text-muted">{{ option.name }}</legend>
+      <!-- A swatched option names its chosen value beside it, as Dawn's "Color: Black". -->
+      <legend class="text-sm text-muted">{{ option.name }}<template v-if="option.swatches && chosen[index]">: <span class="text-default">{{ chosen[index] }}</span></template></legend>
       <div class="flex flex-wrap gap-2">
-        <button
-          v-for="value in option.values" :key="value" type="button"
-          class="rounded-full px-5 py-2 text-sm ring-1 transition"
-          :class="[chosen[index] === value ? 'bg-[var(--site-action)] text-[var(--site-on-action,#fff)] ring-[var(--site-action)]' : 'ring-default text-default hover:ring-[var(--site-action)]', unavailable(index, value) ? 'line-through opacity-60' : undefined]"
-          :aria-pressed="chosen[index] === value"
-          @click="choose(index, value)"
-        >{{ value }}</button>
+        <template v-for="value in option.values" :key="value">
+          <button
+            v-if="option.swatches?.[value]" type="button"
+            class="relative size-10 rounded-full ring-offset-2 ring-offset-[var(--ui-bg)] transition"
+            :class="[chosen[index] === value ? 'ring-2 ring-[var(--site-action)]' : 'ring-1 ring-default hover:ring-[var(--site-action)]', unavailable(index, value) ? 'opacity-40' : undefined]"
+            :style="{ background: swatchBackground(option.swatches[value]!) }"
+            :aria-label="value" :title="value" :aria-pressed="chosen[index] === value"
+            @click="choose(index, value)"
+          ><span v-if="unavailable(index, value)" aria-hidden="true" class="absolute inset-0 m-auto h-px w-full rotate-45 bg-[var(--ui-text-muted)]" /></button>
+          <button
+            v-else type="button"
+            class="rounded-full px-5 py-2 text-sm ring-1 transition"
+            :class="[chosen[index] === value ? 'bg-[var(--site-action)] text-[var(--site-on-action,#fff)] ring-[var(--site-action)]' : 'ring-default text-default hover:ring-[var(--site-action)]', unavailable(index, value) ? 'line-through opacity-60' : undefined]"
+            :aria-pressed="chosen[index] === value"
+            @click="choose(index, value)"
+          >{{ value }}</button>
+        </template>
       </div>
     </fieldset>
     <p v-if="stockLine" class="text-sm text-muted">{{ stockLine }}</p>
@@ -33,7 +44,7 @@
 
 <script setup lang="ts">
 import type { PublicProduct } from '~/server/types/products'
-import { purchasableQuantity } from '~/shared/goods'
+import { purchasableQuantity, swatchBackground } from '~/shared/goods'
 
 const props = defineProps<{ product: PublicProduct; locationId: string | null }>()
 const emit = defineEmits<{ variant: [variantId: string | null] }>()

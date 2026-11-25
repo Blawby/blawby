@@ -7,7 +7,7 @@
   -->
   <DashboardIndexPanel id="organization-payments" title="Payments" :auto-open="firstRow">
     <div class="pb-10">
-      <UAlert v-if="connectError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" title="Stripe Connect is unavailable" :description="getErrorMessage(connectError, 'Stripe Connect status could not be loaded')" />
+      <UAlert v-if="connectError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" title="Payment settings could not be loaded" :description="getErrorMessage(connectError, 'Stripe Connect status could not be loaded')" />
       <p v-if="connectPending" role="status" class="mb-6 text-muted">Loading payment settings…</p>
       <UAlert v-if="unpaidError" class="mb-6" color="error" :description="getErrorMessage(unpaidError, 'Payments to collect could not be loaded')" />
       <p v-else-if="unpaidPending" role="status" class="mb-6 text-muted">Loading payments to collect…</p>

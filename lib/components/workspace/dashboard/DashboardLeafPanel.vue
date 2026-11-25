@@ -20,6 +20,7 @@
   </UDrawer>
 
   <!-- Keep the document panel in place through hydration, then move it into the mobile drawer when its target exists. -->
+  <UTheme :props="pane ? {} : { selectMenu: { content: { disableOutsidePointerEvents: true } }, inputMenu: { content: { disableOutsidePointerEvents: true } } }">
   <Teleport :to="drawerTarget ?? pendingDrawerTarget" :disabled="hydrating || pane">
   <UDashboardPanel :id="id" :class="hydrating ? 'max-lg:invisible' : !pane && !drawerTarget ? 'invisible' : undefined" :ui="{ root: 'min-h-0 lg:min-h-full pb-[env(safe-area-inset-bottom)] lg:pb-0' }">
     <template #header>
@@ -89,6 +90,7 @@
     </template>
   </UDashboardPanel>
   </Teleport>
+  </UTheme>
 </template>
 
 <script setup lang="ts">

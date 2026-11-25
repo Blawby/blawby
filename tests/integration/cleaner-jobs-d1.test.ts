@@ -467,8 +467,14 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     const repeatedWake = queue.pending.find(item => item.body.type === 'jobs.changed')!
     await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:31'))
     const returnedJob = async (viewer: typeof cara) => {
-      const conversations = (await teamThreads(viewer.principal)).filter(item => item.booking_id === eve.id)
-      const pages = await Promise.all(conversations.map(item => conversationPageFor(db, viewer.principal, item.id)))
+      // A task-only cleaner's header redacts booking_id; find the persisted
+      // association, then read each conversation through that cleaner's scope.
+      const threads = (await db.prepare(`SELECT c.id FROM conversations c JOIN conversation_participants seat ON seat.conversation_id = c.id
+        WHERE c.organization_id = ? AND c.kind = 'team' AND c.booking_id = ? AND seat.user_id = ? AND seat.role = 'member'`)
+        .bind(ORG, eve.id, viewer.principal.userId).all<{ id: string }>()).results
+      const pages = await Promise.all(threads.map(item => conversationPageFor(db, viewer.principal, item.id)))
+      const conversations = pages.map(page => page.conversation)
+      if (!viewer.manage) assert.ok(conversations.every(conversation => conversation.booking_id === null), 'task access keeps booking details private')
       const actions = pages.flatMap(page => Object.entries(page.job_actions ?? {}).filter(([, id]) => id === eveClean.id))
       assert.equal(actions.length, 1, actions.length === 1 ? 'the assignee has exactly one actionable post' : JSON.stringify({
         viewer: viewer.memberId, task: await taskRow(`turnover:${eve.id}`),

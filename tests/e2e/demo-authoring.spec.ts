@@ -34,6 +34,24 @@ test('demo website and language writes return readable coded refusals without ch
       })
     }
 
+    const productId = tenant.products['tables-brooklyn']!.id
+    const productPath = `/api/editor/organizations/${tenant.organizationId}/products/${productId}?editor=1`
+    const productRead = await request.get(productPath)
+    expect(productRead.status(), await productRead.text()).toBe(200)
+    const product = await productRead.json()
+    const translationPath = `/api/editor/organizations/${tenant.organizationId}/localization/product/${productId}/${source.locale}`
+    for (const method of ['PUT', 'DELETE']) {
+      const response = await request.fetch(translationPath, { method, data: { values: {}, updated_at: null } })
+      expect(response.status(), await response.text()).toBe(403)
+      expect(await response.json()).toMatchObject({
+        error: true, status: 403, message: 'Demo organization is read-only',
+        data: { code: 'DEMO_ORGANIZATION_READ_ONLY' },
+      })
+    }
+    const savedProduct = await request.get(productPath)
+    expect(savedProduct.status(), await savedProduct.text()).toBe(200)
+    expect(await savedProduct.json()).toEqual(product)
+
     const savedSettings = await request.get(settingsPath)
     expect(savedSettings.status(), await savedSettings.text()).toBe(200)
     expect(await savedSettings.json()).toEqual(settings)

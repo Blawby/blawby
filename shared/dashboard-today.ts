@@ -32,6 +32,12 @@ export function agendaToTodayCard(item: AgendaItem, input: { resolved_at: string
 /** How far ahead the business's Upcoming reads its reservations, and so how far ahead a booked client is offered a welcome. */
 export const UPCOMING_RESERVATION_DAYS = 30
 
+/** Business Today tiles supported by released native clients. */
+export type TodayIcon = 'i-lucide-house' | 'i-lucide-ticket' | 'i-lucide-scale' | 'i-lucide-utensils'
+  | 'i-lucide-calendar-check' | 'i-lucide-list-checks' | 'i-lucide-credit-card' | 'i-lucide-package'
+const PRODUCT_TODAY_ICONS: Record<string, TodayIcon> = { stay: 'i-lucide-house', experience: 'i-lucide-ticket', service: 'i-lucide-scale', table: 'i-lucide-utensils', dish: 'i-lucide-utensils' }
+export const todayIcon = (kind: string | null): TodayIcon => (kind && PRODUCT_TODAY_ICONS[kind]) || 'i-lucide-calendar-check'
+
 /** Who and how many, as a card names them: "Eva’s group of 4", "Ana", "a group of 2". */
 export function guestGroup(name: string | null, party: number): string {
   const first = name?.trim().split(/\s+/)[0] || null
@@ -54,7 +60,7 @@ export interface TodayItem {
   /** The home's or offering's own picture; a table's location. */
   image_url: string | null
   /** The small round tile drawn instead when there is no picture. */
-  icon: string
+  icon: TodayIcon
   /** "Eva’s group of 4 checks in", "Pottery wheel class for 6", "Clean up after Parity’s group of 2". */
   headline: string
   /** "Ao Nang Pool Villa · $1,240 paid", "Family law · Online · free". */

@@ -472,7 +472,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
       const threads = (await db.prepare(`SELECT c.id FROM conversations c JOIN conversation_participants seat ON seat.conversation_id = c.id
         WHERE c.organization_id = ? AND c.kind = 'team' AND c.booking_id = ? AND seat.user_id = ? AND seat.role = 'member'`)
         .bind(ORG, eve.id, viewer.principal.userId).all<{ id: string }>()).results
-      const pages = await Promise.all(threads.map(item => conversationPageFor(db, viewer.principal, item.id)))
+      const pages = await Promise.all(threads.map(item => conversationPageFor(db, env, viewer.principal, item.id)))
       const conversations = pages.map(page => page.conversation)
       if (!viewer.manage) assert.ok(conversations.every(conversation => conversation.booking_id === null), 'task access keeps booking details private')
       const actions = pages.flatMap(page => Object.entries(page.job_actions ?? {}).filter(([, id]) => id === eveClean.id))

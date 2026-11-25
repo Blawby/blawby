@@ -36,7 +36,7 @@ const src = computed(() => cfImageVariant(props.item.image_url, { width: 760, he
 </script>
 
 <style scoped>
-.ti { display: grid; overflow: hidden; border-radius: 18px; background: var(--ui-bg); color: var(--ui-text-highlighted); box-shadow: 0 6px 20px rgb(0 0 0 / 12%), 0 0 0 1px rgb(0 0 0 / 4%); }
+.ti { display: grid; overflow: hidden; border-radius: 18px; background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); border: 1px solid var(--ui-border); box-shadow: 0 4px 16px rgb(0 0 0 / 8%); }
 .ti-main { display: grid; align-content: start; justify-items: center; gap: 6px; padding: 16px 16px 18px; text-align: center; }
 .ti-main:focus-visible, .ti-strip:focus-visible { outline: 2px solid var(--ui-text-highlighted); outline-offset: -2px; }
 .ti-when { font-size: 14px; font-weight: 500; }

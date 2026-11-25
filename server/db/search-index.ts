@@ -1,4 +1,4 @@
-import folds from './search-character-folds.json' with { type: 'json' }
+import folds from '../../shared/search-character-folds.json' with { type: 'json' }
 
 /** Derived indexes of canonical rows; source rowids occupy disjoint lanes. */
 export const SEARCH_SOURCES = [

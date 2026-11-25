@@ -1,3 +1,7 @@
+import folds from './search-character-folds.json' with { type: 'json' }
+
+const characterFolds: Readonly<Record<string, string>> = folds
+
 /**
  * The one matching rule for search (Blawby/blawby#2103): every word of the
  * query must match, case and accents are ignored, and a match may start
@@ -8,9 +12,12 @@
  * `server/domain/search.ts` says the same rule to the database.
  */
 
-/** Lowercase, with accents and other combining marks removed. */
+/** Unicode 17 full case folding (C/F mappings), then canonical diacritics removed.
+ * Data: https://www.unicode.org/Public/17.0.0/ucd/CaseFolding.txt
+ * Unicode data © Unicode, Inc., licensed under https://www.unicode.org/license.txt
+ */
 export function foldSearchText(text: string): string {
-  return Array.from(text, character => character.normalize('NFD').replace(/\p{M}/gu, '').normalize('NFC').toLowerCase()).join('')
+  return Array.from(text, character => characterFolds[String(character.codePointAt(0))] ?? character).join('')
 }
 
 /** The query's distinct words, folded. */

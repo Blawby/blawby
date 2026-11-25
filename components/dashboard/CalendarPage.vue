@@ -623,7 +623,7 @@ const finding = ref(false)
 async function openFoundBooking(booking: FoundBooking, event: MouseEvent): Promise<void> {
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return
   event.preventDefault()
-  await router.replace({ path: route.path, query: { ...route.query, date: booking.day, month: booking.day.slice(0, 7) } })
+  await router.replace({ path: route.path, query: { ...route.query, q: undefined, date: booking.day, month: booking.day.slice(0, 7) } })
   await navigateTo(bookingEditorPath(String(route.params.org_slug), booking.booking_id))
 }
 async function findBookings(q: string, offset: number): Promise<void> {

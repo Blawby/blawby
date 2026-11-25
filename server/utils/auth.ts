@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { APIError, betterAuth, type Account, type BetterAuthPlugin } from 'better-auth'
 import { createAuthMiddleware, getOAuthState, isAPIError } from 'better-auth/api'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
+import { generateRandomString } from 'better-auth/crypto'
 import { DISCORD_BOT_PERMISSIONS } from '~/server/utils/discord-bot'
 import { loginMethodForPath } from '~/shared/auth/login-method'
 import { admin, anonymous, bearer, genericOAuth, getOrgAdapter, hasPermission, jwt, lastLoginMethod, oneTimeToken, organization, phoneNumber, type UserWithAnonymous } from 'better-auth/plugins'
@@ -281,6 +282,8 @@ export function localDevelopmentOrigin(value: string | undefined): string | null
 
 /** Hosted connection flows still return to the scheme older iPhone builds register. */
 export const NATIVE_CONNECTION_RETURN_ORIGIN = 'krabiclaw://connections'
+export const NATIVE_TOKEN_PURPOSE_HEADER = 'x-blawby-token-purpose'
+export const NATIVE_TOKEN_PREFIX = { dashboard: 'dashboard.', connection: 'connection.' } as const
 const NATIVE_RETURN_SCHEMES = ['blawby:', 'krabiclaw:']
 
 function trustedOriginsForAuth(env: CloudflareEnv): string[] | ((_request?: Request) => string[]) {
@@ -814,7 +817,14 @@ function buildAuth(env: CloudflareEnv) {
     },
     plugins: [
       bearer(),
-      oneTimeToken({ disableClientRequest: true, disableSetSessionCookie: true, storeToken: 'hashed', expiresIn: 1 }),
+      oneTimeToken({
+        disableClientRequest: true, disableSetSessionCookie: false, storeToken: 'hashed', expiresIn: 1,
+        generateToken: async (_session, context) => {
+          const purpose = context.headers?.get(NATIVE_TOKEN_PURPOSE_HEADER)
+          if (purpose !== 'dashboard' && purpose !== 'connection') throw new APIError('BAD_REQUEST', { message: 'A native authorization purpose is required.' })
+          return `${NATIVE_TOKEN_PREFIX[purpose]}${generateRandomString(32)}`
+        },
+      }),
       lastLoginMethod({ customResolveMethod: ctx => loginMethodForPath(ctx.path, ctx.body) }),
       jwt({
         // The plugin's default after-hook mints a fresh JWT on every

@@ -51,8 +51,8 @@ const production = values.staging ? bindings(undefined) : null
 const session = await startRemoteProxySession({
   DB: { type: 'd1', database_id: target.databaseId },
   ...(production ? { PRODUCTION_DB: { type: 'd1', database_id: production.databaseId } } : {}),
-  MEDIA_BUCKET: { type: 'r2', bucket_name: target.publicBucket },
-  PRIVATE_MEDIA_BUCKET: { type: 'r2', bucket_name: target.privateBucket },
+  MEDIA_BUCKET: { type: 'r2_bucket', bucket_name: target.publicBucket },
+  PRIVATE_MEDIA_BUCKET: { type: 'r2_bucket', bucket_name: target.privateBucket },
 })
 const runtime = new Miniflare({
   workers: [{

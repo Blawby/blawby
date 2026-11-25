@@ -1,5 +1,6 @@
 import { defineHandler } from 'nitro'
 import { jsonResponse } from '~/server/utils/api-response'
+import type { CloudflareEnv } from '~/server/utils/auth'
 
 function versionError(status: number, code: string, message: string) {
   return jsonResponse({ error: true, status, message, data: { code } }, {
@@ -18,7 +19,8 @@ export default defineHandler((event) => {
   if (!version) {
     return versionError(400, 'INVALID_APP_VERSION', 'Invalid Blawby app version header.')
   }
-  const minimum = event.req.runtime?.cloudflare?.env?.IOS_MINIMUM_VERSION
+  const env = event.req.runtime?.cloudflare?.env as Pick<CloudflareEnv, 'IOS_MINIMUM_VERSION'> | undefined
+  const minimum = env?.IOS_MINIMUM_VERSION
   if (minimum === undefined || minimum === '') return
   const supported = typeof minimum === 'string' ? VERSION.exec(minimum) : null
   if (!supported) {

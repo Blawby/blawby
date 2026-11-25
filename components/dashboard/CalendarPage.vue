@@ -63,7 +63,7 @@
         <p v-else-if="!foundBookings.length" class="py-4 text-center text-sm text-muted">No results for “{{ bookingSearch }}”</p>
         <ul v-else class="divide-y divide-default overflow-hidden rounded-xl ring ring-default">
           <li v-for="booking in foundBookings" :key="booking.booking_id">
-            <NuxtLink :to="dayTo(booking.day)" class="flex items-center justify-between gap-3 px-4 py-3 hover:bg-elevated/60" :data-booking-result="booking.booking_id">
+            <NuxtLink :to="`/dashboard/${route.params.org_slug}/bookings/${booking.unit === 'nights' ? 'stay' : 'booking'}/${booking.booking_id}`" class="flex items-center justify-between gap-3 px-4 py-3 hover:bg-elevated/60" :data-booking-result="booking.booking_id">
               <span class="min-w-0">
                 <span class="block truncate text-sm font-medium text-highlighted">{{ booking.guest_name ?? booking.product_name }}</span>
                 <span class="block truncate text-xs text-muted">{{ [booking.product_name, formatCalendarDate(booking.day, 'en', { month: 'short', day: 'numeric', year: 'numeric' })].join(' · ') }}</span>
@@ -606,11 +606,11 @@ function itemsOn(dayKey: string): CalendarItem[] {
 }
 
 // The business's bookings found by the search, across every date, newest first.
-type FoundBooking = { booking_id: string; status: string; product_name: string; guest_name: string | null; day: string }
+type FoundBooking = { unit: 'nights' | 'slot'; booking_id: string; status: string; product_name: string; guest_name: string | null; day: string }
 type FoundBookings = { bookings: FoundBooking[]; pagination: { next_offset: number | null } }
 const isFoundBookings = (value: unknown): value is FoundBookings => isRecord(value) && Array.isArray(value.bookings) && isRecord(value.pagination)
   && value.bookings.every(booking => isRecord(booking) && typeof booking.booking_id === 'string' && typeof booking.day === 'string' && typeof booking.product_name === 'string')
-const bookingSearch = computed(() => props.personalScope || props.sessionProduct || gridView.value ? '' : search.value.trim())
+const bookingSearch = computed(() => props.personalScope || props.sessionProduct ? '' : search.value.trim())
 const foundBookings = shallowRef<FoundBooking[]>([])
 const foundNext = ref<number | null>(null)
 const foundError = ref<unknown>(null)
@@ -630,7 +630,7 @@ async function findBookings(q: string, offset: number): Promise<void> {
   }
 }
 watchDebounced(bookingSearch, q => {
-  foundBookings.value = []
+  if (!q) foundBookings.value = []
   foundNext.value = null
   foundError.value = null
   finding.value = false

@@ -3343,3 +3343,8 @@ export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   members: many(member),
 }))
+
+export { searchIndexSchema } from './search-index'
+import { searchCharacterMapSql } from './search-index'
+
+export const search_character_folds = sqliteView('search_character_folds', { characters: text().notNull() }).as(sql.raw(searchCharacterMapSql()))

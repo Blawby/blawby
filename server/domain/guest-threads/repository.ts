@@ -15,7 +15,7 @@ import type { GuestThreadSubmissionType, InboxRow, ListGuestThreadsOptions } fro
 import { calendarDate, clockTime, firstName, initial, listTime, localDateKey, providerInstant, stayWhen } from './presentation'
 import { formatCalendarRange } from '~/utils/timezone'
 import { pastByRuleSql, pastSql, type GuestThreadMailbox } from './mailbox'
-import { globAny, searchMatchSql } from '~/server/domain/search'
+import { searchIndexMatch, searchMatchSql } from '~/server/domain/search'
 
 const REPLY_CHANNEL_SQL = "CASE WHEN EXISTS (SELECT 1 FROM channel_threads ct WHERE ct.conversation_id = gt.id AND ct.organization_id = gt.organization_id) OR EXISTS (SELECT 1 FROM bookings st WHERE st.id = gt.booking_id AND st.organization_id = gt.organization_id AND st.owner = 'channel') THEN 'airbnb' ELSE 'email' END"
 
@@ -129,14 +129,16 @@ function inboxScope(organizationId: string | { sql: string } | null, opts: Omit<
   if (opts.type) where += threadTypeWhere(opts.type)
   if (opts.kind) where += kindWhere(opts.kind)
   // Search covers Current and Past (#2103): the mailbox narrows only a list nobody is searching. Blocked stays out unless it is the list.
-  const search = opts.q ? searchMatchSql(opts.q, pattern => `(${globAny([
-    "json_extract(gt.payload_json, '$.guest.name')", "json_extract(gt.payload_json, '$.guest.email')", 'gt.name',
-    "json_extract(gt.payload_json, '$.participant.title')", threadLocationTitleSql(opts.buyerAudience),
-  ], pattern)} OR EXISTS (SELECT 1 FROM messages e WHERE e.conversation_id = gt.id${opts.buyerAudience ? ` AND ${guestVisibleSql('e', 'gt.user_id = me.user_id')}` : ''}
-      AND ${globAny(['e.body', "json_extract(e.payload_json, '$.meta.name')"], pattern)}))`) : null
+  const search = opts.q ? searchMatchSql(opts.q, term => `(${searchIndexMatch('conversations', 'gt', term)}
+    OR EXISTS (SELECT 1 FROM business_locations search_location WHERE search_location.id = gt.location_id AND ${searchIndexMatch('business_locations', 'search_location', term)})
+    ${opts.buyerAudience ? '' : `OR EXISTS (SELECT 1 FROM product_stay_configs search_home WHERE search_home.organization_id = gt.organization_id
+      AND search_home.product_id = COALESCE(op.product_id, (SELECT channel.product_id FROM channel_threads channel WHERE channel.organization_id = gt.organization_id AND channel.conversation_id = gt.id))
+      AND ${searchIndexMatch('product_stay_configs', 'search_home', term)})`}
+    OR EXISTS (SELECT 1 FROM messages e WHERE e.conversation_id = gt.id${opts.buyerAudience ? ` AND ${guestVisibleSql('e', 'gt.user_id = me.user_id')}` : ''}
+      AND ${searchIndexMatch('messages', 'e', term)}))`) : null
   if (search) { where += ` AND ${search.sql}`; params.push(...search.params) }
   where += ` AND (${HAS_CONVERSATION_SQL}${opts.buyerAudience ? ' OR gt.user_id IS NOT me.user_id' : ''})`
-  const mailbox = mailboxWhere(search && opts.mailbox !== 'blocked' ? null : opts.mailbox ?? null, now, opts.buyerAudience)
+  const mailbox = mailboxWhere(search ? null : opts.mailbox ?? null, now, opts.buyerAudience)
   where += mailbox.sql
   params.push(...mailbox.params)
   return { from, where, params }

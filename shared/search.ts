@@ -10,7 +10,7 @@
 
 /** Lowercase, with accents and other combining marks removed. */
 export function foldSearchText(text: string): string {
-  return text.normalize('NFKD').replace(/\p{M}/gu, '').replace(/[øØ]/g, 'o').replace(/[łŁ]/g, 'l').replace(/[đĐ]/g, 'd').replace(/ı/g, 'i').toLowerCase()
+  return Array.from(text, character => character.normalize('NFD').replace(/\p{M}/gu, '').normalize('NFC').toLowerCase()).join('')
 }
 
 /** The query's distinct words, folded. */

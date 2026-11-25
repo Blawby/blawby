@@ -31,7 +31,7 @@ import { GUEST_NOTE_EVENT, openingSentence } from '~/server/domain/guest-threads
 import { DEFAULT_IP_HOURLY_LIMIT as IP_HOURLY_LIMIT, getClientIp, hashClientIp, hashIdentifier, incrementHourlyRateLimit } from '~/server/utils/hourly-rate-limit'
 import { resolveBookingPresentation } from '~/utils/booking-presentation'
 import { HTTPError, type H3Event } from 'nitro'
-import { globAny, searchMatchSql } from '~/server/domain/search'
+import { searchIndexMatch, searchMatchSql } from '~/server/domain/search'
 import { checkoutAttemptQuery, createPaymentCheckout, type CheckoutAttempt } from '~/server/domain/payments/checkout'
 import { paidOnline } from '~/server/domain/payments'
 import { checkoutSellerFromRows, checkoutSellerQuery, prepareOrganizationPlan } from '~/server/utils/billing-access'
@@ -888,13 +888,10 @@ export interface BookingSearch { q: string; limit: number; offset: number }
 
 /** The bookings that match a search, by `shared/search.ts`'s rule: who booked, their contact, the confirmation or channel reference, and what was booked. */
 export function bookingSearchSql(q: string, booking = 'b', conversation = 'r', product = 'p', home = 'sc'): { sql: string; params: string[] } {
-  const guest = (field: string) => `json_extract(${conversation}.payload_json, '$.guest.${field}')`
-  const match = searchMatchSql(q, pattern => globAny([
-    guest('name'), guest('email'), guest('phone'),
-    // A phone matched by its digits too, however it was written.
-    `replace(replace(replace(replace(replace(replace(${guest('phone')}, ' ', ''), '-', ''), '(', ''), ')', ''), '.', ''), '+', '')`,
-    `${booking}.id`, `${booking}.channel_booking_id`, `${booking}.external_booking_id`, `${product}.name`, `${home}.internal_name`,
-  ], pattern))
+  const match = searchMatchSql(q, term => `(${[
+    searchIndexMatch('bookings', booking, term), searchIndexMatch('conversations', conversation, term),
+    searchIndexMatch('products', product, term), searchIndexMatch('product_stay_configs', home, term),
+  ].join(' OR ')})`)
   if (!match) throw new HTTPError({ statusCode: 400, message: 'Search for at least one word', data: { code: 'INVALID_SEARCH', field: 'q' } })
   return match
 }

@@ -43,6 +43,20 @@
       "when": 1795585331152,
       "tag": "0005_turnover_checklist",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1795596409408,
+      "tag": "0006_search_character_folds",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1795596432354,
+      "tag": "0007_search_index",
+      "breakpoints": true
     }
   ]
 }

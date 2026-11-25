@@ -8,7 +8,7 @@ import { appendMessage, markConversationRead } from '../../server/domain/convers
 import { loadConversationPage } from '../../server/domain/conversation-history.ts'
 import { acceptConversationGuestInvite, createConversationGuestInvite, removeConversationGuest } from '../../server/domain/conversation-participants.ts'
 import { conversationPageFor } from './support/conversation-page.ts'
-import { listConversations, readGuestInbox } from '../../server/domain/guest-threads/repository.ts'
+import { archiveConversation, listConversations, readGuestInbox } from '../../server/domain/guest-threads/repository.ts'
 import { memberAccessPrincipal } from '../../server/utils/member-access.ts'
 import type { CloudflareEnv } from '../../server/utils/auth.ts'
 import { applySchema } from './support/schema.ts'
@@ -88,6 +88,16 @@ test('a table booking opens with its own message and the guest note, written onc
     await appendMessage(db, { conversationId: 'old', authorKind: 'guest', authorUserId: null, channel: 'email', body: 'Running ten minutes late', occurredAt: '2026-11-04T06:50:00.000Z' })
     const rows = await listConversations(db, ORG, { userId: OWNER, mailbox: 'current' }, new Date('2026-11-05T00:00:00.000Z'))
     assert.deepEqual(rows.map(row => [row.id, row.preview_from, row.preview]), [['old', 'Filip', 'Running ten minutes late'], ['new', 'Filip', 'Window seat if possible']])
+
+    // The live message writer updates the index; search reaches Past, short
+    // Unicode terms, long terms beyond D1's GLOB limit, and separate words.
+    const longTerm = 'confirmationreference' + '0123456789'.repeat(8)
+    await appendMessage(db, { conversationId: 'new', authorKind: 'guest', authorUserId: null, channel: 'web', body: `Émile José ЖΩ ${longTerm}` })
+    await archiveConversation(db, { organizationId: ORG, conversationId: 'new', userId: OWNER, archived: true })
+    for (const q of ['jose emile', 'ÉMILE jose', 'Ω', 'жω', longTerm, 'filip@example.test jose']) {
+      assert.deepEqual((await listConversations(db, ORG, { userId: OWNER, mailbox: 'current', q })).map(row => row.id), ['new'], q)
+    }
+    assert.deepEqual(await listConversations(db, ORG, { userId: OWNER, q: 'jose nevermentioned' }), [])
 
     // Accept through the normal write, then read using the request's canonical seat and transcript projection.
     const booker = { id: 'booker', email: 'filip@example.test', name: 'Filip Heurckmans', emailVerified: true }

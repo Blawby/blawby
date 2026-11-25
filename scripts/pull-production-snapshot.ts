@@ -177,7 +177,8 @@ async function readLiveDatabase(databaseId: string, path: string): Promise<void>
     if (body.success !== true || body.result?.[0]?.success !== true || !results) throw new Error(`D1 read did not return results: ${sql}`)
     return results
   }
-  const schema = (await raw("SELECT type, name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\' ORDER BY rowid")).rows as Array<[string, string, string]>
+  const tableKinds = new Map((await raw("SELECT name, type FROM pragma_table_list WHERE schema = 'main'")).rows as Array<[string, string]>)
+  const schema = (await raw("SELECT type, name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\' ORDER BY rowid")).rows.filter(([, name]) => tableKinds.get(String(name)) !== 'shadow') as Array<[string, string, string]>
   writeFileSync(path, '', { flag: 'wx', mode: 0o600 })
   const copy = new DatabaseSync(path)
   try {
@@ -185,7 +186,10 @@ async function readLiveDatabase(databaseId: string, path: string): Promise<void>
     copy.exec('PRAGMA foreign_keys = OFF')
     const tables = schema.filter(([type]) => type === 'table')
     for (const [, , sql] of tables) copy.exec(sql)
-    for (const [, table] of tables) {
+    for (const [type, , sql] of schema) if (type === 'view') copy.exec(sql)
+    // Only the search index's derived writes run during a copy; business triggers still wait.
+    for (const [type, name, sql] of schema) if (type === 'trigger' && name.startsWith('search_index_')) copy.exec(sql)
+    for (const [, table] of tables.filter(([, name]) => tableKinds.get(name) === 'table')) {
       // Generated columns are computed again by the copy; only stored ones are read.
       const columns = (copy.prepare(`PRAGMA table_xinfo(${identifier(table)})`).all() as unknown as Array<{ name: string; hidden: number }>)
         .filter(column => column.hidden === 0).map(column => identifier(column.name))
@@ -200,8 +204,8 @@ async function readLiveDatabase(databaseId: string, path: string): Promise<void>
         after = Number(page.rows.at(-1)![0])
       }
     }
-    // Indexes, views and triggers after the rows, so no trigger fires on the copy.
-    for (const [type, , sql] of schema) if (type !== 'table') copy.exec(sql)
+    // Remaining indexes and business triggers follow the rows.
+    for (const [type, , sql] of schema) if (type !== 'table' && type !== 'view' && !(type === 'trigger' && sql.startsWith('CREATE TRIGGER search_index_'))) copy.exec(sql)
   } finally {
     copy.close()
   }

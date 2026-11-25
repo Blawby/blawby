@@ -111,8 +111,8 @@ setup after the day's cards. A job is the action on its booking's card that day
 what they can do. Assigned work appears on Today, and staff can claim custom
 work offered to their role on a listing where they have task access.
 
-Every card is `TodayItemCard`, centred, with a shadow and no border or badges,
-in Airbnb's order: when ("3:00 PM", "Oct 26 – 29"); the home's or offering's
+Every card is `TodayItemCard`, centred on the elevated surface with a subtle
+border and shadow, in this order: when ("3:00 PM", "Oct 26 – 29"); the home's or offering's
 own picture, or a small round icon tile; one sentence with who and how many
 ("Eva's group of 4 checks in"); one line of where, with money for owners and
 admins; the two-line action. The heading uses the business's word ("You have 2

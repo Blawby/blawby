@@ -325,7 +325,7 @@ test('an assigned staff member reviews a consultation from Calendar while Today 
     await page.getByRole('button', { name: /^Actions for .* message$/ }).first().click()
     await page.getByRole('menuitem', { name: 'Create maintenance job', exact: true }).click()
     const sheet = page.getByRole('dialog', { name: 'New maintenance job', exact: true })
-    await sheet.getByLabel(/^What needs fixing/).fill(repairTitle)
+    await sheet.getByLabel(/^What needs doing/).fill(repairTitle)
     await expect(sheet.getByRole('combobox', { name: /^Where/ })).toContainText(office.title)
     const eligible = await body<{ assignees: Array<{ id: string; name: string }> }>(await page.request.get(`/api/organizations/${ORGANIZATION}/tasks/maintenance-options`), 200)
     const fixer = eligible.assignees.find(person => person.id === actor.id)

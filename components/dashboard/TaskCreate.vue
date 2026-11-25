@@ -2,12 +2,10 @@
   <UModal v-model:open="open" :title="report ? 'New maintenance job' : 'Add a task'" data-testid="task-create">
     <template #body>
       <form id="task-create-form" class="space-y-4" @submit.prevent="save">
-        <UFormField v-if="!report" label="Type">
-          <USelect v-model="kind" :items="[{ value: 'custom', label: 'Task' }, { value: 'maintenance', label: 'Maintenance' }]" class="w-full" />
+        <UFormField label="What needs doing" required>
+          <UInput v-model="title" :maxlength="200" required class="w-full" placeholder="Describe the task" />
         </UFormField>
-        <UFormField :label="maintenance ? 'What needs fixing' : 'Task'" required>
-          <UInput v-model="title" :maxlength="200" required class="w-full" :placeholder="maintenance ? undefined : 'Service the AC'" />
-        </UFormField>
+        <UCheckbox v-if="!report" v-model="repair" label="This task is a repair" />
         <UFormField v-if="maintenance" label="Where" required>
           <USelect v-model="placeKey" :items="placeItems" :loading="!options && !failure" class="w-full" placeholder="Choose a listing or location" />
         </UFormField>
@@ -17,17 +15,12 @@
         <UFormField label="Due">
           <UInput v-model="due" type="date" class="w-full" />
         </UFormField>
-        <UFormField v-if="maintenance" label="Assigned" required>
-          <USelect v-model="assigneeKey" :items="(options?.assignees ?? []).map(person => ({ label: person.name, value: person.id }))" class="w-full" />
+        <UFormField label="Assigned" :required="maintenance">
+          <USelect v-model="assignedSelection" :items="assigneeItems" class="w-full" />
         </UFormField>
-        <template v-else>
-          <UFormField label="Assigned">
-            <USelect v-model="assigneeSelection" :items="assigneeItems" class="w-full" />
-          </UFormField>
-          <UFormField v-if="claimRole && (claimOptions?.listings.length ?? 0) > 1" label="Listing" required>
-            <USelect v-model="listingId" :items="(claimOptions?.listings ?? []).map(listing => ({ value: listing.listing_id, label: listing.label }))" class="w-full" />
-          </UFormField>
-        </template>
+        <UFormField v-if="claimRole && (claimOptions?.listings.length ?? 0) > 1" label="Listing" required>
+          <USelect v-model="listingId" :items="(claimOptions?.listings ?? []).map(listing => ({ value: listing.listing_id, label: listing.label }))" class="w-full" />
+        </UFormField>
         <p v-if="report" class="rounded-xl bg-elevated px-3 py-2 text-sm text-muted" data-testid="task-create-report">
           {{ report.guest }}’s message{{ report.photos ? ` and ${report.photos === 1 ? 'photo go' : `${report.photos} photos go`}` : ' goes' }} with the job.
         </p>
@@ -62,8 +55,8 @@ const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ created: [task: TaskView] }>()
 
 type Options = { places: MaintenancePlace[]; assignees: TaskPerson[] }
-const kind = ref<'custom' | 'maintenance'>('custom')
-const maintenance = computed(() => Boolean(props.report) || kind.value === 'maintenance')
+const repair = ref(false)
+const maintenance = computed(() => Boolean(props.report) || repair.value)
 const title = ref('')
 const notes = ref('')
 const due = ref('')
@@ -82,7 +75,12 @@ const failure = ref<string | null>(null)
 // One key per request, kept across retries of the same draft.
 const idempotencyKey = ref(crypto.randomUUID())
 const assignees = computed(() => props.assignees ?? [])
+const assignedSelection = computed({
+  get: () => maintenance.value ? assigneeKey.value : assigneeSelection.value,
+  set: (value: string) => { if (maintenance.value) assigneeKey.value = value; else assigneeSelection.value = value },
+})
 const assigneeItems = computed(() => {
+  if (maintenance.value) return (options.value?.assignees ?? []).map(person => ({ label: person.name, value: person.id }))
   const items: Array<{ label: string; value: string }> = [{ label: 'Unassigned', value: 'none' }]
   if (props.claimOptions?.roles.length) {
     for (const role of props.claimOptions.roles) {
@@ -106,7 +104,7 @@ const isOptions = (value: unknown): value is Options => isRecord(value) && Array
 watch(open, (isOpen) => {
   if (!isOpen) return
   title.value = ''; notes.value = ''; due.value = ''; failure.value = null
-  kind.value = props.report ? 'maintenance' : 'custom'
+  repair.value = Boolean(props.report)
   assigneeKey.value = assignees.value.find(person => person.you)?.id ?? 'none'
   const youMember = assignees.value.find(person => person.you)
   assigneeSelection.value = youMember ? `member:${youMember.id}` : 'none'
@@ -130,10 +128,9 @@ watch([open, maintenance], async ([isOpen, isMaintenance]) => {
   const loaded = options.value
   // From a conversation: the place it is about; the person creating it when they can do it.
   const report = props.report
-  const about = report && (loaded.places.find(candidate => candidate.product_id === report.product_id && candidate.location_id === report.location_id)
-    ?? (report.product_id ? loaded.places.find(candidate => candidate.product_id === report.product_id) : loaded.places.find(candidate => !candidate.product_id && candidate.location_id === report.location_id)))
+  const about = report && loaded.places.find(candidate => candidate.product_id === report.product_id && candidate.location_id === report.location_id)
   placeKey.value ??= about ? keyOf(about) : undefined
-  if (!loaded.assignees.some(person => person.id === assigneeKey.value)) assigneeKey.value = loaded.assignees.find(person => person.you)?.id ?? loaded.assignees[0]?.id ?? 'none'
+  if (!loaded.assignees.some(person => person.id === assigneeKey.value)) assigneeKey.value = loaded.assignees.find(person => person.you)?.id ?? 'none'
 }, { immediate: true })
 
 async function save() {

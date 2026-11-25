@@ -116,8 +116,9 @@ in Airbnb's order: when ("3:00 PM", "Oct 26 – 29"); the home's or offering's
 own picture, or a small round icon tile; one sentence with who and how many
 ("Eva's group of 4 checks in"); one line of where, with money for owners and
 admins; the two-line action. The heading uses the business's word ("You have 2
-reservations and 1 task"). Setup is not counted; with only setup left it reads
-"Finish setting up to take bookings", and empty, "Nothing needs you today".
+reservations and 1 task"). Suggestions are not counted. A missing first offering or required booking price
+reads "Finish setting up to take bookings"; otherwise a quiet day reads
+"Nothing needs you today". Online payment setup is optional.
 Desktop shows a centred grid of cards up to 380px wide; a phone, one column.
 
 A card opens its conversation: the guest's for a booking, the team's for a job.
@@ -125,12 +126,20 @@ A job has a one-tap Done; a request or change has Review. Photos and notes are
 messages. An added task has no conversation, and "Mark as done" closes it. A
 setup card opens the editor that finishes it. A member with no seat in the
 guest's conversation opens the booking. The header holds Today/Upcoming and a
-round + for Add task and, for stays, Add stay. The personal Today shows the
-buyer's agenda with `TodayAgendaCard`.
+round + for Add task and, for stays, Add stay. Add task starts with what needs
+doing and shares its due date and assignment controls; marking a task as a
+repair adds its place and preserves the repair conversation.
+
+When there is no operational work, Today and Upcoming offer up to three useful
+updates from the business's saved content: missing photos, descriptions, or a
+first social post. Each opens the existing editor and disappears when completed.
+The personal Today shows the buyer's agenda with `TodayAgendaCard`.
 
 ### Calendar
 
-Calendar cards read the same agenda and open beneath their day. On desktop the
+Calendar cards read the same agenda and open beneath their day. Previous and next
+day controls keep the location and filters. A business with one location opens
+that location; with several, the day view offers the location selector. On desktop, the
 agenda sits beside the record; below the pane breakpoint the record is one
 screen and Close returns to the same range and filters.
 

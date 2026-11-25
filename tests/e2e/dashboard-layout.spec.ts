@@ -34,6 +34,97 @@ test.describe('dashboard pane hierarchy', () => {
     await loginAs(page.request, baseURL!)
   })
 
+  test('a phone opens menu categories from the shared dish catalog without a second catalog read', async ({ page }, testInfo) => {
+    const tenant = seededTenant('restaurant')
+    await page.setViewportSize(PHONE)
+    await open(page, `/dashboard/${tenant.slug}/products/menu`)
+    const category = page.locator('a[href*="/products/menu/"]').filter({ hasText: 'Pizzas' }).first()
+    await expect(category).toBeVisible()
+    const catalogReads: string[] = []
+    page.on('request', request => {
+      if (new URL(request.url()).pathname === `/api/editor/organizations/${tenant.organizationId}/products`) catalogReads.push(request.url())
+    })
+    const started = Date.now()
+    await category.click()
+    const section = page.locator('#dashboard-panel-menu-section')
+    await expect(section.getByRole('heading', { name: 'Pizzas', exact: true })).toBeVisible()
+    await expect(section.getByRole('link').filter({ hasText: 'Margherita' })).toBeVisible()
+    await expect(section.getByRole('link').filter({ hasText: 'Pepperoni' })).toBeVisible()
+    expect(catalogReads).toEqual([])
+    await testInfo.attach('menu-navigation-timing', { body: JSON.stringify({ viewport: PHONE, elapsed_ms: Date.now() - started, catalog_reads: catalogReads }), contentType: 'application/json' })
+  })
+
+  test('a phone opens its sole location and moves between days across a month boundary', async ({ page }, testInfo) => {
+    const tenant = seededTenant('legal')
+    await page.setViewportSize(PHONE)
+    await open(page, `/dashboard/${tenant.slug}/calendar/2026-11-30?view=month`)
+    const day = page.locator('#dashboard-panel-calendar-day')
+    await expect(day.getByText('Raleigh Office', { exact: true })).toBeVisible()
+    await expect(page).toHaveURL(/location_id=/)
+    await expect(day.getByRole('button', { name: 'Block date', exact: true })).toBeVisible()
+    const scope = new URL(page.url()).searchParams.get('location_id')
+    await day.getByRole('link', { name: 'Next day', exact: true }).click()
+    await expect(day.getByRole('heading', { name: 'Tuesday, December 1', exact: true })).toBeVisible()
+    expect(new URL(page.url()).searchParams.get('location_id')).toBe(scope)
+    await day.getByRole('link', { name: 'Previous day', exact: true }).click()
+    await expect(day.getByRole('heading', { name: 'Monday, November 30', exact: true })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('calendar-phone.png'), fullPage: true })
+  })
+
+  test('an empty phone Posts screen offers existing social connections and a first post', async ({ page }, testInfo) => {
+    const tenant = seededTenant('restaurant')
+    await page.setViewportSize(PHONE)
+    await open(page, `/dashboard/${tenant.slug}/website/posts`)
+    const posts = page.locator('#dashboard-panel-organization-posts')
+    await expect(posts.getByRole('heading', { name: 'No posts yet', exact: true })).toBeVisible()
+    await expect(posts.getByRole('link', { name: 'Connect Facebook', exact: true })).toBeVisible()
+    await expect(posts.getByRole('link', { name: 'Connect Instagram', exact: true })).toBeVisible()
+    await expect(posts.getByTestId('posts-empty').getByRole('button', { name: 'Write a post', exact: true })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('posts-phone.png'), fullPage: true })
+  })
+
+  test('an unconnected business offers optional payment setup without an empty debt warning', async ({ page }) => {
+    const tenant = seededTenant('restaurant')
+    const balances = await page.request.get(`/api/dashboard/payments/unpaid?org=${tenant.slug}`)
+    expect(balances.status(), await balances.text()).toBe(200)
+    expect(await balances.json()).toEqual({ bookings: [] })
+    await page.setViewportSize(PHONE)
+    await open(page, `/dashboard/${tenant.slug}/payments`)
+    const payments = page.locator('#dashboard-panel-organization-payments')
+    await expect(payments.getByRole('link', { name: /Accept online payments/ })).toBeVisible()
+    await expect(payments.getByText('Loading payments to collect…', { exact: true })).toHaveCount(0)
+    await expect(payments.getByRole('link', { name: /Payments to collect|Unpaid/ })).toHaveCount(0)
+    await expect(payments.getByText('Nobody owes you money', { exact: true })).toHaveCount(0)
+  })
+
+  test('automatic messages use the vertical’s words and show an exact hour offset', async ({ page }) => {
+    const restaurant = seededTenant('restaurant')
+    await page.setViewportSize(PHONE)
+    await open(page, `/dashboard/${restaurant.slug}/messages/automatic/new`)
+    const editor = page.locator('#dashboard-panel-new-automatic-message')
+    await expect(editor.getByRole('button', { name: 'Tables', exact: true })).toBeVisible()
+    await editor.getByRole('combobox', { name: 'Timing', exact: true }).click()
+    await page.getByRole('option', { name: '1 hour before', exact: true }).click()
+    await expect(editor.getByText('1 hour before the reservation starts', { exact: true })).toBeVisible()
+  })
+
+  test('task creation uses one form and team messaging names its recipients', async ({ page }) => {
+    const tenant = seededTenant('restaurant')
+    await page.setViewportSize(PHONE)
+    await open(page, `/dashboard/${tenant.slug}`)
+    await page.getByRole('button', { name: 'Add task', exact: true }).click()
+    const task = page.getByRole('dialog', { name: 'Add a task', exact: true })
+    await expect(task.getByLabel(/^What needs doing/)).toBeVisible()
+    await task.getByRole('checkbox', { name: 'This task is a repair', exact: true }).check()
+    await expect(task.getByRole('combobox', { name: /^Where/ })).toBeVisible()
+    await expect(task.getByRole('combobox', { name: /^Assigned/ })).toHaveCount(1)
+    await task.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await open(page, `/dashboard/${tenant.slug}/messages/new`)
+    const conversation = page.locator('#dashboard-panel-new-team-conversation')
+    await expect(conversation.getByRole('heading', { name: 'Message your team', exact: true })).toBeVisible()
+    await expect(conversation.getByText('Start a conversation with someone already on your team. Guest messages appear with their enquiries and bookings.', { exact: true })).toBeVisible()
+  })
+
   // A service is a Product and the page that shows it: Catalog's Add opens the
   // shared creation form, and Create writes both, bound, through one request.
   test('Catalog adds a service with its page through the one Product editor', async ({ page, baseURL, playwright }) => {

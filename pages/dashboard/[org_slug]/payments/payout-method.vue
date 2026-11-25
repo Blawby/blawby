@@ -6,7 +6,7 @@
     <p v-if="connectPending" role="status" class="text-muted">Loading payout settings…</p>
 
     <p v-if="needsCountry && !connectError && !connectPending && countriesPending" role="status" class="text-muted">Loading countries…</p>
-    <UFormField v-else-if="needsCountry && !connectError && !connectPending" label="Business country" description="Where your business is legally established.">
+    <UFormField v-else-if="needsCountry && !connectError && !connectPending" label="Business country" description="Where your business is legally established. Only countries supported for Stripe online payment setup are listed.">
       <CountrySelect v-model="country" :items="countries" class="w-full" placeholder="Choose a country" />
     </UFormField>
 

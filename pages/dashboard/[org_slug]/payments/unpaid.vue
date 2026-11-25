@@ -4,10 +4,10 @@
     what it is for, since when, and how much. A row opens the booking's
     conversation, where the host asks; nothing here sends a reminder.
   -->
-  <DashboardLeafPanel id="organization-unpaid" title="Unpaid" lead="Rent past its due day, stays that began unpaid, and deposits or retainers not received. Airbnb and other channels collect their own." :footer="false">
+  <DashboardLeafPanel id="organization-unpaid" title="Payments to collect" lead="Rent past its due day, stays that began unpaid, and deposits or retainers not received. Airbnb and other channels collect their own." :footer="false">
     <UAlert v-if="unpaidError" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(unpaidError, 'Unpaid bookings could not be loaded')" />
     <p v-else-if="unpaidPending" role="status" class="text-muted">Loading…</p>
-    <UEmpty v-else-if="!unpaid?.length" icon="i-lucide-circle-check" title="Nobody owes you money" description="A booking appears here once a payment it owes is overdue." />
+    <UEmpty v-else-if="!unpaid?.length" icon="i-lucide-circle-check" title="No overdue payments" description="A booking appears here once a payment it owes is overdue." />
     <div v-else class="space-y-6" data-testid="unpaid-bookings">
       <NuxtLink v-for="row in unpaid" :key="row.booking_id" :to="bookingConversationOrRecordPath(slug, row.booking_id, row.conversation_id)" class="flex items-center gap-4" :data-testid="`unpaid-${row.booking_id}`">
         <span class="flex size-12 shrink-0 items-center justify-center rounded-full bg-elevated">

@@ -255,6 +255,8 @@ export interface CalendarLocation {
 export const calendarDayKey = Symbol('calendar-day') as InjectionKey<{
   location: Ref<CalendarLocation | null | undefined>
   refreshLocation: () => Promise<void>
+  locations: ComputedRef<{ label: string; value: string }[]>
+  locationError: Ref<unknown>
   read: (date: string) => { items: CalendarItem[]; status: 'loading' | 'ready' | 'error'; error: unknown }
 }>
 
@@ -595,6 +597,8 @@ const level = useRouteLevel()
 const openDay = computed(() => typeof route.params.day === 'string' ? route.params.day : null)
 provide(calendarDayKey, {
   location: chosenLocation,
+  locations: computed(() => locationItems.value.filter(item => item.value !== AGENDA_FILTER_ALL)),
+  locationError,
   refreshLocation,
   read(date) {
     const block = calendarData.value.get(dayReadKey(date)) ?? EMPTY_MONTH
@@ -765,6 +769,11 @@ watch([view, monthKey, shownYear], () => {
   void router.replace({ query: { ...route.query, view: view.value === 'month' ? undefined : view.value, month: monthKey.value === monthKeyOf(todayDate) ? undefined : monthKey.value, from: gridView.value ? route.query.from : undefined } })
   void ensureLoaded(neededKeys())
 })
+
+// A business with exactly one location has one explicit calendar scope.
+watch(locations, (places) => {
+  if (!props.personalScope && !sessionProduct.value && places.length === 1 && filters.locationId === AGENDA_FILTER_ALL) filters.locationId = places[0]!.id
+}, { immediate: true })
 
 // The filters own their place in the URL; the months reload for the new answer.
 watch(filterSignature, () => {

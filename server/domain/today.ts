@@ -90,7 +90,7 @@ export function prepareToday(db: DbClient, input: TodayReadInput & ({ userId: st
     withViewer(membership, { query: `SELECT b.id, ${turnoverBeforeSql('b')} AS turnover FROM bookings b
       WHERE b.organization_id = ${org} AND b.product_session_id IS NULL AND b.status = 'confirmed' AND b.starts_at <= ? AND b.ends_at >= ?`, params: [wideTo, wideFrom] }),
     // The setup the business has not finished is Today's, after the day's cards.
-    ...setupQueries(range === 'today' ? management : { sql: 'NULL' }, { now }).map(query => withViewer(membership, query)),
+    ...setupQueries(management, { now }).map(query => withViewer(membership, query)),
     withViewer(membership, taskAssigneesQuery(managed)),
     ...(staffAccessWrites ? [withViewer(membership, staffListingsQuery(managed.sql, '(SELECT vertical FROM viewer)'))] : []),
   ]
@@ -99,7 +99,7 @@ export function prepareToday(db: DbClient, input: TodayReadInput & ({ userId: st
 
 async function presentToday(
   db: DbClient,
-  [viewerResult, recordResult, workResult, unpaidResult, productResult, locationResult, welcomeResult, readinessResult, factResult, unpricedResult, assigneeResult, listingResult]: D1Result[],
+  [viewerResult, recordResult, workResult, unpaidResult, productResult, locationResult, welcomeResult, readinessResult, factResult, unpricedResult, improvementResult, assigneeResult, listingResult]: D1Result[],
   input: TodayReadInput,
 ) {
   const { range, now, native, staffAccessWrites = true } = input
@@ -380,7 +380,9 @@ async function presentToday(
   }
 
   // The business's unfinished setup, after the day's cards: each opens the editor or settings that finishes it.
-  const opportunities = setupViews(factResult!.results, unpricedResult!.results)?.opportunities ?? []
+  const quiet = cards.length === 0
+  const suggestions = setupViews(factResult!.results, unpricedResult!.results, quiet ? improvementResult!.results : [])?.opportunities ?? []
+  const opportunities = (range === 'today' || quiet ? suggestions : []).filter(step => quiet || step.id.startsWith('payments.connect:') || step.id.startsWith('product.create:') || step.id.startsWith('product.readiness:')).slice(0, 3)
   for (const [index, step] of opportunities.entries()) {
     add({ id: step.id, noun: 'setup', order: [2, String(index).padStart(4, '0')], bookings: [], day: '', when: null, image_url: null, icon: step.icon,
       headline: step.title, line: null, action: { title: step.detail.replace(/\.$/, ''), detail: step.status_line }, to: step.path, draft: null })
@@ -432,7 +434,7 @@ async function presentToday(
  */
 function heading(cards: Card[], range: Range): string {
   const counted = cards.filter(card => card.noun !== 'setup')
-  if (!counted.length) return cards.length ? 'Finish setting up to take bookings' : range === 'today' ? 'Nothing needs you today' : 'Nothing needs you in the coming days'
+  if (!counted.length) return cards.some(card => /^(product.create|product.readiness):/.test(card.id)) ? 'Finish setting up to take bookings' : range === 'today' ? 'Nothing needs you today' : 'Nothing needs you in the coming days'
   const parts = (Object.keys(NOUNS) as Noun[]).filter(noun => noun !== 'setup').flatMap((noun) => {
     const count = cards.filter(card => card.noun === noun).length
     return count ? [`${count} ${range === 'upcoming' ? 'upcoming ' : ''}${NOUNS[noun][count === 1 ? 0 : 1]}`] : []

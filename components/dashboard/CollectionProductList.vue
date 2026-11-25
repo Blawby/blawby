@@ -68,6 +68,7 @@
     </DashboardListItemDialog>
 
     <CollectionMoveDialog
+      v-if="moveDialogOpen"
       v-model:open="moveDialogOpen"
       v-model:saving="moving"
       :organization-id="organizationId"

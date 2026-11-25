@@ -8,14 +8,14 @@ const HOST_ID = 'user-e2e-pottery-location-owner'
 // with a daily wheel class hosted by one teacher. The studio never closes, so
 // its class times are always in hours.
 export async function seedExperience(createTenant: CreateTenant): Promise<SeedTenant> {
-  const { owner, tenant } = await createTenant({
+  const { owner, tenant, location_id } = await createTenant({
     key: 'experience', name: 'Clayhouse Studio', slug: 'clayhouse-studio', subdomain: SEED_SUBDOMAINS.experience,
     vertical: 'experience', currency: 'THB', timezone: 'Asia/Bangkok', subscription: 'growth',
   })
   try {
     const tool = toolFor(owner, tenant)
     const address = (street: string) => ({ regionCode: 'TH', addressLines: [street], locality: 'Krabi', administrativeArea: 'Krabi', postalCode: '81000' })
-    const aoNang = await seedLocation(tool, tenant, 'ao-nang', { title: 'Ao Nang Studio', email: 'aonang@clayhouse.example', phone: '+66812345678', hours: alwaysOpen(), address: address('12 Ao Nang Road') })
+    const aoNang = await seedLocation(tool, tenant, 'ao-nang', { title: 'Ao Nang Studio', email: 'aonang@clayhouse.example', phone: '+66812345678', hours: alwaysOpen(), address: address('12 Ao Nang Road') }, location_id)
 
     const hostMemberId = tenant.memberIds[HOST_ID]
     if (!hostMemberId) throw new Error('The Clayhouse host is not a member')

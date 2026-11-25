@@ -6,23 +6,26 @@
     </template>
     <template v-if="!concern || concern === 'schedule'">
       <UFormField label="When to send"><USelect :model-value="trigger" :items="triggers" class="w-full" :disabled="!editor.manage.value || editor.saving.value || !triggers.length" @update:model-value="setTrigger" /></UFormField>
-        <UAlert v-if="editor.offeringsError.value" color="error" title="Offerings could not be loaded" :description="editor.offeringsError.value" />
-        <UFormField :label="homesOnly ? 'Homes' : 'Offerings'"><USelectMenu v-model="selected" :items="offeringItems" value-key="value" multiple :placeholder="homesOnly ? 'Select homes' : 'Select offerings'" class="w-full" :disabled="!editor.manage.value || editor.saving.value || !!editor.offeringsError.value" /></UFormField>
+        <UAlert v-if="editor.offeringsError.value" color="error" :title="`${scopeLabel} could not be loaded`" :description="editor.offeringsError.value" />
+        <UFormField :label="scopeLabel"><USelectMenu v-model="selected" :items="offeringItems" value-key="value" multiple :placeholder="`Select ${scopeLabel.toLowerCase()}`" class="w-full" :disabled="!editor.manage.value || editor.saving.value || !!editor.offeringsError.value" /></UFormField>
         <template v-if="editor.draft.value.schedule.trigger !== 'booking_received'">
-          <UFormField label="Day"><USelect :model-value="offset ?? undefined" :items="offsets" class="w-full" :disabled="!editor.manage.value || editor.saving.value" @update:model-value="setOffset" /></UFormField>
+          <UFormField label="Timing"><USelect :model-value="offset ?? undefined" :items="offsets" class="w-full" :disabled="!editor.manage.value || editor.saving.value" @update:model-value="setOffset" /></UFormField>
           <UFormField v-if="'local_time' in editor.draft.value.schedule" label="Local time"><UInput v-model="editor.draft.value.schedule.local_time" type="time" class="w-full" :disabled="!editor.manage.value || editor.saving.value" /></UFormField>
         </template>
+        <p class="text-sm text-muted" role="status">{{ messageScheduleLabel(schedule, editor.vertical.value) }}</p>
         <p class="text-sm text-muted"><template v-if="homesOnly">New-reservation messages apply to new reservations, including Airbnb bookings received as they happen. Imported reservations do not trigger new-reservation messages. Every confirmed stay is also sent its home’s check-in instructions the day before arrival. </template>Failed messages remain visible for review.</p>
     </template>
   </div>
 </template>
 <script setup lang="ts">
+import { messageScheduleLabel, scheduleVocabulary } from '~/utils/message-schedule-presentation'
 import { automaticMessageEditorKey } from './AutomaticMessageEditorPage.vue'
 import type { GuestMessageSchedule } from '~/lib/components/workspace/messages/guest-messaging-client'
 import { resolveBookingPresentation } from '~/utils/booking-presentation'
 import { EXPERIENCE_PRESENTATION } from '~/utils/product-presentation'
 defineProps<{ concern?: 'content' | 'schedule' }>()
 const editor = inject(automaticMessageEditorKey)!
+const scopeLabel = computed(() => scheduleVocabulary(editor.vertical.value).scope)
 const schedule = computed(() => editor.draft.value.schedule)
 const trigger = computed(() => schedule.value.trigger)
 // Every offering the workspace takes bookings for; a list of homes alone keeps the homes' words.

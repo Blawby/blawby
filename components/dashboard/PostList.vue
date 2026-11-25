@@ -19,6 +19,21 @@
         <DashboardFilterPills id="post-filter" v-model="activeTab" label="Post status" :items="postTabs" />
       </template>
 
+      <template #empty>
+        <UEmpty data-testid="posts-empty" :title="activeTab === 'all' ? 'No posts yet' : activeTab === 'draft' ? 'No drafts' : 'No live posts'" icon="i-lucide-file-text" description="Write a post to share news, photos, or an upcoming event.">
+          <template #actions>
+            <UButton label="Write a post" color="neutral" @click="openNew" />
+          </template>
+        </UEmpty>
+        <p v-if="connectionStatus === 'pending'" role="status" class="mt-4 text-sm text-muted">Reading social accounts…</p>
+        <UAlert v-else-if="connectionError" class="mt-4" color="error" title="Social accounts could not be read" :description="getErrorMessage(connectionError, 'Connections could not be loaded')" />
+        <div v-else-if="unconnectedChannels.length" class="mt-6 space-y-4 text-center">
+          <p class="text-sm text-muted">Connect your social accounts to publish posts from here.</p>
+          <div class="flex flex-wrap justify-center gap-3">
+            <UButton v-for="channel in unconnectedChannels" :key="channel.channel" :to="channel.connect_url" :label="`Connect ${channel.channel === 'facebook' ? 'Facebook' : 'Instagram'}`" color="neutral" variant="soft" />
+          </div>
+        </div>
+      </template>
       <template #item="{ item }">
         <span class="flex w-full items-start gap-4 text-left py-1" :data-testid="`post-${item.id}`">
           <!-- The picture leads -->
@@ -72,7 +87,7 @@
 <script setup lang="ts">
 import { formatTimestamp } from '~/utils/timezone'
 import DashboardListEditor from '~/components/dashboard/DashboardListEditor.vue'
-import { normalizePostMediaForForm, postListKey, usePostEditor } from '~/composables/usePostEditor'
+import { normalizePostMediaForForm, postListKey, usePostEditor, usePostConnections } from '~/composables/usePostEditor'
 import { getErrorMessage } from '~/utils/errors'
 
 // The posts index: every post the organization has, or one location's when the
@@ -215,4 +230,6 @@ async function removePost(item: { id: string }) {
     removingId.value = null
   }
 }
+const { data: connections, error: connectionError, status: connectionStatus } = usePostConnections(organizationId, locationId, () => status.value === 'success' && !listItems.value.length)
+const unconnectedChannels = computed(() => connections.value?.channels.filter(channel => (channel.channel === 'facebook' || channel.channel === 'instagram') && !channel.connected) ?? [])
 </script>

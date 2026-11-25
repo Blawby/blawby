@@ -191,7 +191,7 @@ export async function dashboardBookingDetails(event: H3Event, record?: { orgSlug
   return { booking: { ...nightBooking(stay), available_actions, pending_changes, ...agreementOf() }, manage: true, home: { ...home, image_url: home.photo_urls[0] ?? null }, can_message_guest: canMessageGuest }
 }
 
-interface BookingListQuery { unit?: unknown; from?: unknown; to?: unknown; product_id?: unknown; include_cancelled?: unknown }
+interface BookingListQuery { location_id?: unknown; unit?: unknown; from?: unknown; to?: unknown; product_id?: unknown; include_cancelled?: unknown }
 
 function bookingListWindow(query: BookingListQuery) {
   const { unit, from, to, product_id: productId } = query
@@ -200,7 +200,9 @@ function bookingListWindow(query: BookingListQuery) {
     throw new HTTPError({ statusCode: 422, message: 'Choose calendar dates with to after from' })
   }
   if (productId !== undefined && (typeof productId !== 'string' || !productId)) throw new HTTPError({ statusCode: 422, message: 'Invalid product ID' })
-  return { unit, from, to, productId, includeCancelled: query.include_cancelled === 'true' }
+  const locationId = query.location_id
+  if (locationId !== undefined && (typeof locationId !== 'string' || !locationId.trim())) throw new HTTPError({ statusCode: 422, message: 'Choose a valid location', data: { code: 'INVALID_BOOKING_FILTER', field: 'location_id' } })
+  return { unit, from, to, productId, locationId, includeCancelled: query.include_cancelled === 'true' }
 }
 
 type BookingWindow = ReturnType<typeof bookingListWindow>
@@ -219,7 +221,7 @@ function timedBookings(records: BookedRecordInRange[], { productId, from, to }: 
 /** The booked records of the window the caller may see, in one statement: a member's are those of the offerings and homes they are named on. */
 async function readBookedRecords({ db, organization, userId }: DashboardBookingsContext, window: BookingWindow) {
   const [records] = await executeBatch(db, [withViewer(membershipBySlugQuery(organization.slug, userId), bookedRecordsInRange(BATCH_VIEWER, { ...window, cancelled: window.includeCancelled, includeAssignedStays: true, includePayments: true }))], { operation: 'Read booked records' })
-  return (records!.results as BookedRecordInRange[])
+  return (records!.results as BookedRecordInRange[]).filter(record => !window.locationId || record.location_id === window.locationId)
 }
 
 export async function dashboardBookingList(event: H3Event, query: BookingListQuery) {

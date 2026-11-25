@@ -18,6 +18,7 @@ import { addLocalDays, localDateAt, localDateTimeToInstant } from '../../utils/t
 import type { BusinessToday, TodayItem } from '../../shared/dashboard-today.ts'
 import type { OpportunityView } from '../../server/domain/opportunities.ts'
 import todayRoute from '../../server/api/dashboard/today.get.ts'
+import bookingsRoute from '../../server/api/dashboard/bookings/index.get.ts'
 import { applySchema } from './support/schema.ts'
 
 // Today's cards are the business's own bookings, read from the stored booked
@@ -73,6 +74,7 @@ async function boot() {
   const cookie = [...new Map(signed.headers.getSetCookie().map(value => { const pair = value.split(';')[0]!; return [pair.slice(0, pair.indexOf('=')), pair] })).values()].join('; ')
   const app = new H3()
   app.get('/api/dashboard/today', todayRoute)
+  app.get('/api/dashboard/bookings', bookingsRoute)
   const today = async (org: Org, range: 'today' | 'upcoming', native = false): Promise<Today> => {
     const headers = new Headers({ origin: 'https://proof.example' })
     if (native) headers.set('authorization', `Bearer ${token}`)
@@ -82,7 +84,7 @@ async function boot() {
     assert.equal(response.status, 200, await response.clone().text())
     return await response.json() as Today
   }
-  return { runtime, db, env, events, event: () => new H3Event(request()), today }
+  return { runtime, db, env, events, app, token, event: () => new H3Event(request()), today }
 }
 
 /** A scheduled offering at the organization's site, with a session on `day` at 10:00. */
@@ -107,7 +109,7 @@ async function offering(db: D1Database, env: CloudflareEnv, org: Org, input: { k
 const operator = (key: string) => ({ userId: OWNER, idempotencyKey: key, source: 'operator', externalReference: null, guestAcknowledgement: false })
 
 test('Today shows every booking type as one card for its own business, with the welcome as its action only where it applies', { timeout: 180_000 }, async () => {
-  const { runtime, db, env, events, event, today } = await boot()
+  const { runtime, db, env, events, app, token, event, today } = await boot()
   try {
     const nativeToday = await today('bistro', 'today', true)
     assert.ok(nativeToday.website)
@@ -115,12 +117,12 @@ test('Today shows every booking type as one card for its own business, with the 
     assert.equal(nativeToday.website.action.type, 'visit')
     assert.equal(nativeToday.website.action.to, 'https://bistro.proof.example/?view=public')
     assert.ok(new URL(nativeToday.website.preview_url).searchParams.get('preview_token'))
-    assert.deepEqual(nativeToday.opportunities?.map(step => step.title), ['Set up payments', 'Add your first dish'])
+    assert.deepEqual(nativeToday.opportunities?.map(step => step.title), ['Set up payments', 'Add your first dish', 'Add photos of “bistro office”'])
     assert.deepEqual(nativeToday.opportunity_issues, [])
     const nativeUpcoming = await today('bistro', 'upcoming', true)
     assert.equal(nativeUpcoming.website, null)
     assert.deepEqual(nativeUpcoming.tasks, [])
-    assert.deepEqual(nativeUpcoming.opportunities, [])
+    assert.deepEqual(nativeUpcoming.opportunities?.map(step => step.title), ['Set up payments', 'Add your first dish', 'Add photos of “bistro office”'])
     assert.equal((await today('bistro', 'today')).website, undefined)
 
     const localToday = localDateAt(new Date(), ZONE)
@@ -167,6 +169,16 @@ test('Today shows every booking type as one card for its own business, with the 
       body: { guest_name: 'Nora Park', guest_email: 'nora@proof.example', guest_phone: '+66812345679', product_session_id: seating!.id, party_size: 4 } })
     assert.equal(table.status, 201, JSON.stringify(table.body))
 
+    // The native calendar's explicit location filter reads the same persisted booking.
+    for (const [location, expected] of [['bistro-site', [table.body.booking_id]], ['law-site', []]] as const) {
+      const response = await app.request(Object.assign(new Request(`https://proof.example/api/dashboard/bookings?org=bistro&from=${inTwoDays}&to=${inThreeDays}&location_id=${location}`, {
+        headers: { authorization: `Bearer ${token}` },
+      }), { runtime: { name: 'cloudflare', cloudflare: { env } } }))
+      assert.equal(response.status, 200, await response.clone().text())
+      const result = await response.json() as { bookings: Array<{ booking_id: string }> }
+      assert.deepEqual(result.bookings.map(booking => booking.booking_id), expected)
+    }
+
     const law = await today('law', 'upcoming'), studio = await today('studio', 'upcoming'), inn = await today('inn', 'upcoming'), bistro = await today('bistro', 'upcoming')
     const shape = (card: TodayItem) => ({ id: card.id, headline: card.headline, line: card.line, action: card.action, to: card.to })
     const visit = (instant: string) => `${new Intl.DateTimeFormat('en', { timeZone: ZONE, weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(instant))} · ${new Intl.DateTimeFormat('en', { timeZone: ZONE, hour: 'numeric', minute: '2-digit' }).format(new Date(instant))}`
@@ -209,8 +221,13 @@ test('Today shows every booking type as one card for its own business, with the 
       const { title, cards } = await today(org, 'today')
       // The bistro's tables are not a menu: it still has its first dish to add.
       const dish = org === 'bistro' ? [['product.create:bistro', 'Add your first dish', 'Start your menu', '/dashboard/bistro/products/new?kind=dish']] : []
+      const photoProducts = org === 'law' ? [estate.product] : org === 'studio' ? [pottery.product] : org === 'inn' ? [home] : []
+      const photos = [
+        [`business_location.photo:${org}-site`, `Add photos of “${org} office”`, 'Help people see what to expect', `/dashboard/${org}/locations/main/photos`],
+        ...photoProducts.map(product => [`product.photo:${product.id}`, `Add photos of “${product.name}”`, 'Help people see what to expect', `/dashboard/${org}/products/${product.id}/photo`]),
+      ]
       assert.deepEqual({ title, cards: cards.map(card => [card.id, card.headline, card.action.title, card.to]) },
-        { title: 'Finish setting up to take bookings', cards: [[`payments.connect:${org}`, 'Set up payments', 'Connect with Stripe', `/dashboard/${org}/payments/payout-method`], ...dish] })
+        { title: org === 'bistro' ? 'Finish setting up to take bookings' : 'Nothing needs you today', cards: [[`payments.connect:${org}`, 'Set up payments', 'Connect with Stripe', `/dashboard/${org}/payments/payout-method`], ...dish, ...photos].slice(0, 3) })
     }
 
     // The message is written from the offering's and the home's own fields, and the conversation opens with it.

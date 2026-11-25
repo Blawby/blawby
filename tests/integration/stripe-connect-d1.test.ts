@@ -198,6 +198,10 @@ test('Today suggests Stripe setup until the account is ready, and a price for ea
       assert.equal((await call('', { cookie })).status, 403)
       assert.equal((await call('', app_, { return_to: 'web' })).status, 422)
       assert.equal(created, false)
+      const unsupported = await call('', app_, { country: 'VN', return_to: 'app' })
+      assert.equal(unsupported.status, 422)
+      assert.deepEqual(unsupported.body.data, { code: 'STRIPE_COUNTRY_UNSUPPORTED', field: 'country' })
+      assert.equal(created, false, 'An unsupported country is rejected before Stripe account creation')
       const starting = call('', app_, { country: 'US', return_to: 'app' })
       await createStarted
       // A second Add payout method while Stripe is still creating the account is refused in words, not with Stripe's idempotency error.

@@ -62,6 +62,6 @@ test('physical product media, variant SEO and mobile cart quantities work throug
   await expect(cartQuantity).toHaveValue('1')
   await expect(cartQuantity).not.toBeFocused()
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.screenshot({ path: test.info().outputPath('mobile-cart.png'), fullPage: true })
+  await page.screenshot({ path: test.info().outputPath('mobile-cart.png') })
   expect(errors).toEqual([])
 })

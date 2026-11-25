@@ -1168,7 +1168,7 @@ const itemStructuredData = computed(() => {
     url.searchParams.set('variant', variant.id)
     const price = selectPrice(variant.prices, { currency: props.currency, location_id: props.location?.id ?? null, at: new Date().toISOString() })
     const locations = props.product.locations.filter(entry => entry.active && (props.location === null || entry.location_id === props.location.id))
-    const stock = variant.inventory_levels.filter(level => locations.some(location => location.location_id === level.location_id)).reduce((sum, level) => sum + level.available, 0)
+    const stock = Math.max(0, ...variant.inventory_levels.filter(level => locations.some(location => location.location_id === level.location_id)).map(level => level.available))
     const image = props.product.media.find(asset => asset.asset_id === variant.media_asset_id && asset.kind === 'image')
     return {
       '@type': 'Product',

@@ -829,5 +829,7 @@
   "checkout_state.start_again": "最初からやり直す",
   "checkout_state.sign_in": "ログイン",
   "checkout_state.unavailable_help": "リンクが不完全か、別のアカウントのものである可能性があります。",
-  "checkout_state.back_to": "{business} に戻る"
+  "checkout_state.back_to": "{business} に戻る",
+  "shop.recently_viewed": "最近見た商品",
+  "shop.recently_viewed_failed": "最近見た商品を読み込めませんでした。"
 }

@@ -7,6 +7,12 @@
  */
 import { z } from 'zod'
 
+export const cartLinesSchema = z.array(z.object({
+  product_variant_id: z.string().min(1),
+  quantity: z.number().int().min(1).max(99),
+}).strict()).max(50).refine(lines => new Set(lines.map(line => line.product_variant_id)).size === lines.length, 'Each cart variant must appear once')
+export type CartLine = z.infer<typeof cartLinesSchema>[number]
+
 export const PRODUCT_OPTION_LIMITS = { options: 3, values: 100, name: 50, value: 100, variants: 100 } as const
 export const INVENTORY_POLICIES = ['deny', 'continue'] as const
 export type InventoryPolicy = typeof INVENTORY_POLICIES[number]

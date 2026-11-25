@@ -5,8 +5,12 @@ import { loadPublicProductApiCollection } from '~/server/utils/public-products'
 import { getSourceLocale } from '~/server/utils/organization-locales'
 import { assertExactCanonicalLocale } from '~/server/utils/localization'
 import { loadExactPublicLocalizations, projectExactLocalizedCollection } from '~/server/utils/public-localization'
-import { defineHandler } from 'nitro'
-import { getQuery } from 'nitro/h3'
+import { defineHandler, HTTPError } from 'nitro'
+import { getQuery, setResponseHeader } from 'nitro/h3'
+import { readAnalyticsConsent } from '~/utils/zaraz-consent'
+import { prepareRecentlyViewedProducts } from '~/server/utils/public-tenant-pages'
+import { finalizeRequestMetrics } from '~/server/utils/request-metrics'
+import { executeBatch } from '~/server/db'
 
 export default defineHandler(async (event) => {
   const organizationId = event.context.organizationId as string | null | undefined
@@ -19,6 +23,15 @@ export default defineHandler(async (event) => {
     const db = env.DB
     if (!db) return jsonResponse({ error: 'Database unavailable' }, { status: 503 })
     const locale = getQuery(event).locale === undefined ? undefined : assertExactCanonicalLocale(getQuery(event).locale)
+    if (getQuery(event).recently_viewed === 'true') {
+      setResponseHeader(event, 'cache-control', 'private, no-store')
+      if (!locale) throw new HTTPError({ statusCode: 400, statusMessage: 'Recently viewed products require an explicit locale' })
+      if (readAnalyticsConsent(event.req.headers.get('cookie') ?? '') !== 'accepted') return jsonResponse(finalizeRequestMetrics(event, 'recently-viewed-products', { items: [] }))
+      const prepared = event.context.recentlyViewedProducts as { plan: ReturnType<typeof prepareRecentlyViewedProducts>; rows: D1Result[] } | undefined
+      const plan = prepared?.plan ?? prepareRecentlyViewedProducts(organizationId, getQuery(event), event.req.headers.get('cookie') ?? '')
+      const rows = prepared?.rows ?? await executeBatch(db, plan.queries, { operation: 'Read recently viewed products' })
+      return jsonResponse(finalizeRequestMetrics(event, 'recently-viewed-products', await plan.read(rows, db, env)))
+    }
     const previewAuthorized = await resolvePreviewAuthorization(event, organizationId, previewSecretOf(env))
     if (getQuery(event).online === 'true') {
       const result = await listPublicOnlineProducts(db, organizationId, previewAuthorized, env)

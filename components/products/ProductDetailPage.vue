@@ -385,19 +385,8 @@
       </div>
 
       <div v-else class="rounded-2xl bg-elevated p-6 sm:p-10 lg:p-12">
-        <div :class="product.image?.public_url ? ['grid gap-10 items-start', product.kind === 'item' ? 'lg:grid-cols-[minmax(0,1.85fr)_minmax(0,1fr)] lg:gap-12' : 'lg:grid-cols-2'] : 'max-w-3xl'">
-          <!-- An item's photos are its media column, as Shopify's Dawn lays them: the chosen variant's photo first, the rest two across beneath it. -->
-          <div v-if="shownImage?.public_url" :class="product.kind === 'item' ? 'grid grid-cols-2 gap-3' : undefined">
-            <img
-              :src="shownImage.public_url"
-              :alt="shownImage.alt_text || product.name"
-              class="aspect-square w-full rounded-2xl object-cover"
-              :class="product.kind === 'item' ? 'col-span-2' : undefined"
-            >
-            <template v-if="product.kind === 'item'">
-              <img v-for="asset in otherImages" :key="asset.asset_id" :src="asset.public_url" :alt="asset.alt_text || product.name" class="aspect-square w-full rounded-2xl object-cover">
-            </template>
-          </div>
+        <div :class="galleryItems.length ? ['grid min-w-0 gap-10 items-start', product.kind === 'item' ? 'lg:grid-cols-[minmax(0,1.85fr)_minmax(0,1fr)] lg:gap-12' : 'lg:grid-cols-2'] : 'max-w-3xl'">
+          <MediaGallery v-if="galleryItems.length" ref="mediaGallery" :items="galleryItems" :title="displayTitle" class="min-w-0" />
           <div class="py-2" :class="product.kind === 'item' ? 'lg:sticky lg:top-24' : undefined">
             <p class="tenant-kicker">{{ collectionName }}</p>
             <h1 class="tenant-display tenant-italic mt-3 text-3xl sm:text-4xl lg:text-5xl text-default leading-tight">{{ product.name }}</h1>
@@ -460,21 +449,6 @@
         </ul>
       </section>
 
-      <!-- The bookable layout already shows every photograph in its gallery;
-           this strip is the card layout's only place for them. -->
-      <section v-if="!booking && !isStay && product.kind !== 'item' && product.gallery.length" class="mt-16">
-        <h2 class="tenant-display tenant-italic text-4xl">{{ t('site.footer.gallery') }}</h2>
-        <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <img
-            v-for="asset in product.gallery"
-            :key="asset.asset_id"
-            :src="asset.public_url"
-            :alt="asset.alt_text || product.name"
-            class="aspect-square w-full rounded-xl object-cover"
-          >
-        </div>
-      </section>
-
       <!-- One booking surface, mounted outside the card so the mobile sheet and
            the desktop button open the same thing. -->
       <BookingModal
@@ -512,6 +486,10 @@
       </section>
     </article>
     <slot name="content" :can-book="canBook" />
+    <TenantProductGridBlock
+      v-if="!pageDocument?.blocks.some(block => block.type === 'product_grid' && block.data.source === 'recently_viewed')"
+      recently-viewed :exclude-product-id="product.id"
+    />
   </div>
 </template>
 
@@ -736,13 +714,8 @@ const compareAtLabel = computed(() => {
 /** The options a customer can actually choose. A retired variant is not one. */
 const sellableVariants = computed(() => props.product.variants.filter(variant => variant.active !== false))
 /** A physical item shows the chosen variant's own photo, as Shopify's product gallery does. */
-const chosenVariantId = ref<string | null>(null)
-const shownImage = computed(() => {
-  const assetId = props.product.variants.find(variant => variant.id === chosenVariantId.value)?.media_asset_id
-  return (assetId ? [props.product.image, ...props.product.gallery].find(image => image?.asset_id === assetId) : null) ?? props.product.image
-})
-const otherImages = computed(() => [props.product.image, ...props.product.gallery]
-  .filter((image, index, all): image is NonNullable<typeof image> => Boolean(image?.public_url) && image!.asset_id !== shownImage.value?.asset_id && all.findIndex(other => other?.asset_id === image!.asset_id) === index))
+const variantQuery = useRoute().query.variant
+const chosenVariantId = ref<string | null>((sellableVariants.value.find(variant => variant.id === variantQuery) ?? sellableVariants.value[0])?.id ?? null)
 
 const isAvailable = computed(() =>
   props.product.active
@@ -772,6 +745,7 @@ const canBook = computed(() => !privateExperiencePreview.value && (isStay.value
  * head.
  */
 const productMedia = computed(() => uniqueMediaAssets([
+  ...props.product.media.filter(asset => asset.asset_id === sellableVariants.value.find(variant => variant.id === chosenVariantId.value)?.media_asset_id),
   ...(props.product.image ? [props.product.image] : []),
   ...props.product.gallery,
 ]))
@@ -783,7 +757,7 @@ const galleryItems = computed(() => uniqueMediaAssets([
   url: asset.public_url!,
   kind: asset.kind,
   poster: asset.kind === 'video' ? asset.thumbnail_url : undefined,
-  alt: asset.alt_text ?? undefined,
+  alt: asset.alt_text || displayTitle.value,
 })))
 const mediaGallery = ref<InstanceType<typeof MediaGallery> | null>(null)
 
@@ -1102,7 +1076,7 @@ function sessionEvent(session: PublicProductSession) {
     '@id': `${canonicalProductUrl.value}#event-${session.id}`,
     superEvent: { '@id': schemaSeriesId.value },
     name: props.product.name,
-    image: props.product.image?.public_url,
+    image: galleryItems.value.filter(item => item.kind === 'image').map(item => item.url),
     startDate: session.starts_at,
     endDate: session.ends_at,
     eventAttendanceMode: props.location ? 'https://schema.org/OfflineEventAttendanceMode' : 'https://schema.org/OnlineEventAttendanceMode',
@@ -1171,9 +1145,73 @@ const stayStructuredData = computed(() => {
   }
 })
 
+const reviewStructuredData = computed(() => ({
+  aggregateRating: props.reviews.length
+    ? {
+        '@type': 'AggregateRating',
+        ratingValue: props.reviews.reduce((total, review) => total + review.rating, 0) / props.reviews.length,
+        reviewCount: props.reviews.length,
+      }
+    : undefined,
+  review: props.reviews.map(review => ({
+    '@type': 'Review',
+    author: { '@type': 'Person', name: review.author_name },
+    name: review.title,
+    reviewBody: review.content,
+    reviewRating: { '@type': 'Rating', ratingValue: review.rating, bestRating: 5 },
+  })),
+}))
+
+/** Every purchasable variant has the same shareable URL used by the option selector. */
+const itemStructuredData = computed(() => {
+  const images = productMedia.value.filter(asset => asset.kind === 'image').map(asset => asset.public_url)
+  const optionProperties: Record<string, string> = { size: 'size', color: 'color', colour: 'color', colourway: 'color', colorway: 'color', material: 'material', pattern: 'pattern' }
+  const properties = props.product.options.map(option => optionProperties[option.name.toLowerCase()])
+  const variants = sellableVariants.value.map(variant => {
+    const url = new URL(canonicalProductUrl.value)
+    url.searchParams.set('variant', variant.id)
+    const price = selectPrice(variant.prices, { currency: props.currency, location_id: props.location?.id ?? null, at: new Date().toISOString() })
+    const locations = props.product.locations.filter(entry => entry.active && (props.location === null || entry.location_id === props.location.id))
+    const stock = Math.max(0, ...variant.inventory_levels.filter(level => locations.some(location => location.location_id === level.location_id)).map(level => level.available))
+    const image = props.product.media.find(asset => asset.asset_id === variant.media_asset_id && asset.kind === 'image')
+    return {
+      '@type': 'Product',
+      '@id': `${canonicalProductUrl.value}#variant-${variant.id}`,
+      name: [props.product.name, variant.name].filter(Boolean).join(' — '),
+      description: props.product.description,
+      url: url.href,
+      ...(variant.sku ? { sku: variant.sku } : {}),
+      image: image ? [image.public_url, ...images.filter(value => value !== image.public_url)] : images,
+      ...Object.fromEntries(properties.flatMap((property, index) => property ? [[property, variant.option_values[index]]] : [])),
+      additionalProperty: props.product.options.flatMap((option, index) => properties[index] ? [] : [{ '@type': 'PropertyValue', name: option.name, value: variant.option_values[index] }]),
+      offers: price ? {
+        '@type': 'Offer',
+        price: minorAmountToMajor(price.unit_amount, price.currency),
+        priceCurrency: price.currency,
+        url: url.href,
+        availability: !isAvailable.value ? 'https://schema.org/OutOfStock'
+          : !variant.inventory_tracked || stock > 0 ? 'https://schema.org/InStock'
+            : variant.inventory_policy === 'continue' ? 'https://schema.org/BackOrder' : 'https://schema.org/OutOfStock',
+      } : undefined,
+    }
+  })
+  return props.product.options.length ? {
+    '@type': 'ProductGroup',
+    ...reviewStructuredData.value,
+    name: props.product.name,
+    description: props.product.description,
+    url: canonicalProductUrl.value,
+    productGroupID: props.product.id,
+    image: images,
+    variesBy: properties.filter(Boolean).map(property => `https://schema.org/${property}`),
+    hasVariant: variants,
+  } : variants[0] ? { ...variants[0], ...reviewStructuredData.value } : null
+})
+
 useSchemaOrg(computed(() => {
   // Page documents keep their canonical SEO/schema; a directory is not a second Product page.
   if (props.pageDocument) return []
+  if (props.product.kind === 'item') return itemStructuredData.value ?? []
   if (stayStructuredData.value) return {
     ...stayStructuredData.value,
     aggregateRating: props.reviews.length
@@ -1192,7 +1230,7 @@ useSchemaOrg(computed(() => {
     ...(type === 'EventSeries' ? { '@id': schemaSeriesId.value } : {}),
     name: props.product.name,
     description: props.product.description,
-    image: props.product.image?.public_url,
+    image: galleryItems.value.filter(item => item.kind === 'image').map(item => item.url),
     ...(dietUrls.length ? { suitableForDiet: dietUrls } : {}),
     ...(first && last
       ? {
@@ -1228,20 +1266,7 @@ useSchemaOrg(computed(() => {
               }
             : undefined,
         }),
-    aggregateRating: props.reviews.length
-      ? {
-          '@type': 'AggregateRating',
-          ratingValue: props.reviews.reduce((total, review) => total + review.rating, 0) / props.reviews.length,
-          reviewCount: props.reviews.length,
-        }
-      : undefined,
-    review: props.reviews.map(review => ({
-      '@type': 'Review',
-      author: { '@type': 'Person', name: review.author_name },
-      name: review.title,
-      reviewBody: review.content,
-      reviewRating: { '@type': 'Rating', ratingValue: review.rating, bestRating: 5 },
-    })),
+    ...reviewStructuredData.value,
   }
   return upcoming.length ? [node, ...upcoming] : node
 }))

@@ -28,10 +28,18 @@
       </nav>
 
       <div class="flex items-center justify-end gap-2">
-        <NuxtLink v-if="cart.count.value" :to="localePath('/cart')" class="rounded-full px-3 py-1.5 text-sm font-semibold text-default no-underline hover:bg-muted">{{ t('shop.cart') }} ({{ cart.count.value }})</NuxtLink>
         <TenantButton v-if="primaryAction" :to="localePath(primaryAction.path)" :data-public-consultation="primaryAction.consultation ? consultation?.schedule_path : undefined" size="sm" @click="primaryAction.consultation && trackConsultation()">
           {{ primaryAction.label }}
         </TenantButton>
+        <NuxtLink
+          v-if="cart.count.value"
+          :to="localePath('/cart')"
+          :aria-label="`${t('shop.cart')} (${cart.count.value})`"
+          class="relative inline-flex size-10 shrink-0 items-center justify-center rounded-full text-default no-underline hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current"
+        >
+          <UIcon name="i-lucide-shopping-cart" class="size-5" aria-hidden="true" />
+          <span aria-hidden="true" class="absolute right-0 top-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--site-action)] px-1 text-[10px] font-semibold leading-none tabular-nums text-[var(--site-on-action)]">{{ cart.count.value }}</span>
+        </NuxtLink>
 
         <details ref="mobileNavDetails" class="group relative lg:hidden">
           <summary

@@ -829,5 +829,7 @@
   "checkout_state.start_again": "Neu beginnen",
   "checkout_state.sign_in": "Anmelden",
   "checkout_state.unavailable_help": "Der Link ist möglicherweise unvollständig oder gehört zu einem anderen Konto.",
-  "checkout_state.back_to": "Zurück zu {business}"
+  "checkout_state.back_to": "Zurück zu {business}",
+  "shop.recently_viewed": "Zuletzt angesehen",
+  "shop.recently_viewed_failed": "Die zuletzt angesehenen Produkte konnten nicht geladen werden."
 }

@@ -160,6 +160,7 @@ export function validateTenantPageBlock(block: TenantPageBlock): string[] {
         break
       }
       if (block.type === 'product_grid') {
+        if (data.source === 'recently_viewed') break
         const hasCollection = Boolean(text(data.collection_id))
         const hasProducts = stringArray(data, 'product_ids').length > 0
         if (hasCollection && hasProducts) addError(errors, 'Choose either a collection or specific products, not both.')

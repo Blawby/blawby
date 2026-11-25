@@ -64,6 +64,8 @@ export default {
     "next_payment": "Next payment"
   },
   "shop": {
+    "recently_viewed": "Recently viewed",
+    "recently_viewed_failed": "Your recently viewed products could not be loaded.",
     "add_to_cart": "Add to cart",
     "buy_now": "Buy it now",
     "cart": "Cart",

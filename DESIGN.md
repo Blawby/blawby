@@ -694,3 +694,12 @@ The importer invents no payment, sends no confirmation and collects nothing.
 Verification compares saved occupancy with connected Airbnb availability, names
 every mismatch, and keeps the handover open until they pass. The host pauses and
 reopens listings on Airbnb; the wizard does not.
+
+A Products block can use the Recently viewed source instead of selected products
+or a collection. The page owns its placement and heading, edited through the
+existing block settings and content-block operation. It shows the visitor's
+available cart items first, then recently viewed offerings, only after consent.
+Home pages place it below the hero unless their authored content places one;
+product pages include it at the bottom
+unless their authored content already places one. Product records, prices,
+publication and inventory remain the sources of the cards.

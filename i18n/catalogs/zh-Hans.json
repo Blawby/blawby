@@ -829,5 +829,7 @@
   "checkout_state.start_again": "重新开始",
   "checkout_state.sign_in": "登录",
   "checkout_state.unavailable_help": "链接可能不完整，或属于其他账户。",
-  "checkout_state.back_to": "返回 {business}"
+  "checkout_state.back_to": "返回 {business}",
+  "shop.recently_viewed": "最近浏览",
+  "shop.recently_viewed_failed": "无法加载最近浏览的商品。"
 }

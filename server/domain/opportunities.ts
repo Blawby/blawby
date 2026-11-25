@@ -8,7 +8,7 @@ import { addLocalDays, formatCalendarRange, formatTimestamp, localDateAt } from 
 import { PRODUCT_DETAIL_FIELDS, type ProductKind } from '~/shared/product-details'
 import { platformLocale } from '~/shared/platform-locales'
 import { stayGuestFirstName } from '~/shared/bookings'
-import { UPCOMING_RESERVATION_DAYS } from '~/shared/dashboard-today'
+import { UPCOMING_RESERVATION_DAYS, todayIcon, type TodayIcon } from '~/shared/dashboard-today'
 
 /*
   What Today suggests, read from what the business has already stored: setup it
@@ -24,7 +24,7 @@ export interface OpportunityView {
   status_line: string
   title: string
   detail: string
-  icon: string
+  icon: TodayIcon
   /** Where the owner does it in the dashboard. */
   path: string
   product_id: string | null
@@ -105,7 +105,7 @@ export function setupViews(factRows: unknown[], unpricedRows: unknown[], improve
   if (!organization) return null
   const slug = organization.slug, organizationId = organization.id
   const items: OpportunityView[] = []
-  const offer = (id: string, statusLine: string, title: string, detail: string, path: string, icon: string, productId: string | null = null) =>
+  const offer = (id: string, statusLine: string, title: string, detail: string, path: string, icon: TodayIcon, productId: string | null = null) =>
     items.push({ id, status_line: statusLine, title, detail, icon, path, product_id: productId, location_id: input.locationId ?? null, conversation_id: null, message: null })
 
   // Stripe is reviewing an account that is waiting on it; there is nothing for the owner to do yet.
@@ -123,9 +123,9 @@ export function setupViews(factRows: unknown[], unpricedRows: unknown[], improve
     offer(`${row.owner_type}.${row.missing}:${row.id}`, location ? 'Location' : 'Catalog',
       row.missing === 'photo' ? `Add photos of “${row.name}”` : `Describe “${row.name}”`,
       row.missing === 'photo' ? 'Help people see what to expect.' : 'Help people decide whether it’s right for them.', path,
-      row.missing === 'photo' ? 'i-lucide-camera' : 'i-lucide-file-text', location ? null : row.id)
+      'i-lucide-list-checks', location ? null : row.id)
   }
-  if (!items.length && !organization.has_post) offer(`marketing.post:${organizationId}`, 'Marketing', 'Create a post for your business', 'Share something people can look forward to.', `/dashboard/${encodeURIComponent(slug)}/website/posts/new`, 'i-lucide-megaphone')
+  if (!items.length && !organization.has_post) offer(`marketing.post:${organizationId}`, 'Marketing', 'Create a post for your business', 'Share something people can look forward to.', `/dashboard/${encodeURIComponent(slug)}/website/posts/new`, 'i-lucide-list-checks')
   return { slug, vertical: organization.vertical, opportunities: items }
 }
 
@@ -135,7 +135,7 @@ export function bookingWelcomeViews(rows: unknown[], input: { now: Date; slug: s
     id: `booking.welcome:${welcome.requestId}`, status_line: 'Messages',
     title: welcome.kind === 'stay' ? 'Share info about your place' : 'Share how to prepare',
     detail: `Help ${welcome.guestFirstName ?? `your ${welcome.kind === 'stay' ? 'guest' : resolveBookingPresentation(welcome.productKind, input.vertical).counterpartyNoun}`} get ready`,
-    icon: 'i-lucide-messages-square', path: guestConversationPath(input.slug, welcome.requestId),
+    icon: todayIcon(welcome.productKind), path: guestConversationPath(input.slug, welcome.requestId),
     product_id: welcome.productId, location_id: welcome.locationId, conversation_id: welcome.requestId, message: welcome.message,
   }))
 }

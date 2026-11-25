@@ -5,6 +5,6 @@ let statements: Promise<string[]> | undefined
 
 /** Builds the declared schema in a fresh D1 in one batch, generating its SQL once per test file. */
 export async function applySchema(db: D1Database): Promise<void> {
-  statements ??= Promise.all([generateSQLiteDrizzleJson({}), generateSQLiteDrizzleJson(schema)]).then(([empty, current]) => generateSQLiteMigration(empty, current))
+  statements ??= Promise.all([generateSQLiteDrizzleJson({}), generateSQLiteDrizzleJson(schema)]).then(([empty, current]) => generateSQLiteMigration(empty, current)).then(sql => [...sql, ...schema.searchIndexSchema().split('\n--> statement-breakpoint\n')])
   await db.batch((await statements).map(sql => db.prepare(sql)))
 }

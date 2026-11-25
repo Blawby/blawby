@@ -14,7 +14,7 @@ test('the migration chain applies from zero and builds every table the schema de
     const last = journal.entries.at(-1)!
     const snapshot = JSON.parse(readFileSync(`migrations/meta/${String(last.idx).padStart(4, '0')}_snapshot.json`, 'utf8')) as { tables: Record<string, { name: string }> }
     const declared = Object.values(snapshot.tables).map(table => table.name).sort()
-    const built = (database.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>)
+    const built = (database.prepare("SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>)
       .map(row => row.name)
     assert.deepEqual(built, declared)
   } finally {
@@ -66,6 +66,7 @@ test('snapshot payload preserves destination signing keys for refreshes and carr
   const source = new Database(':memory:')
   source.exec(schema)
   source.prepare("INSERT INTO organization (id, name, slug, subdomain, default_currency, timezone) VALUES ('org', 'Refreshed content', 'org', 'org', 'USD', 'America/New_York')").run()
+  source.prepare("INSERT INTO business_locations (id, organization_id, slug, title, timezone) VALUES ('place', 'org', 'place', 'José Émile', 'America/New_York')").run()
   source.prepare('INSERT INTO jwks (id, publicKey, privateKey, createdAt) VALUES (?, ?, ?, ?)').run('source', 'fixture-public-source', 'fixture-private-source', 1)
   try {
     for (const withoutJwks of [true, false]) {
@@ -83,6 +84,11 @@ test('snapshot payload preserves destination signing keys for refreshes and carr
           createdAt: withoutJwks ? 2 : 1,
         }])
         assert.equal(destination.prepare("SELECT name FROM organization WHERE id = 'org'").get().name, 'Refreshed content')
+        const { searchMatchSql, searchIndexMatch } = await import('../../server/domain/search.ts')
+        for (const q of ['jose emile', 'é', 'sé']) {
+          const search = searchMatchSql(q, hits => `SELECT place.rowid AS id, hit.word FROM ${hits} hit CROSS JOIN business_locations place WHERE ${searchIndexMatch('business_locations', 'place', 'hit')}`, { sources: ['business_locations'], organization: 'org' })!
+          assert.deepEqual(destination.prepare(`SELECT title FROM business_locations place WHERE place.rowid IN (${search.sql})`).all(...search.params), [{ title: 'José Émile' }], `transferred index: ${q}`)
+        }
         assert.deepEqual(destination.pragma('foreign_key_check'), [])
       } finally {
         destination.close()

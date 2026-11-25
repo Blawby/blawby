@@ -215,7 +215,7 @@ export class ChannexConnection {
       WHERE c.organization_id = ? ORDER BY c.created_at, c.id`, [this.organizationId])
   }
 
-  private async account(channelId: string): Promise<ConnectionRow | undefined> {
+  private async account(channelId: string): Promise<ConnectionRow | null> {
     return await queryFirst<ConnectionRow>(this.db, `SELECT c.*, g.group_id FROM channex_connections c
       LEFT JOIN channex_groups g USING (organization_id)
       WHERE c.organization_id = ? AND c.channel_id = ?`, [this.organizationId, channelId])

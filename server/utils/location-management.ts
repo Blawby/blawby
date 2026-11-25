@@ -631,7 +631,7 @@ export async function updateLocation(
     const results = await (input.status === undefined
       ? executeBatch(db, [...preceding, ...statements], { operation: 'Update location fields' })
       : executeWithinCapacity(env, db, organizationId, [...preceding, ...statements], { action: 'make it active', allowHomeActivation: options.allowHomeActivation }));
-    const changed = (results[preceding.length + 1]?.meta?.changes ?? 0) === 1;
+    const changed = results[preceding.length + 1]?.results.length === 1;
     // The saved privacy mode must be visible even if readback or card work fails.
     if (changed) await purgePublicResourceCacheNow(env, organizationId);
     if (!changed) return null;

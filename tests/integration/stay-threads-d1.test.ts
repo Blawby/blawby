@@ -198,7 +198,7 @@ test('a stay opens its guest conversation in the one inbox', async () => {
     // A guest's WhatsApp number finds their stay's thread; a cancelled stay's thread is not found.
     assert.deepEqual(await findSubmissionByPhone(db, '+61491570150'), { submissionType: 'booking', submissionId: ana.conversation_id, organizationId: ORG })
     await db.prepare("UPDATE bookings SET status = 'cancelled', cancelled_at = '2026-10-15T00:00:00.000Z' WHERE id = ?").bind(ana.id).run()
-    assert.equal(await findSubmissionByPhone(db, '+61491570150'), undefined)
+    assert.equal(await findSubmissionByPhone(db, '+61491570150'), null)
 
   } finally {
     await runtime.dispose()

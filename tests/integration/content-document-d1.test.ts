@@ -137,7 +137,7 @@ test('document scopes, translations, block ownership and concurrent edits persis
       additionalQueriesBefore: prepareContentDocumentDeletion({ documentId: emptyTranslation.id, organizationId: 'one' }),
       blocks: [{ id: 'link-b', type: 'markdown', data: { markdown: 'Changed after removing translation', editor_mode: 'rich' } }] })
     assert.equal((await listBlocksForDocument(db, headingSource.id))[0]?.type, 'markdown')
-    assert.equal(await getContentDocumentById(db, emptyTranslation.id), undefined)
+    assert.equal(await getContentDocumentById(db, emptyTranslation.id), null)
     await assert.rejects(db.prepare("INSERT INTO content_documents(id,organization_id,kind,row_role,locale,summary,status,published_at,source,metadata_json) VALUES ('invalid-social','one','social_post','root','en','Body','published','2026-09-06T00:00:00.000Z','manual','{}')").run())
     for (const [id, type, owner, slot] of [['root-image', 'content_document', document.id, 'cover'],
       ['translated-image', 'content_block', 'translated-body', 'media'], ['retained-image', 'content_document', sourceLinks.document.id, 'cover']]) {
@@ -147,7 +147,7 @@ test('document scopes, translations, block ownership and concurrent edits persis
     await assert.rejects(executeBatch(db, [buildMediaPlacementInsertQuery({ organizationId: 'two',
       ownerType: 'content_document', ownerId: document.id, slot: 'cover', assetId: 'shared-image', sortOrder: 0 })]))
     await executeBatch(db, prepareContentDocumentDeletion({ documentId: document.id, organizationId: 'one' }))
-    assert.equal(await getContentDocumentById(db, translated.document.id), undefined)
+    assert.equal(await getContentDocumentById(db, translated.document.id), null)
     assert.deepEqual(await listBlocksForDocument(db, translated.document.id), [])
     assert.deepEqual((await db.prepare('SELECT id FROM media_placements').all()).results, [{ id: 'retained-image' }])
     assert.equal(await db.prepare('SELECT count(*) AS count FROM media_assets').first('count'), 1)

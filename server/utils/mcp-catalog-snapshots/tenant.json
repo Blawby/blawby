@@ -1,7 +1,7 @@
 {
   "surface": "tenant",
-  "fingerprint": "sha256:ab719d93530b74924c70e9dac8ea6283b9a7a9346fc44291e71c1137a7105ea9",
-  "documentationFingerprint": "sha256:429049c809527b91a8286d28dcef495ee12e22d928ae51ce185e78abb8355480",
+  "fingerprint": "sha256:31fd86e2bbc351093e51e558756a942fd29326b1de95126284eb061a9e2a8671",
+  "documentationFingerprint": "sha256:9b0416f2394456d6931de4bd7caae8a7e9add49de151050d859f8da87816889e",
   "tools": [
     {
       "name": "add_organization_language",
@@ -70241,7 +70241,7 @@
             "type": "string"
           },
           "q": {
-            "description": "Words in the guest’s name, the home or the messages.",
+            "description": "Find conversations in Current and Past: every word must appear, ignoring case and accents, in the guest’s name or email, the home or the messages.",
             "maxLength": 200,
             "minLength": 1,
             "type": "string"
@@ -74052,6 +74052,12 @@
             "type": "string"
           },
           "product_id": {
+            "type": "string"
+          },
+          "q": {
+            "description": "Find bookings across all dates: every word must appear, ignoring case and accents, in the guest’s name, email or phone, the confirmation code or channel reference, or the home or offering name.",
+            "maxLength": 200,
+            "minLength": 1,
             "type": "string"
           },
           "status": {
@@ -134752,7 +134758,7 @@
         "get_product_booking": "sha256:081821091eaf5bab3211017493c5223b9577b1bbc01091d96a6bd75054013e94",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_conversation_recipients": "sha256:439170e450547b9261d1f0499d27ef7ca95dd024cacf847719fee4f4c40e249e",
-        "list_conversations": "sha256:563552eb6b0af82a762e138edf26711d2560e62fdb2cee2a757e19106704fbad",
+        "list_conversations": "sha256:5efc262d1e75b8dfe19318f81b756d196a5244255dec58a22242eabdd932a179",
         "list_location_reviews": "sha256:95068cff21ac3fea416a9fa8ec3a8ad2d01db79ea0825274c0295b89f15f5d92",
         "list_locations": "sha256:7dd88e7fc4bd7ec81ea85799fc2bfd56d6e492a30ddab39669e4286937b9efdd",
         "mark_conversation_read": "sha256:4284ca380f9c4245e346ef2952bbb3d0e49719491d6a3ada129bf55a681672a4",
@@ -134882,7 +134888,7 @@
         "get_organization_analytics": "sha256:6778353a6266b04efaca189217f19982d643d91249d8444829e9936ff203e487",
         "get_product": "sha256:c8270bc0e91bc60249c60c0b9c8fb0c6051130a5b0e00ab51b83b228adee6af7",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
-        "list_conversations": "sha256:563552eb6b0af82a762e138edf26711d2560e62fdb2cee2a757e19106704fbad",
+        "list_conversations": "sha256:5efc262d1e75b8dfe19318f81b756d196a5244255dec58a22242eabdd932a179",
         "list_product_booking_sessions": "sha256:3649a6bc69afde8d124ed5c8452177c30a70dad2c9301cc7d3f10c9522536376",
         "list_products": "sha256:76e112cfe8092528c778c4d066d079837db14504dab1eec99eefd21b499e7970",
         "publish_post": "sha256:752fb1e9c0267e6ba03088081fa8a0e5c5f8034640f03df3c52078a8df8f95d4",

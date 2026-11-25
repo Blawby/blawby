@@ -5,7 +5,7 @@
       <InboxFilters v-if="!personalScope" />
     </div>
   </DefineControls>
-  <DashboardIndexPanel :id="personalScope ? 'account-messages' : 'organization-messages'" :title="blockedOnly ? `Blocked ${getVerticalCopy(dashboard.organization.value?.vertical).guestsLabelPlural}` : pastOnly ? 'Past conversations' : 'Messages'" :auto-open="firstThread" fill>
+  <DashboardIndexPanel :id="personalScope ? 'account-messages' : 'organization-messages'" :title="blockedOnly && !route.query.q ? `Blocked ${getVerticalCopy(dashboard.organization.value?.vertical).guestsLabelPlural}` : pastOnly && !route.query.q ? 'Past conversations' : 'Messages'" :auto-open="firstThread" fill>
     <!-- Search and settings beside the title, as on Airbnb. -->
     <template #right>
       <UButton icon="i-lucide-search" color="neutral" variant="soft" class="rounded-full" :aria-label="searching ? 'Close search' : 'Search messages'" :aria-pressed="searching" @click="toggleSearch" />

@@ -144,6 +144,7 @@ export const conversations = sqliteTable("conversations", {
 	uniqueIndex("conversations_guest_booking_unique").on(table.booking_id).where(sql`kind = 'booking' AND booking_id IS NOT NULL`),
 	uniqueIndex("conversations_participants_unique").on(table.organization_id, table.participants_key).where(sql`participants_key IS NOT NULL`),
 	index("conversations_org_activity_idx").on(table.organization_id, table.last_message_at),
+	index("conversations_org_location_idx").on(table.organization_id, table.location_id),
 	index("conversations_org_booking_idx").on(table.organization_id, table.booking_id),
 	index("conversations_org_user_idx").on(table.organization_id, table.user_id),
 	index("conversations_user_activity_idx").on(table.user_id, table.last_message_at),
@@ -1960,6 +1961,7 @@ export const channel_threads = sqliteTable("channel_threads", {
 	uniqueIndex("channel_threads_conversation_unique").on(table.conversation_id),
 	uniqueIndex("channel_threads_booking_unique").on(table.provider, table.external_booking_id).where(sql`external_booking_id IS NOT NULL`),
 	index("channel_threads_org_idx").on(table.organization_id),
+	index("channel_threads_org_product_idx").on(table.organization_id, table.product_id),
 	check("channel_threads_provider_check", sql`provider = 'channex'`),
 	check("channel_threads_instants_check", sql`strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+0 days') IS created_at AND strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+0 days') IS updated_at`),
 ]);
@@ -3343,3 +3345,8 @@ export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   members: many(member),
 }))
+
+export { searchIndexSchema } from './search-index'
+import { searchCharacterMapSql } from './search-index'
+
+export const search_character_folds = sqliteView('search_character_folds', { characters: text().notNull() }).as(sql.raw(searchCharacterMapSql()))

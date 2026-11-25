@@ -16,6 +16,7 @@
         <CatalogProductList :products="unsectioned" :collections="catalog.collections.value" :locations="locations" :price-label="priceLabel" :active-item="level.child.value" :item-heading-level="3" />
       </section>
     </div>
+    <p v-else role="status" class="text-sm text-muted">Loading menu…</p>
   </DashboardIndexPanel>
 </template>
 

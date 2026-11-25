@@ -200,7 +200,7 @@ type AuthoredPageCatalog = Awaited<ReturnType<ReturnType<typeof prepareTenantPag
 
 function tenantPageProductRows(
   source: AuthoredPageCatalog,
-  selection: { collectionId?: string; productIds?: readonly string[] },
+  selection: { collectionId?: string; productIds?: readonly string[]; locationId?: string | null },
   currency: string,
 ): PublicTenantPageProductRow[] {
   if (!isCurrencyCode(currency)) throw new Error('The public catalog requires a supported currency')
@@ -214,11 +214,12 @@ function tenantPageProductRows(
       - (right.collections.find(item => item.collection_id === collection?.id)?.sort_order ?? 0) || left.name.localeCompare(right.name))
   return selected.flatMap(product => {
     const offered = product.locations.filter(location => location.published && locations.has(location.location_id))
-    if (collection?.location_id && !offered.some(location => location.location_id === collection.location_id)) return []
+    const selectedLocation = selection.locationId ?? collection?.location_id
+    if (selectedLocation && !offered.some(location => location.location_id === selectedLocation)) return []
     // A membership offered at no location is joined from anywhere, as an online offering is booked.
     const online = Boolean(product.booking?.held_online || product.order_url) || (isMembershipProduct(product) && !product.locations.length)
     if (!offered.length && !online) return []
-    const locationId = product.kind === 'item' ? null : collection?.location_id ?? (offered.length === 1 && !online ? offered[0]!.location_id : null)
+    const locationId = product.kind === 'item' ? null : selectedLocation ?? (offered.length === 1 && !online ? offered[0]!.location_id : null)
     const scopes = product.kind === 'item' ? [null] : locationId ? [locationId] : [...offered.map(location => location.location_id), ...(online ? [null] : [])]
     const prices = summarizeProductPrices(product.variants, scopes.map(location_id => ({ currency, location_id, at })))
     const locationSlug = locationId ? locations.get(locationId)?.slug ?? null : null
@@ -698,16 +699,17 @@ export function prepareRecentlyViewedProducts(
     SELECT CASE WHEN json_valid(cart_json) THEN CASE WHEN json_type(cart_json)='array' THEN cart_json ELSE '[]' END ELSE '[]' END AS cart_json FROM personalization_scope
   ), raw_candidates AS (
     SELECT v.product_id, v.id AS product_variant_id, CAST(CASE WHEN line.type='object' THEN json_extract(line.value, '$.quantity') END AS INTEGER) AS quantity,
-      0 AS priority, CAST(line.key AS INTEGER) AS position, '' AS viewed_at
+      0 AS priority, CAST(line.key AS INTEGER) AS position, '' AS viewed_at, NULL AS location_id
     FROM json_each((SELECT cart_json FROM cart_scope)) line JOIN product_variants v ON v.id=CASE WHEN line.type='object' THEN json_extract(line.value, '$.product_variant_id') END
       AND v.organization_id=(SELECT organization_id FROM personalization_scope) AND v.active=1
     UNION ALL
-    SELECT recent.product_id, NULL, 1, 1, 0, recent.viewed_at FROM (
-      SELECT json_extract(payload_json, '$.product_id') AS product_id, MAX(created_at) AS viewed_at
+    SELECT recent.product_id, NULL, 1, 1, 0, recent.viewed_at, recent.location_id FROM (
+      SELECT * FROM (SELECT json_extract(payload_json, '$.product_id') AS product_id, created_at AS viewed_at, location_id,
+        ROW_NUMBER() OVER (PARTITION BY json_extract(payload_json, '$.product_id') ORDER BY created_at DESC, id DESC) AS view_rank
       FROM analytics_events WHERE organization_id=(SELECT organization_id FROM personalization_scope)
         AND kind='pageview' AND visitor_id=? AND created_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 days')
         AND json_extract(payload_json, '$.product_id') IS NOT NULL
-      GROUP BY json_extract(payload_json, '$.product_id') ORDER BY viewed_at DESC LIMIT 12
+      ) WHERE view_rank=1 ORDER BY viewed_at DESC LIMIT 12
     ) recent
   ), candidates AS (SELECT * FROM raw_candidates WHERE product_id IS NOT ?)`
   const cartCookies = Object.fromEntries(Object.entries(cookies).filter(([name]) => name.startsWith('cart_')))
@@ -734,7 +736,7 @@ export function prepareRecentlyViewedProducts(
       try { cartValue = JSON.parse(site.cart_json) }
       catch { throw new HTTPError({ statusCode: 400, statusMessage: 'Cart cookie is invalid' }) }
       if (!cartLinesSchema.safeParse(cartValue).success) throw new HTTPError({ statusCode: 400, statusMessage: 'Cart cookie is invalid' })
-      const candidates = rows[1]!.results as Array<{ product_id: string; product_variant_id: string | null; quantity: number }>
+      const candidates = rows[1]!.results as Array<{ product_id: string; product_variant_id: string | null; quantity: number; location_id: string | null }>
       if (!candidates.length) return { items: [] }
       const organizationId = site.organization_id
       if (!isCurrencyCode(site.default_currency)) throw new Error('The public catalog requires a supported currency')
@@ -743,13 +745,12 @@ export function prepareRecentlyViewedProducts(
         db, env, organizationId, locale, site, locations: rows[2]!.results as Array<{ id: string; title: string; slug: string }>, localizations,
       })
       const products = new Map(source.products.map(product => [product.id, product]))
-      const cards = new Map(tenantPageProductRows(source, { productIds: [...products.keys()] }, site.default_currency).map(card => [card.id, card]))
       const seen = new Set<string>()
       const items = []
       for (const candidate of candidates) {
         if (seen.has(candidate.product_id)) continue
         const product = products.get(candidate.product_id)
-        const card = cards.get(candidate.product_id)
+        const card = tenantPageProductRows(source, { productIds: [candidate.product_id], locationId: candidate.location_id }, site.default_currency)[0]
         if (!product || !card?.available || !card.public_path) continue
         const locations = product.locations.filter(location => location.active && location.published && source.locations.some(entry => entry.id === location.location_id))
         const variants = product.variants.filter(variant => variant.active && (!candidate.product_variant_id || variant.id === candidate.product_variant_id))

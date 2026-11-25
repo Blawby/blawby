@@ -100,6 +100,18 @@ for (const tenant of tenants) {
     await expect(page.locator(tenant.shell)).not.toHaveCSS(tenant.themeVar, '')
     for (const text of tenant.forbidden) await expect(page.locator('body')).not.toContainText(text)
 
+    if (tenant.name === 'Kikuzuki') {
+      await page.getByRole('button', { name: 'Cookie preferences', exact: true }).click()
+      await page.getByRole('button', { name: 'Accept', exact: true }).click()
+      await page.locator('header').getByRole('link', { name: /Kikuzuki Krabi Thailand home/i }).click()
+      const recent = page.locator('[data-recently-viewed]')
+      await expect(recent).toContainText('Tuna Sushi')
+      await expect(recent.locator(`a[href="${tenant.detailPath}"]`)).toBeVisible()
+      await recent.locator(`a[href="${tenant.detailPath}"]`).click()
+      await expect(page).toHaveURL(new RegExp(`${tenant.detailPath}/?$`))
+      await expect(page.locator('h1')).toHaveText('Tuna Sushi')
+    }
+
     if (tenant.name === 'Pottery House') {
       const shell = await request.get(`${tenant.baseURL}/api/public/shell`, { headers: tenant.headers })
       expect(shell.status(), await shell.text()).toBe(200)

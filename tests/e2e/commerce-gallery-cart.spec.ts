@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { openTenantPage } from './helpers'
+import { openTenantPage, waitForNuxtHydration } from './helpers'
 import { seededTenant } from './seed/manifest'
 import { seededSiteHeaders, seededSiteURL } from './test-env'
 
@@ -136,6 +136,7 @@ test('recently viewed and cart cards stay private, tenant-scoped and consented w
   expect(other.status(), await other.text()).toBe(200)
   expect(await other.json()).toEqual({ items: [] })
   await page.goto(`${base}/products/${product.slug}`)
+  await waitForNuxtHydration(page)
   await page.getByRole('button', { name: 'Large', exact: true }).click()
   await expect(page).toHaveURL(/[?&]variant=/)
   await page.getByRole('button', { name: 'Add to cart', exact: true }).click()

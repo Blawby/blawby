@@ -28,12 +28,19 @@ test('unknown sites render an unbranded 404 while resolved tenant errors retain 
   expect(errors).toEqual([])
 })
 
-test('old public logo URLs redirect to the renamed PNG assets', async ({ request, baseURL }) => {
-  for (const asset of ['logo', 'logo-192', 'maskable-192', 'maskable-512']) {
-    const target = `/blawby-${asset}.png`
-    const legacy = await request.get(`/krabi-claw-${asset}.png`, { maxRedirects: 0 })
-    expect(legacy.status()).toBe(301)
-    expect(new URL(legacy.headers().location!, baseURL).pathname).toBe(target)
+test('old public logo URLs redirect to the platform shield icons', async ({ request, baseURL }) => {
+  for (const [asset, icon] of [
+    ['logo', '512'],
+    ['logo-192', '192'],
+    ['maskable-192', 'maskable-192'],
+    ['maskable-512', 'maskable-512'],
+  ]) {
+    const target = `/platform/blawby-${icon}.png`
+    for (const prefix of ['krabi-claw', 'blawby']) {
+      const legacy = await request.get(`/${prefix}-${asset}.png`, { maxRedirects: 0 })
+      expect(legacy.status()).toBe(301)
+      expect(new URL(legacy.headers().location!, baseURL).pathname).toBe(target)
+    }
     const image = await request.get(target)
     expect(image.status()).toBe(200)
     expect(image.headers()['content-type']).toContain('image/png')

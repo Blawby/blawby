@@ -13,7 +13,7 @@
 //   yarn db:private-media --production
 //
 // Staging runs on copies of production's rows, which name production's images,
-// so it stores no image: `--staging` adopts, for each private slot image it
+// so it stores no image (it still reads the variants, so it needs the same token): `--staging` adopts, for each private slot image it
 // copied, the private image production now names for the same asset, and moves
 // staging's own documents to its private bucket.
 //   yarn db:private-media --staging --dry-run
@@ -88,9 +88,18 @@ try {
     CLOUDFLARE_IMAGES_VARIANT_BASE: process.env.CLOUDFLARE_IMAGES_VARIANT_BASE,
   }
 
-  // A signature that kept a document before the signed copy was stored has nothing this run can draw; none exists (2026-11-25).
-  const signatures = await queryAll<{ n: number }>(db, "SELECT count(*) AS n FROM messages WHERE event_name = 'agreement.signed'")
-  if (signatures[0]!.n) throw new Error(`${signatures[0]!.n} agreement signatures were written before signed copies were stored; draw their copies before running this`)
+  // A variant that never requires a signature serves every private image unsigned to anyone who knows its id, which a signed URL shows.
+  if (!process.env.CF_ACCOUNT_ID || !process.env.CLOUDFLARE_IMAGES_API_TOKEN) throw new Error('CF_ACCOUNT_ID and CLOUDFLARE_IMAGES_API_TOKEN are required')
+  const variants = await fetch(`https://api.cloudflare.com/client/v4/accounts/${process.env.CF_ACCOUNT_ID}/images/v1/variants`, { headers: { Authorization: `Bearer ${process.env.CLOUDFLARE_IMAGES_API_TOKEN}` } })
+  if (!variants.ok) throw new Error(`Cloudflare Images variants could not be read: ${variants.status} ${await variants.text()}`)
+  const unsigned = Object.entries((await variants.json() as { result: { variants: Record<string, { neverRequireSignedURLs?: boolean }> } }).result.variants)
+    .filter(([, variant]) => variant.neverRequireSignedURLs).map(([name]) => name)
+  if (unsigned.length) throw new Error(`Cloudflare Images variants ${unsigned.join(', ')} never require a signed URL, so a private image is public through them; turn that off first`)
+
+  // A file a private slot shares with a public one (an old listing signature that placed the listing's own agreement) would leave its public owner unreadable.
+  const shared = await queryAll<{ id: string }>(db, `SELECT DISTINCT held.asset_id AS id FROM media_placements held JOIN media_placements other ON other.asset_id = held.asset_id AND other.organization_id = held.organization_id
+    WHERE held.status = 'active' AND other.status = 'active' AND ${privateMediaPlacementSql('held')} AND NOT ${privateMediaPlacementSql('other')}`)
+  if (shared.length) throw new Error(`Media assets ${shared.map(row => row.id).join(', ')} are in a private and a public slot; separate them before running this`)
 
   /** The private slot files still readable without a signed link: an image that does not require one, or a file in the public bucket. */
   async function stillPublic(): Promise<(Candidate & { reason: string })[]> {
@@ -98,8 +107,10 @@ try {
     for (const asset of await queryAll<Candidate & { public_url: string | null }>(db, PRIVATE_SLOT_ASSETS)) {
       if (asset.provider === 'cloudflare_images' && asset.cloudflare_image_id) {
         const details = await images.hosted.image(asset.cloudflare_image_id).details()
-        if (!details) throw new Error(`Media asset ${asset.id} names Cloudflare image ${asset.cloudflare_image_id}, which is gone`)
-        if (!details.requireSignedURLs) found.push({ ...asset, reason: 'public image' })
+        // Staging's copy still names the public image production replaced and deleted.
+        if (!details && production) found.push({ ...asset, reason: 'image production replaced' })
+        else if (!details) throw new Error(`Media asset ${asset.id} names Cloudflare image ${asset.cloudflare_image_id}, which is gone`)
+        else if (!details.requireSignedURLs) found.push({ ...asset, reason: 'public image' })
       } else if (asset.provider === 'cloudflare_r2' && asset.r2_key) {
         if (await publicBucket.head(asset.r2_key)) found.push({ ...asset, reason: 'file in the public bucket' })
       } else {

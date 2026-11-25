@@ -139,7 +139,7 @@ export async function uploadImageBuffer(
 
 async function publicImageMatching(env: CloudflareImagesEnv, imageId: string, contentHash: string): Promise<string | null> {
   const uploaded = await getUploadedImage(env, imageId)
-  return uploaded && !uploaded.draft && uploaded.metadata?.content_sha256 === contentHash ? imageId : null
+  return uploaded && !uploaded.draft && uploaded.meta?.content_sha256 === contentHash ? imageId : null
 }
 
 /** The private image stored for an asset, found by the asset id its metadata carries. */
@@ -215,7 +215,8 @@ async function getUploadedImage(env: CloudflareImagesEnv, imageId: string) {
   })
   if (res.status === 404) return null
   if (!res.ok) throw new Error(`CF Images lookup error ${res.status}: ${await res.text()}`)
-  const data = await res.json() as { result?: { id?:string; filename?:string; metadata?:Record<string,unknown>; draft?:boolean } }
+  // The details response carries the metadata an upload sent as `meta`.
+  const data = await res.json() as { result?: { id?:string; filename?:string; meta?:Record<string,unknown>; draft?:boolean } }
   if (data.result?.id !== imageId || typeof data.result.filename !== 'string') throw new Error(`CF Images lookup did not return image ${imageId}`)
   return data.result
 }

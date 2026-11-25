@@ -95,9 +95,10 @@ test('a table booking opens with its own message and the guest note, written onc
     const longTerm = 'confirmationreference' + '0123456789'.repeat(8)
     const indexedMessage = await appendMessage(db, { conversationId: 'new', authorKind: 'guest', authorUserId: null, channel: 'web', body: `Émile José ЖΩ ος Straße ${longTerm}` })
     await archiveConversation(db, { organizationId: ORG, conversationId: 'new', userId: OWNER, archived: true })
-    for (const q of ['jose emile', 'ÉMILE jose', 'Ω', 'жω', longTerm, 'filip@example.test jose', 'ΟΣ', 'οσ', 'STRASSE', 'ß']) {
+    for (const q of ['jose emile', 'ÉMILE jose', 'Ω', 'жω', longTerm, 'filip@example.test jose', 'ΟΣ', 'οσ', 'STRASSE']) {
       assert.deepEqual((await listConversations(db, ORG, { userId: OWNER, mailbox: 'current', q })).map(row => row.id), ['new'], q)
     }
+    assert.deepEqual((await listConversations(db, ORG, { userId: OWNER, q: 'ß' })).map(row => row.id).sort(), ['new', 'old'], 'ss also appears in possible in the other booking’s note')
     assert.deepEqual(await listConversations(db, ORG, { userId: OWNER, q: 'jose nevermentioned' }), [])
 
     await db.prepare("UPDATE conversations SET payload_json = json_set(payload_json, '$.guest.name', 'Álvaro Éclair') WHERE id = 'new'").run()

@@ -5,18 +5,46 @@ import { join } from 'node:path'
 import test from 'node:test'
 import Database from 'better-sqlite3'
 
-test('the migration chain applies from zero and builds every table the schema declares', () => {
+test('the migration chain applies from zero and builds every table the schema declares', (t) => {
   const database = new Database(':memory:')
   database.pragma('foreign_keys = ON')
   try {
     const journal = JSON.parse(readFileSync('migrations/meta/_journal.json', 'utf8')) as { entries: Array<{ idx: number; tag: string }> }
-    for (const entry of journal.entries) database.exec(readFileSync(`migrations/${entry.tag}.sql`, 'utf8'))
+    for (const entry of journal.entries) {
+      if (entry.tag === '0007_search_index') {
+        database.exec(`INSERT INTO organization (id,name,slug,subdomain,default_currency,timezone)
+          VALUES ('migration-fixture','Migration fixture','migration-fixture','migration-fixture','USD','UTC');
+          INSERT INTO conversations (id,organization_id,kind,payload_json,last_message_at)
+          VALUES ('migration-thread','migration-fixture','contact','{"guest":{"name":"Migration Guest","email":"guest@example.test","phone":null}}','2026-11-25T00:00:00.000Z');`)
+        const insert = database.prepare(`INSERT INTO messages (id,organization_id,conversation_id,sequence,author_kind,channel,body,dedupe_key,occurred_at)
+          VALUES (?,'migration-fixture','migration-thread',?,'guest','web',?,?,'2026-11-25T00:00:00.000Z')`)
+        database.transaction(() => {
+          for (let index = 0; index < 1400; index++) {
+            const prefix = 'กะรายละเอียดการเข้าพัก Αθήνα José Straße '
+            const body = index < 70
+              ? prefix + Array.from({ length: 2000 - prefix.length }, (_, offset) => String.fromCodePoint(0x4e00 + (offset * offset + index * 101) % 20000)).join('')
+              : 'A migrated conversation message from the archive. '.padEnd(80, 'x')
+            insert.run(`migration-${index}`, index + 1, body, `migration-${index}`)
+          }
+        })()
+      }
+      const started = performance.now()
+      database.exec(readFileSync(`migrations/${entry.tag}.sql`, 'utf8'))
+      if (entry.tag === '0007_search_index') {
+        const totals = database.prepare('SELECT count(*) AS messages,sum(length(body)) AS characters,max(length(body)) AS longest FROM messages').get()
+        t.diagnostic(`SEARCH_MIGRATION_BACKFILL ${JSON.stringify({ ...totals as object, wall_ms: performance.now() - started })}`)
+        assert.equal((database.prepare(`SELECT count(*) AS matches FROM search_index WHERE search_index MATCH 'text:"αθηνα" AND text:"strasse"'`).get() as { matches: number }).matches, 70)
+      }
+    }
     const last = journal.entries.at(-1)!
     const snapshot = JSON.parse(readFileSync(`migrations/meta/${String(last.idx).padStart(4, '0')}_snapshot.json`, 'utf8')) as { tables: Record<string, { name: string }> }
     const declared = Object.values(snapshot.tables).map(table => table.name).sort()
     const built = (database.prepare("SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>)
       .map(row => row.name)
     assert.deepEqual(built, declared)
+    const backfill = readFileSync('migrations/0007_search_index.sql', 'utf8').split('\n--> statement-breakpoint\n')
+      .find(sql => sql.startsWith('INSERT INTO search_index') && sql.includes('FROM messages\n'))!
+    t.diagnostic(`SEARCH_BACKFILL_QUERY_PLAN ${JSON.stringify(database.prepare(`EXPLAIN QUERY PLAN ${backfill}`).all())}`)
   } finally {
     database.close()
   }

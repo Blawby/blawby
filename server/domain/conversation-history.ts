@@ -22,7 +22,8 @@ import { readConversationEnrichment, threadDeliveriesQuery } from './guest-threa
 import type { MediaLinkEnv } from '~/server/utils/private-media'
 import { bookingDay, parseGuestRequest, participantLabel } from './requests'
 import { jobBookingIdSql, jobPostMatchSql, taskScopeSql } from './tasks'
-import { submissionView } from './turnover-checklists'
+import { submissionView, submittedReferencePhotos } from './turnover-checklists'
+import type { ChecklistPhoto } from '~/shared/turnover-checklist'
 
 type TranscriptViewer = { conversationId: string; userId: string; organizationId?: string }
 type MessageContext = Pick<ConversationHistory, 'photos' | 'deliveriesByMessage'>
@@ -139,7 +140,7 @@ function eventText(message: Pick<MessageRow, 'event_name' | 'body' | 'id' | 'pay
 
 function presentEntries(
   viewer: { conversation: ConversationRow; userId: string; role: ConversationViewerRole }, history: ConversationHistory,
-  context: HistoryContext & { guestName: string; contactAnswers: string[] }, now: Date,
+  context: HistoryContext & { guestName: string; contactAnswers: string[]; references: ReadonlyMap<string, ChecklistPhoto> }, now: Date,
 ): ConversationEntry[] {
   const { conversation, userId, role } = viewer
   const { guestName, airbnb, contactAnswers } = context
@@ -191,7 +192,7 @@ function presentEntries(
     }
     // A turnover checklist submitted with Done is the closer's message with its answers.
     if (payload.checklist !== undefined) {
-      const checklist = submissionView(payload.checklist, history.photos.get(message.id) ?? [])
+      const checklist = submissionView(payload.checklist, history.photos.get(message.id) ?? [], context.references)
       if (!checklist) throw new HTTPError({ statusCode: 500, message: `Message ${message.id} carries a checklist that cannot be read`, data: { code: 'INVALID_CHECKLIST_SUBMISSION', entry_id: message.id } })
       projected.checklist = checklist
     }
@@ -295,8 +296,10 @@ export async function loadConversationPage(
   const guestName = thread ? conversationGuestName(thread, Boolean(context.support), Boolean(context.airbnb)) : context.organization_name
   const contactAnswers = thread?.kind === 'contact' && history.entries.some(entry => entry.event_name === SUBMISSION_EVENT)
     ? thread.payload.answers.map(answer => `${answer.label} ${formatFormAnswer(answer, { yes: 'Yes', no: 'No' })}`) : []
+  // A submitted checklist's reference photos are linked for this reader as the page is read.
+  const references = await submittedReferencePhotos(db, env, conversation.organization_id, history.entries.map(entry => parseMessagePayload(entry).checklist))
   const result = {
-    entries: presentEntries({ conversation, userId, role }, history, { ...context, guestName, contactAnswers }, now),
+    entries: presentEntries({ conversation, userId, role }, history, { ...context, guestName, contactAnswers, references }, now),
     page: { ...history.page, read_through: readThrough },
   }
   if (!head) return { conversation_id: conversation.id, ...result }

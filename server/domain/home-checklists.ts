@@ -1,6 +1,10 @@
 import { d1JsonStringSet, executeBatch, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import { MAX_D1_BATCH_STATEMENTS } from '~/server/db/d1-limits'
 import { organizationEventQuery } from '~/server/utils/organization-events'
+import { mediaLinks, type MediaLinkEnv } from '~/server/utils/private-media'
+import { buildMediaPlacementInsertQuery, getMediaAsset } from '~/server/utils/media-asset-manager'
+import { uploadResolvedMediaToAssetStore, type UploadResolvedMediaInput } from '~/server/utils/media-upload'
+import { privateMediaPlacementSql } from '~/shared/media-placement-contract'
 import { requireManager, visibleHomes, type StayAccess } from '~/server/domain/stays'
 import { checkedItem, checklistColumnsSql, checklistOf, fail, SLOT, type ChecklistColumns } from '~/server/domain/turnover-checklists'
 import { CHECKLIST_LIMITS, checklistRevision, type HomeTurnoverChecklist, type TurnoverChecklistItem } from '~/shared/turnover-checklist'
@@ -22,11 +26,11 @@ const homeQuery = (access: StayAccess, productId: string): BatchQuery => {
 }
 
 /** A home's checklist, for the people who can see the home. */
-export async function readHomeChecklist(db: DbClient, access: StayAccess, productId: string): Promise<HomeTurnoverChecklist> {
+export async function readHomeChecklist(db: DbClient, env: MediaLinkEnv, access: StayAccess, productId: string): Promise<HomeTurnoverChecklist> {
   const query = homeQuery(access, productId)
   const row = await queryFirst<ChecklistColumns & { product_id: string }>(db, query.query, query.params)
   if (!row) fail(404, 'HOME_NOT_FOUND', 'That place to stay is not in this organization')
-  const items = checklistOf(row, row.product_id)
+  const items = await checklistOf(env, row, row.product_id)
   return { product_id: row.product_id, items, revision: checklistRevision(items) }
 }
 
@@ -76,7 +80,7 @@ function checklistEvent(access: StayAccess, locationId: string, productId: strin
  * when it sends the one it was read with; a new one gets one. Owners and
  * admins only. A submission already made keeps what it was made against.
  */
-export async function saveHomeChecklist(db: DbClient, access: StayAccess, productId: string, body: Record<string, unknown>): Promise<HomeTurnoverChecklist> {
+export async function saveHomeChecklist(db: DbClient, env: MediaLinkEnv, access: StayAccess, productId: string, body: Record<string, unknown>): Promise<HomeTurnoverChecklist> {
   requireManager(access)
   const unknown = Object.keys(body).find(key => key !== 'items' && key !== 'expected_revision')
   if (unknown) fail(422, 'INVALID_CHECKLIST_ITEM', `${unknown} is not part of a checklist`, unknown)
@@ -94,15 +98,18 @@ export async function saveHomeChecklist(db: DbClient, access: StayAccess, produc
   const assetIds = [...new Set(items.flatMap(item => item.reference_photo_id ? [item.reference_photo_id] : []))]
   const home = homeQuery(access, productId)
   const [homeRows, assetRows] = (await executeBatch(db, [home, {
-    query: `SELECT id FROM media_assets WHERE organization_id = ? AND id IN (SELECT value FROM json_each(?)) AND kind = 'image' AND status = 'active' AND public_url IS NOT NULL`,
+    // A reference photo is private (#2092): one uploaded for a checklist slot, stored where only signed links reach it — it has no
+    // public URL — and on no public slot, so a listing photo is never made a reference.
+    query: `SELECT id FROM media_assets ma WHERE organization_id = ? AND id IN (SELECT value FROM json_each(?)) AND kind = 'image' AND status = 'active' AND public_url IS NULL
+      AND NOT EXISTS (SELECT 1 FROM media_placements held WHERE held.asset_id = ma.id AND held.organization_id = ma.organization_id AND NOT ${privateMediaPlacementSql('held')})`,
     params: [access.organizationId, d1JsonStringSet(assetIds)],
   }], { operation: 'Read a turnover checklist to save' })).map(result => result.results as Array<Record<string, string>>)
   const current = homeRows![0] as (ChecklistColumns & { product_id: string; location_id: string; references_key: string }) | undefined
   if (!current) fail(404, 'HOME_NOT_FOUND', 'That place to stay is not in this organization')
-  if (checklistRevision(checklistOf(current, productId)) !== body.expected_revision) fail(409, 'CHECKLIST_CHANGED', 'The checklist changed since you opened it; reload it', 'expected_revision')
+  if (checklistRevision(await checklistOf(env, current, productId)) !== body.expected_revision) fail(409, 'CHECKLIST_CHANGED', 'The checklist changed since you opened it; reload it', 'expected_revision')
   const found = new Set(assetRows!.map(row => row.id))
   const missing = items.findIndex(item => item.reference_photo_id && !found.has(item.reference_photo_id))
-  if (missing >= 0) fail(422, 'INVALID_REFERENCE_PHOTO', 'The reference photo must be an image uploaded to this business', `items[${missing}].reference_photo_id`)
+  if (missing >= 0) fail(422, 'INVALID_REFERENCE_PHOTO', 'The reference photo must be an image uploaded for this checklist (its upload names the checklist slot)', `items[${missing}].reference_photo_id`)
   const stored: TurnoverChecklistItem[] = items.map(({ reference_photo_id: _reference, ...item }) => ({
     id: item.id, title: item.title, instructions: item.instructions, type: item.type, minimum: item.minimum, per_guest: item.per_guest, baseline: item.baseline, photo_required: item.photo_required,
   }))
@@ -112,7 +119,7 @@ export async function saveHomeChecklist(db: DbClient, access: StayAccess, produc
     ...checklistWrites(access.organizationId, access.actorId, [productId], JSON.stringify(stored), references, now, { checklist: current.turnover_checklist, references: current.references_key }),
     checklistEvent(access, current.location_id, productId, stored.length),
   ], 'Save turnover checklist')
-  return readHomeChecklist(db, access, productId)
+  return readHomeChecklist(db, env, access, productId)
 }
 
 const MAX_COPY_HOMES = MAX_D1_BATCH_STATEMENTS - 10
@@ -121,7 +128,7 @@ const MAX_COPY_HOMES = MAX_D1_BATCH_STATEMENTS - 10
  * Copy a home's checklist, reference photos included, to other homes: each
  * target's checklist becomes this one. Owners and admins only.
  */
-export async function copyHomeChecklist(db: DbClient, access: StayAccess, productId: string, body: Record<string, unknown>): Promise<{ product_ids: string[]; checklist: HomeTurnoverChecklist }> {
+export async function copyHomeChecklist(db: DbClient, env: MediaLinkEnv, access: StayAccess, productId: string, body: Record<string, unknown>): Promise<{ product_ids: string[]; checklist: HomeTurnoverChecklist }> {
   requireManager(access)
   const unknown = Object.keys(body).find(key => key !== 'product_ids')
   if (unknown) fail(422, 'INVALID_CHECKLIST_COPY', `${unknown} is not part of a copy`, unknown)
@@ -132,7 +139,7 @@ export async function copyHomeChecklist(db: DbClient, access: StayAccess, produc
   if (targets.includes(productId)) fail(422, 'INVALID_CHECKLIST_COPY', 'A home cannot copy its checklist to itself', 'product_ids')
   // Each home is one recorded event in the copy's one batch.
   if (targets.length > MAX_COPY_HOMES) fail(422, 'INVALID_CHECKLIST_COPY', `Copy to at most ${MAX_COPY_HOMES} homes at a time`, 'product_ids')
-  const source = await readHomeChecklist(db, access, productId)
+  const source = await readHomeChecklist(db, env, access, productId)
   const homes = await queryAll<{ product_id: string; location_id: string }>(db, `SELECT product_id, location_id FROM product_stay_configs
     WHERE organization_id = ? AND product_id IN (SELECT value FROM json_each(?))`, [access.organizationId, d1JsonStringSet(targets as string[])])
   const absent = (targets as string[]).filter(id => !homes.some(home => home.product_id === id))
@@ -147,3 +154,23 @@ export async function copyHomeChecklist(db: DbClient, access: StayAccess, produc
   return { product_ids: homes.map(home => home.product_id), checklist: source }
 }
 
+
+/**
+ * A reference photo uploaded for a home's checklist (#2092): stored privately and
+ * kept on a reference slot of its own until a save names it, which clears the
+ * slots it does not name. It is never a library or listing picture.
+ */
+export async function storeReferencePhoto(db: DbClient, env: UploadResolvedMediaInput['env'] & MediaLinkEnv, input: {
+  organizationId: string; userId: string; productId: string; buffer: Uint8Array<ArrayBuffer>; contentType: string; filename: string
+}): Promise<{ asset_id: string; url: string; thumbnail_url: string }> {
+  const placement = { owner_type: 'product', slot: `${SLOT}upload-${crypto.randomUUID()}` } as const
+  const uploaded = await uploadResolvedMediaToAssetStore({
+    db, env, organizationId: input.organizationId, userId: input.userId, source: 'uploaded', kind: 'image',
+    buffer: input.buffer, contentType: input.contentType, filename: input.filename, placement,
+    queries: assetId => [buildMediaPlacementInsertQuery({ organizationId: input.organizationId, ownerType: 'product', ownerId: input.productId, slot: placement.slot, assetId, sortOrder: 0 })],
+  })
+  const asset = await getMediaAsset(db, uploaded.assetId, input.organizationId)
+  if (!asset) throw new Error(`Reference photo ${uploaded.assetId} was not saved`)
+  const links = await mediaLinks(env, asset, placement)
+  return { asset_id: asset.id, url: links.url, thumbnail_url: links.thumbnail_url ?? links.url }
+}

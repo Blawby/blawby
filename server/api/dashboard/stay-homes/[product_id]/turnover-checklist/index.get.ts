@@ -10,5 +10,5 @@ import { readHomeChecklist } from '~/server/domain/home-checklists'
 export default defineHandler(async (event) => {
   const { env, db, organization } = await getDashboardMemberContext(event, {})
   const access = await stayAccessFor(memberAccessPrincipal(organization, { env, event }))
-  return jsonResponse({ checklist: await readHomeChecklist(db, access, getRouterParam(event, 'product_id') ?? '') }, { headers: { 'cache-control': 'private, no-store' } })
+  return jsonResponse({ checklist: await readHomeChecklist(db, env, access, getRouterParam(event, 'product_id') ?? '') }, { headers: { 'cache-control': 'private, no-store' } })
 })

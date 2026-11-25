@@ -15,6 +15,7 @@ import type { McpExecutorContext } from './execution'
 import { assertCloudflareImagesConfigured } from '~/server/utils/cloudflare-images'
 import { MAX_POSTER_BYTES } from '~/server/utils/media-mime'
 import { getMediaUploadReplay, uploadResolvedMediaToAssetStore } from '~/server/utils/media-upload'
+import { storeReferencePhoto } from '~/server/domain/home-checklists'
 import { MCP_ERROR, mcpProtocolError } from '~/server/utils/mcp-protocol'
 import { renderStructuredResponse } from '~/server/utils/mcp-render'
 import { mcpPageInfo, mcpPageWindow } from '~/server/utils/mcp-pagination'
@@ -166,13 +167,14 @@ export const MEDIA_TOOLS: McpToolDefinition[] = [
     }),
   organizationTool({
       name: 'save_media_attachment',
-      description: 'Save an attached image, video with poster, PDF or Markdown file. Uses the host’s file reference. An optional placement puts it on the requested website owner in this operation: a PDF placed on a product’s agreement slot is what every guest signs when booking it. Repeat the same idempotency key for a retry.',
+      description: 'Save an attached image, video with poster, PDF or Markdown file. Uses the host’s file reference. An optional placement puts it on the requested website owner in this operation: a PDF placed on a product’s agreement slot is what every guest signs when booking it. checklist_product_id instead stores an image privately as a reference photo for that place to stay’s turnover checklist (never the library); pass its asset_id as reference_photo_id to set_home_turnover_checklist. Repeat the same idempotency key for a retry.',
       domain: 'media',
       minimumRole: 'admin',
       inputSchema: {
         file: chatgptFileInput,
         idempotency_key: { type: 'string', minLength: 1, maxLength: 200 },
         placement: mediaPlacementObject,
+        checklist_product_id: { type: 'string', minLength: 1, description: 'A place to stay whose turnover checklist this image is a private reference photo for.' },
         poster_file: { ...chatgptFileInput, description: 'Required poster/thumbnail image for video uploads. Invalid for non-video uploads.' },
         category: { type: 'string', enum: [...WRITABLE_MEDIA_CATEGORIES], description: 'Optional visual subject used to organize the media library. It never assigns the asset to content.' },
         description: { type: 'string', description: 'Description of the media (stored as alt text).' },
@@ -183,7 +185,8 @@ export const MEDIA_TOOLS: McpToolDefinition[] = [
         type: 'object',
         properties: {
           asset_id: { type: 'string' },
-          public_url: { type: 'string' },
+          public_url: { type: ['string', 'null'], description: 'Null for a private reference photo, which has no public URL.' },
+          url: { type: 'string', description: 'The link to show it by; a private photo’s link expires.' },
           status: { type: 'string', enum: ['active'] },
           thumbnail_url: { type: ['string', 'null'] },
           kind: { type: 'string', enum: ['image', 'video', 'file'] },
@@ -346,6 +349,15 @@ export async function handleMediaTools(ctx: McpExecutorContext): Promise<unknown
         : null;
 
       const identity = { organizationId: organization.organizationId, idempotencyKey: requiredString(args, 'idempotency_key'), sourceFileId: fileReference.file_id, posterSourceFileId: posterReference?.file_id, category: category as import('~/server/utils/media-asset-manager').MediaAsset['category'] | null, altText: description ?? fileReference.file_name ?? fileReference.file_id }
+      const checklistProductId = optionalString(args, 'checklist_product_id')
+      if (checklistProductId) {
+        if (args.placement !== undefined) throw mcpProtocolError(MCP_ERROR.invalidParams, 'Pass placement or checklist_product_id, not both.')
+        const resolved = await resolveUserUploadedMediaFile(fileReference)
+        if (resolved.kind !== 'image') throw mcpProtocolError(MCP_ERROR.invalidParams, 'A checklist reference photo must be an image.')
+        const reference = await storeReferencePhoto(organization.db, organization.env as never, { organizationId: organization.organizationId, userId: organization.userId,
+          productId: checklistProductId, buffer: resolved.buffer, contentType: resolved.contentType, filename: resolved.filename })
+        return { asset_id: reference.asset_id, status: 'active', public_url: null, url: reference.url, thumbnail_url: reference.thumbnail_url, kind: 'image', placement: null, context: await mutationContextPayload(organization) }
+      }
       const saved = await getMediaUploadReplay(organization.db, identity)
       const place = async (uploaded: import('~/server/utils/media-upload').UploadResolvedMediaResult) => {
         const placement = args.placement === undefined ? null : parseMediaPlacementKey(args.placement)
@@ -354,7 +366,8 @@ export async function handleMediaTools(ctx: McpExecutorContext): Promise<unknown
           if (isSingleMediaPlacement(placement)) await setSingleMediaPlacement(organization.db, input)
           else await attachMediaPlacement(organization.db, input)
         }
-        return { asset_id: uploaded.assetId, status: 'active', public_url: uploaded.publicUrl, thumbnail_url: uploaded.thumbnailUrl, kind: uploaded.kind, placement, context: await mutationContextPayload(organization) }
+        if (!uploaded.publicUrl) throw new Error(`Library upload ${uploaded.assetId} has no public URL`)
+        return { asset_id: uploaded.assetId, status: 'active', public_url: uploaded.publicUrl, url: uploaded.publicUrl, thumbnail_url: uploaded.thumbnailUrl, kind: uploaded.kind, placement, context: await mutationContextPayload(organization) }
       }
       if (saved) return place(saved)
       const resolved = await resolveUserUploadedMediaFile(fileReference);

@@ -2,7 +2,7 @@ import { HTTPError } from 'nitro'
 import { d1JsonStringSet, queryAll, type DbClient } from '~/server/db'
 import { conversationMemberSql } from '~/server/domain/conversations'
 import { scopeSql, type TaskViewer } from '~/server/domain/tasks'
-import { submissionView } from '~/server/domain/turnover-checklists'
+import { submissionView, submittedReferencePhotos } from '~/server/domain/turnover-checklists'
 import { messagePhotoRowsSql, groupMessagePhotos, type MessagePhotoRow } from '~/server/domain/guest-threads/attachments'
 import { addLocalDays, localDateAt } from '~/utils/timezone'
 import type { ChecklistPhoto, ChecklistSubmissionView } from '~/shared/turnover-checklist'
@@ -42,8 +42,8 @@ async function readSubmissions(db: DbClient, viewer: TaskViewer, where: { sql: s
   const photos = messagePhotoRowsSql("mp.owner_type = 'message' AND mp.owner_id = m.id AND mp.organization_id = m.organization_id")
   const rows = await queryAll<Row>(db, `SELECT t.id AS task_id, t.product_id, t.timezone, t.closed_at, u.name AS closed_by,
       m.id AS message_id, m.conversation_id, m.payload_json, COALESCE(sc.internal_name, p.name) AS home,
-      (SELECT json_group_array(json_object('owner_id', ph.owner_id, 'id', ph.id, 'public_url', ph.public_url, 'thumbnail_url', ph.thumbnail_url,
-        'alt_text', ph.alt_text, 'width', ph.width, 'height', ph.height)) FROM (${photos}) ph) AS photo_rows
+      (SELECT json_group_array(json_object('owner_id', ph.owner_id, 'id', ph.id, 'kind', ph.kind, 'provider', ph.provider, 'cloudflare_image_id', ph.cloudflare_image_id,
+        'public_url', ph.public_url, 'thumbnail_url', ph.thumbnail_url, 'alt_text', ph.alt_text, 'width', ph.width, 'height', ph.height)) FROM (${photos}) ph) AS photo_rows
     FROM tasks t
     JOIN messages m ON m.organization_id = t.organization_id AND m.dedupe_key = 'task-closed:' || t.id || ':' || t.version
     JOIN conversations c ON c.organization_id = m.organization_id AND c.id = m.conversation_id AND c.kind = 'team'
@@ -54,14 +54,17 @@ async function readSubmissions(db: DbClient, viewer: TaskViewer, where: { sql: s
       AND (json_type(m.payload_json, '$.checklist') = 'object' OR json_extract(m.payload_json, '$.checklist_skipped') = 1)
       AND ${conversationMemberSql('c', '?')} AND ${where.sql} AND ${scope.sql}
     ORDER BY t.closed_at, t.id`, [viewer.principal.organizationId, viewer.principal.userId, ...where.params, ...scope.params])
-  return rows.map((row) => {
-    const payload = JSON.parse(row.payload_json) as Record<string, unknown>
-    const photos = groupMessagePhotos(JSON.parse(row.photo_rows) as MessagePhotoRow[]).get(row.message_id) ?? []
-    const checklist = payload.checklist === undefined ? null : submissionView(payload.checklist, photos)
+  const env = viewer.principal.env
+  const payloads = rows.map(row => JSON.parse(row.payload_json) as Record<string, unknown>)
+  const references = await submittedReferencePhotos(db, env, viewer.principal.organizationId, payloads.map(payload => payload.checklist))
+  return await Promise.all(rows.map(async (row, index) => {
+    const payload = payloads[index]!
+    const photos = (await groupMessagePhotos(env, JSON.parse(row.photo_rows) as MessagePhotoRow[])).get(row.message_id) ?? []
+    const checklist = payload.checklist === undefined ? null : submissionView(payload.checklist, photos, references)
     if (payload.checklist !== undefined && !checklist) throw new Error(`Message ${row.message_id} carries a checklist that cannot be read`)
     return { task_id: row.task_id, message_id: row.message_id, conversation_id: row.conversation_id, product_id: row.product_id, home: row.home,
       submitted_at: row.closed_at, submitted_by: row.closed_by, without_checklist: checklist === null, checklist, timezone: row.timezone }
-  })
+  }))
 }
 
 /** The checklists submitted on days `from` to `to` (each home's own days), optionally at some homes. */

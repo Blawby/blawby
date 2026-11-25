@@ -3,6 +3,7 @@ import { getQuery, getRouterParam } from 'nitro/h3';
 import { jsonResponse, rethrowHttpError } from '~/server/utils/api-response'
 import { requireOrganizationAccess } from '~/server/utils/location-access'
 import { sanitizeFilename, uploadResolvedMediaToAssetStore } from '~/server/utils/media-upload'
+import { storeReferencePhoto } from '~/server/domain/home-checklists'
 import { sniffMediaMimeType, VIDEO_MIME_TYPES, MAX_VIDEO_BYTES, POSTER_IMAGE_MIME_TYPES, MAX_POSTER_BYTES, RESOLVED_MEDIA_IMAGE_TYPES, MAX_IMAGE_BYTES } from '~/server/utils/media-mime'
 import { isRecord } from '~/utils/api-clients'
 
@@ -54,6 +55,13 @@ export default defineHandler(async (event) => {
       const imageData = new Uint8Array(await imagePart.arrayBuffer())
       const imageContentType = sniffMediaMimeType(imageData)
       if (!RESOLVED_MEDIA_IMAGE_TYPES.has(imageContentType)) return jsonResponse({ error: 'Unsupported image file type', code: 'UNSUPPORTED_MEDIA_TYPE' }, { status: 415 })
+      // A home's checklist reference photo is private: stored for its checklist, never the library.
+      const checklistProductId = queryValue(query.checklist_product_id)
+      if (checklistProductId) {
+        const reference = await storeReferencePhoto(db, env, { organizationId, userId: session.user.id, productId: checklistProductId, buffer: imageData, contentType: imageContentType,
+          filename: sanitizeFilename(imagePart.name || queryValue(query.filename) || undefined) })
+        return jsonResponse({ ...reference, public_url: null, kind: 'image', status: 'active' })
+      }
       const uploaded = await uploadResolvedMediaToAssetStore({
         db, env, organizationId,
         userId: session.user.id,

@@ -8,12 +8,16 @@ export const DOCUMENT_MAX_SIZE_BYTES = 20 * 1024 * 1024
 
 export interface MediaUploadOptions {
   category?: string | null
+  /** Store the image privately as this home's turnover checklist reference photo, not in the library. */
+  checklistProductId?: string
 }
 
 export interface MediaUploadResult {
   asset_id: string
   kind: 'image' | 'video' | 'file'
   public_url?: string | null
+  /** The link to show it by: its public URL, or a private photo's expiring link. */
+  url: string
   thumbnail_url?: string
 }
 
@@ -65,7 +69,8 @@ export function useMediaUpload(organizationApiBase: string) {
       const response = await dashboardApi<{
         asset_id: string
         kind: 'image' | 'video' | 'file'
-        public_url: string
+        public_url: string | null
+        url?: string
         thumbnail_url: string | null
         status: 'active'
       }>(`${organizationApiBase}/media/upload`, {
@@ -74,17 +79,19 @@ export function useMediaUpload(organizationApiBase: string) {
         query: {
           filename: file.name,
           category: options.category || undefined,
+          checklist_product_id: options.checklistProductId,
         },
         validate: (value): value is {
           asset_id: string
           kind: 'image' | 'video' | 'file'
-          public_url: string
+          public_url: string | null
+          url?: string
           thumbnail_url: string | null
           status: 'active'
         } => isRecord(value)
           && typeof value.asset_id === 'string'
           && (value.kind === 'image' || value.kind === 'video' || value.kind === 'file')
-          && typeof value.public_url === 'string'
+          && (typeof value.public_url === 'string' || (value.public_url === null && typeof value.url === 'string'))
           && (typeof value.thumbnail_url === 'string' || value.thumbnail_url === null)
           && (value.kind !== 'video' || typeof value.thumbnail_url === 'string')
           && value.status === 'active',
@@ -94,6 +101,7 @@ export function useMediaUpload(organizationApiBase: string) {
         asset_id: response.asset_id,
         kind: response.kind,
         public_url: response.public_url,
+        url: response.public_url ?? response.url!,
         thumbnail_url: response.thumbnail_url ?? undefined,
       }
     } catch (uploadError) {

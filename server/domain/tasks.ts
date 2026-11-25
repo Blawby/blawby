@@ -645,6 +645,9 @@ async function taskContext(env: MediaLinkEnv, organizationId: string, rows: Task
   if (!organization) throw new Error(`Organization ${organizationId} is missing`)
   const placements = groupMediaPlacements(pictures)
   const offerings = new Map(products.map(product => [product.id, product]))
+  // Each home's checklist with its reference photos linked for this reader, made once for the tasks that name it.
+  const checklists = new Map(await Promise.all(products.filter(product => product.turnover_checklist !== null)
+    .map(async product => [product.id, await checklistOf(env, { turnover_checklist: product.turnover_checklist!, turnover_references: product.turnover_references! }, product.id)] as const)))
   const stays = new Map(stayRows.map(stay => [stay.id, stay]))
   const stay = (id: string) => { const row = stays.get(id); return row ? stayFacts(row) : null }
   const arrivals = new Map<string, Array<StayRow & { check_in_date: string }>>()
@@ -668,7 +671,7 @@ async function taskContext(env: MediaLinkEnv, organizationId: string, rows: Task
       if (!product) return null
       if (!product.name?.trim()) throw new Error(`Product ${product.id} has no name for this task`)
       return { name: product.name, kind: product.kind, imageUrl: ownerPicture('product', placements.get(id) ?? [], [])?.imageUrl ?? null,
-        checklist: product.turnover_checklist === null ? [] : checklistOf({ turnover_checklist: product.turnover_checklist, turnover_references: product.turnover_references! }, product.id) }
+        checklist: checklists.get(product.id) ?? [] }
     },
     locations: new Map(locations.map(location => [location.id, location.title])),
     stay,
@@ -1665,5 +1668,5 @@ export async function declineTask(db: DbClient, viewer: TaskViewer, taskId: stri
   await publishChangedJobs(env, organizationId, [taskId])
   await publishBusinessInvalidation(env, organizationId)
   // It is no longer theirs to read through their scope: they get it as it now stands, held by someone else.
-  return taskViewForUser(db, organizationId, taskId, viewer.principal.userId)
+  return taskViewForUser(db, env, organizationId, taskId, viewer.principal.userId)
 }

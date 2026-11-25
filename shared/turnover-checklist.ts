@@ -77,8 +77,8 @@ export interface SubmittedChecklistItem extends Pick<TurnoverChecklistItem, 'id'
   flagged: boolean
   /** The cleaner's photo: one of the message's own photos. */
   photo_id: string | null
-  /** The reference photo the item had when it was submitted. */
-  reference_photo: ChecklistPhoto | null
+  /** The reference photo the item had when it was submitted, by asset id: its link is made when the submission is read, as it expires. */
+  reference_photo_id: string | null
 }
 
 /** What the closing message's payload holds (`payload.checklist`): the checklist as it was made against. */
@@ -95,7 +95,7 @@ export interface ChecklistSubmission {
 export interface ChecklistSubmissionView extends Omit<ChecklistSubmission, 'items'> {
   /** "3 of 4 done · 1 short". */
   summary: string
-  items: Array<SubmittedChecklistItem & { photo: ChecklistPhoto | null }>
+  items: Array<SubmittedChecklistItem & { photo: ChecklistPhoto | null; reference_photo: ChecklistPhoto | null }>
 }
 
 /** What a count item requires for this arrival. */

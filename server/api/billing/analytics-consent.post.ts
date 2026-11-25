@@ -2,7 +2,7 @@ import { defineHandler } from 'nitro'
 import { cloudflareEnv, jsonResponse } from '~/server/utils/api-response'
 import { getAuthSession } from '~/server/utils/auth'
 import { getStripe } from '~/server/utils/billing'
-import { readAnalyticsConsent } from '~/server/utils/ga4-delivery'
+import { readAnalyticsConsent } from '~/utils/zaraz-consent'
 import { withdrawStripeGaIdentifiers } from '~/server/utils/stripe-ga4'
 
 // Reconciles the visitor's CURRENT analytics decision with what billing has stored for them. The

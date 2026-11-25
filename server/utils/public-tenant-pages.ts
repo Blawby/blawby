@@ -1,3 +1,4 @@
+import { parseCookie } from 'cookie-es'
 import type { ProductKind } from '~/shared/product-details'
 import { HTTPError, type H3Event } from 'nitro'
 import { executeBatch, type BatchQuery, type DbClient } from '~/server/db'
@@ -9,7 +10,7 @@ import type { MediaPlacementItem } from '~/server/utils/media-placement'
 import { COVER_SELECT, attachCoverMedia, coverJoinSql } from '~/server/utils/content/cover'
 import { publicSocialMediaFromPlacements, type SocialImageSource } from '~/utils/social-metadata'
 import { groupMediaPlacements, mediaPlacementsQuery } from '~/server/utils/media-asset-manager'
-import { assertPublicOrganizationLanguage, getPersistedSourceLocale, readPublicOrganizationLanguage, readPublicSourceLocale } from '~/server/utils/localization'
+import { assertExactCanonicalLocale, assertPublicOrganizationLanguage, getPersistedSourceLocale, readPublicOrganizationLanguage, readPublicSourceLocale } from '~/server/utils/localization'
 import {
   indexStoredPublicLocalizations,
   preloadedPublicLocalizations,
@@ -25,16 +26,19 @@ import { preparePublicPostBlocks, type PublicSocialPost } from '~/server/utils/p
 import { cloudflareEnv } from '~/server/utils/api-response'
 import { isLegalPracticeSite, PLATFORM_SITE, resolvePublicSite } from '~/utils/site-routing'
 import { tenantBlogPostPath } from '~/utils/tenant-blog-route'
-import { EXPERIENCE_PRESENTATION, presentationForProduct, publicLocationPath } from '~/utils/product-presentation'
+import { hasSiteProductPage, presentationForProduct, publicLocationPath } from '~/utils/product-presentation'
 import { publicLocationSql } from '~/server/utils/public-locations'
 import { projectPublicLocation, type PublicLocationPrivacySource } from '~/shared/location-sharing'
 import { publicLocationPrivacySql } from '~/server/utils/public-location-privacy'
-import { formatMinorAmount } from '~/shared/prices'
+import { formatMinorAmount, selectPrice } from '~/shared/prices'
 import { isCurrencyCode, type CurrencyCode } from '~/shared/currencies'
 import { preparePublishedOfferingGrid, publicProduct } from '~/server/utils/product-management'
 import { PRICING_NOTE_HANDLE } from '~/shared/product-details'
 import { summarizeProductPrices } from '~/utils/product-money'
 import { isMembershipProduct } from '~/shared/memberships'
+import { cartLinesSchema, purchasableQuantity } from '~/shared/goods'
+import { publicTenantVisibilitySql } from '~/server/utils/public-base'
+import { VISITOR_COOKIE, isCanonicalEventId } from '~/server/utils/pageview-tracking'
 import type { PublicLocaleRepresentation } from '~/utils/public-resource-contracts'
 import { addressPlaceName, formatPostalAddress, parsePostalAddress } from '~/utils/postal-address'
 import { getVerticalCopy } from '~/utils/vertical-copy'
@@ -77,9 +81,8 @@ export interface PublicTenantPageProductRow {
   kind: ProductKind
   featured: boolean
   /**
-   * The one location publishing this product, or null when several do. A
-   * product offered in two places has no single route, so its card links
-   * nowhere rather than to a location the merchant did not name.
+   * Site-wide offerings use their canonical product route. Location-scoped
+   * offerings link only when their location is explicit.
    */
   public_path: string | null
   available: boolean
@@ -147,16 +150,16 @@ function prepareAuthoredBlockReferences(organization: { sql: string }, document:
  * The grid stores references only, so names and descriptions come from the
  * product every time it renders and cannot go stale.
  */
-function prepareTenantPageCatalog(organization: { sql: string }, document: { sql: string }, locale: { sql: string }, home: boolean) {
+function prepareTenantPageCatalog(organization: { sql: string }, document: { sql: string }, locale: { sql: string; params?: unknown[] }, home: boolean, predicate?: string) {
   const block = `SELECT id, type, data_json FROM content_blocks WHERE document_id = ${document.sql}`
-  const sections = `SELECT data_json FROM (${block}) grid WHERE grid.type = 'product_grid'`
+  const sections = `SELECT data_json FROM (${block}) grid WHERE grid.type = 'product_grid' AND COALESCE(json_extract(grid.data_json, '$.source'), 'selected') <> 'recently_viewed'`
   const org = organization.sql
   const hasDefaultCatalog = home ? `(SELECT theme_id FROM organization WHERE id = ${org}) <> '${PLATFORM_SITE.themeId}'` : '0'
   const hasGrid = `EXISTS (SELECT 1 FROM (${block}) b WHERE b.type = 'product_grid'
     OR (b.type = 'contact_form' AND json_extract(b.data_json, '$.booking_product_id') IS NOT NULL))`
-  const catalogScope = { sql: `(SELECT organization_id FROM page_scope
+  const catalogScope = predicate ? organization : { sql: `(SELECT organization_id FROM page_scope
     WHERE ${hasDefaultCatalog} OR ${hasGrid} OR path = '/services')` }
-  const offerings = preparePublishedOfferingGrid(catalogScope, `
+  const offerings = preparePublishedOfferingGrid(catalogScope, predicate ?? `
     p.id IN (SELECT selected.value FROM (${sections}) grid, json_each(grid.data_json, '$.product_ids') selected)
     OR p.id IN (SELECT json_extract(data_json, '$.booking_product_id') FROM (${block}) form WHERE form.type='contact_form')
     OR EXISTS (SELECT 1 FROM collection_products cp WHERE cp.organization_id = p.organization_id AND cp.product_id = p.id
@@ -176,7 +179,7 @@ function prepareTenantPageCatalog(organization: { sql: string }, document: { sql
   const paths = { query: `SELECT root.product_id, rep.path
     FROM content_documents root JOIN content_documents rep ON rep.root_id=root.id AND rep.row_role='representation' AND rep.locale=${locale.sql}
     WHERE root.organization_id=${org} AND root.kind='page' AND rep.path IS NOT NULL
-      AND root.product_id IN (${offerings.ids.query}) AND ${publicTenantPageSql('root')}`, params: offerings.ids.params }
+      AND root.product_id IN (${offerings.ids.query}) AND ${publicTenantPageSql('root')}`, params: [...locale.params ?? [], ...offerings.ids.params ?? []] }
   return {
     queries: [...offerings.queries, collections, media, paths],
     async read(rows: D1Result[], context: { db: DbClient; env: CloudflareEnv; organizationId: string; locale: string; site: AuthoredPageSite; locations: Array<{ id: string; slug: string }>; localizations: readonly ExactPublicLocalization[] | null }) {
@@ -215,18 +218,18 @@ function tenantPageProductRows(
     // A membership offered at no location is joined from anywhere, as an online offering is booked.
     const online = Boolean(product.booking?.held_online || product.order_url) || (isMembershipProduct(product) && !product.locations.length)
     if (!offered.length && !online) return []
-    const locationId = collection?.location_id ?? (offered.length === 1 && !online ? offered[0]!.location_id : null)
-    const scopes = locationId ? [locationId] : [...offered.map(location => location.location_id), ...(online ? [null] : [])]
+    const locationId = product.kind === 'item' ? null : collection?.location_id ?? (offered.length === 1 && !online ? offered[0]!.location_id : null)
+    const scopes = product.kind === 'item' ? [null] : locationId ? [locationId] : [...offered.map(location => location.location_id), ...(online ? [null] : [])]
     const prices = summarizeProductPrices(product.variants, scopes.map(location_id => ({ currency, location_id, at })))
     const locationSlug = locationId ? locations.get(locationId)?.slug ?? null : null
     const presentation = presentationForProduct(product)
-    const sourcePath = product.page?.path ?? (product.kind === 'experience'
-      ? EXPERIENCE_PRESENTATION.productPath('', product.slug) + (locationId ? `?location_id=${encodeURIComponent(locationId)}` : '')
-      : locationSlug && presentation ? presentation.productPath(locationSlug, product.slug) : null)
+    const sourcePath = presentation && hasSiteProductPage(product.kind)
+      ? presentation.productPath('', product.slug) + (product.kind === 'experience' && locationId ? `?location_id=${encodeURIComponent(locationId)}` : '')
+      : product.page?.path ?? (locationSlug && presentation ? presentation.productPath(locationSlug, product.slug) : null)
     const localizedPage = source.pageRepresentations.find(page => page.product_id === product.id)
     let publicPath = sourcePath
     if (source.localizations) {
-      if (product.page) publicPath = localizedPage ? `/${source.locale}${localizedPage.path}` : null
+      if (product.page && !hasSiteProductPage(product.kind)) publicPath = localizedPage ? `/${source.locale}${localizedPage.path}` : null
       else publicPath = sourcePath ? `/${source.locale}${sourcePath}` : null
     }
     const note = product.details[PRICING_NOTE_HANDLE]
@@ -244,6 +247,32 @@ function tenantPageProductRows(
   })
 }
 
+export function tenantProductGridItem(product: PublicTenantPageProductRow, locale: string) {
+  return {
+    id: product.id,
+    title: product.name,
+    description: product.description || undefined,
+    // Authored and visitor-specific cards share the product's public route.
+    kind: product.kind,
+    featured: product.featured,
+    url: product.public_path ?? '',
+    unavailable: !product.available,
+    value: product.unit_amount === null || !product.currency
+      ? product.pricing_note ?? undefined
+      : product.max_unit_amount !== null && product.max_unit_amount !== product.unit_amount
+        ? `${formatMinorAmount(product.unit_amount, product.currency as CurrencyCode, locale)} – ${formatMinorAmount(product.max_unit_amount, product.currency as CurrencyCode, locale)}`
+        : formatMinorAmount(product.unit_amount, product.currency as CurrencyCode, locale),
+    compare_at: product.compare_at_unit_amount === null || !product.currency
+      ? undefined
+      : formatMinorAmount(product.compare_at_unit_amount, product.currency as CurrencyCode, locale),
+    labelKey: 'site.posts.cta_default',
+    // The product's cover, or its first gallery item when there is no cover.
+    media: product.media.filter(item => item.slot === 'image').length
+      ? product.media.filter(item => item.slot === 'image')
+      : product.media.filter(item => item.slot === 'gallery').slice(0, 1),
+  }
+}
+
 function projectBlocks(
   pagePath: string,
   locale: string,
@@ -258,7 +287,7 @@ function projectBlocks(
   const productIds = new Set<string>()
   const collectionIds = new Set<string>()
   for (const block of blocks) {
-    if (block.type === 'product_grid') {
+    if (block.type === 'product_grid' && block.data.source !== 'recently_viewed') {
       if (Array.isArray(block.data.product_ids)) {
         for (const value of block.data.product_ids) if (typeof value === 'string' && value.trim()) productIds.add(value)
       }
@@ -289,7 +318,7 @@ function projectBlocks(
     data: { product_ids: [...productIds] }, media: [],
   }]
   const homepageDishes = homepageMenu ? productCatalog.products.filter(product => product.kind === 'dish') : []
-  const defaultMenuGrid = homepageMenu && blocks.some(block => block.type === 'product_grid'
+  const defaultMenuGrid = homepageMenu && blocks.some(block => block.type === 'product_grid' && block.data.source !== 'recently_viewed'
     && !(Array.isArray(block.data.product_ids) && block.data.product_ids.length) && !block.data.collection_id)
   for (const product of homepageDishes) if (defaultMenuGrid || product.details.featured === true) productIds.add(product.id)
   if (homepage) for (const product of productCatalog.products) if (product.kind === 'experience' || product.details.featured === true || (organizationRow.vertical === 'lodging' && product.kind === 'stay')) productIds.add(product.id)
@@ -305,7 +334,7 @@ function projectBlocks(
   const menuProducts = [...productById.values()].filter(product => product.kind === 'dish')
   const featuredMenuProducts = menuProducts.filter(product => product.featured)
   const defaultMenuProducts = featuredMenuProducts.length ? featuredMenuProducts : menuProducts
-  const displayed = new Set(blocks.filter(block => block.type === 'product_grid').flatMap(block =>
+  const displayed = new Set(blocks.filter(block => block.type === 'product_grid' && block.data.source !== 'recently_viewed').flatMap(block =>
     Array.isArray(block.data.product_ids) && block.data.product_ids.length
       ? block.data.product_ids.filter((id): id is string => typeof id === 'string' && productById.has(id))
       : block.data.collection_id
@@ -421,6 +450,7 @@ function projectBlocks(
       })
     }
     if (block.type === 'product_grid') {
+      if (data.source === 'recently_viewed') return { ...block, data: { ...data, items: [] } }
       // Explicit selections stay as authored; an unscoped homepage menu uses
       // the merchant's featured dishes, or its ordinary menu when none are featured.
       const collectionId = typeof data.collection_id === 'string' && data.collection_id.trim() ? data.collection_id : null
@@ -433,38 +463,7 @@ function projectBlocks(
           ? productsByCollection.get(collectionId)
           : homepageMenu ? defaultMenuProducts : []
       if (!selected) throw new HTTPError({ statusCode: 500, statusMessage: 'Tenant page collection reference is unavailable' })
-      data.items = selected.map(product => ({
-        id: product.id,
-        title: product.name,
-        description: product.description || undefined,
-        // The product's own surface. An experience is named by its own slug
-        // site-wide; every other product is read under the one location that
-        // publishes it, and a product published in several places has no
-        // single route, so its card carries none.
-        kind: product.kind,
-        featured: product.featured,
-        url: product.public_path ?? '',
-        unavailable: !product.available,
-        value: product.unit_amount === null || !product.currency
-          ? product.pricing_note ?? undefined
-          : product.max_unit_amount !== null && product.max_unit_amount !== product.unit_amount
-            ? `${formatMinorAmount(product.unit_amount, product.currency as CurrencyCode, locale)} – ${formatMinorAmount(product.max_unit_amount, product.currency as CurrencyCode, locale)}`
-            : formatMinorAmount(product.unit_amount, product.currency as CurrencyCode, locale),
-        compare_at: product.compare_at_unit_amount === null || !product.currency
-          ? undefined
-          : formatMinorAmount(product.compare_at_unit_amount, product.currency as CurrencyCode, locale),
-        labelKey: 'site.posts.cta_default',
-        // A grid item carries the one image it is drawn with, which for a
-        // product is its `image` placement — the same cover `hydrateProductMedia`
-        // resolves for every other product surface. It carried the product's
-        // whole placement list instead, and the reader took the head of it;
-        // placements are read slot-ordered, so a product with a `gallery` asset
-        // handed the card that asset rather than its cover, and a gallery video
-        // put an .mp4 in the card's <img src>.
-        media: product.media.filter(item => item.slot === 'image').length
-          ? product.media.filter(item => item.slot === 'image')
-          : product.media.filter(item => item.slot === 'gallery').slice(0, 1),
-      }))
+      data.items = selected.map(product => tenantProductGridItem(product, locale))
     }
     if (block.type === 'location_grid' && Array.isArray(data.location_ids)) {
       data.items = data.location_ids.flatMap((id) => {
@@ -667,4 +666,102 @@ export async function readPublicAuthoredPage(event: H3Event, query: Record<strin
   const page = await getPublicTenantPageForPath(env, env.db, organizationId, path, { locale, preview, event })
   if (!page) throw new HTTPError({ statusCode: 404, statusMessage: 'Tenant page not found' })
   return { success: true as const, page, preview }
+}
+
+/** Visitor-only cards reuse the authored grid's catalog, localization and media projection in one D1 batch. */
+export function prepareRecentlyViewedProducts(
+  target: string | BatchQuery, query: Record<string, unknown>, cookieHeader: string,
+) {
+  const locale = assertExactCanonicalLocale(query.locale)
+  const exclude = query.exclude_product_id
+  if (exclude !== undefined && (typeof exclude !== 'string' || !exclude.trim() || exclude.length > 100)) throw new HTTPError({ statusCode: 400, statusMessage: 'Invalid excluded product' })
+  const excludeProductId = typeof exclude === 'string' ? exclude : null
+  const cookies = parseCookie(cookieHeader)
+  const visitorId = cookies[VISITOR_COOKIE]
+  const targetSql = typeof target === 'string' ? '?' : `(${target.query})`
+  const targetParams = typeof target === 'string' ? [target] : target.params ?? []
+  const scope = `SELECT o.id AS organization_id, o.theme_id, o.vertical, o.default_currency,
+      json_extract(o.settings_json, '$.compliance.address_visibility') AS address_visibility, source.locale AS source_locale,
+      COALESCE((SELECT value FROM json_each(?) WHERE key='cart_' || o.id), '[]') AS cart_json
+    FROM organization o JOIN organization_locales source ON source.organization_id=o.id AND source.is_source=1 AND source.status='published'
+    WHERE o.id=${targetSql} AND ${publicTenantVisibilitySql('o', false)}
+      AND EXISTS (SELECT 1 FROM organization_locales language WHERE language.organization_id=o.id AND language.locale=? AND language.status='published')`
+  const prefix = `WITH personalization_scope AS (${scope}), cart_scope AS (
+    SELECT CASE WHEN json_valid(cart_json) THEN CASE WHEN json_type(cart_json)='array' THEN cart_json ELSE '[]' END ELSE '[]' END AS cart_json FROM personalization_scope
+  ), raw_candidates AS (
+    SELECT v.product_id, v.id AS product_variant_id, CAST(CASE WHEN line.type='object' THEN json_extract(line.value, '$.quantity') END AS INTEGER) AS quantity,
+      0 AS priority, CAST(line.key AS INTEGER) AS position, '' AS viewed_at
+    FROM json_each((SELECT cart_json FROM cart_scope)) line JOIN product_variants v ON v.id=CASE WHEN line.type='object' THEN json_extract(line.value, '$.product_variant_id') END
+      AND v.organization_id=(SELECT organization_id FROM personalization_scope) AND v.active=1
+    UNION ALL
+    SELECT recent.product_id, NULL, 1, 1, 0, recent.viewed_at FROM (
+      SELECT json_extract(payload_json, '$.product_id') AS product_id, MAX(created_at) AS viewed_at
+      FROM analytics_events WHERE organization_id=(SELECT organization_id FROM personalization_scope)
+        AND kind='pageview' AND visitor_id=? AND created_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 days')
+        AND json_extract(payload_json, '$.product_id') IS NOT NULL
+      GROUP BY json_extract(payload_json, '$.product_id') ORDER BY viewed_at DESC LIMIT 12
+    ) recent
+  ), candidates AS (SELECT * FROM raw_candidates WHERE product_id IS NOT ?)`
+  const cartCookies = Object.fromEntries(Object.entries(cookies).filter(([name]) => name.startsWith('cart_')))
+  const params = [JSON.stringify(cartCookies), ...targetParams, locale, visitorId && isCanonicalEventId(visitorId) ? visitorId : null, excludeProductId]
+  const organization = { sql: '(SELECT organization_id FROM personalization_scope)' }
+  const catalog = prepareTenantPageCatalog(organization, { sql: 'NULL' }, { sql: '?', params: [locale] }, false,
+    'p.id IN (SELECT product_id FROM candidates) AND p.active=1')
+  const locations: BatchQuery = { query: `SELECT id, title, slug FROM business_locations WHERE organization_id=${organization.sql} AND status='active'` }
+  const localized = publicLocalizationsQuery(organization, locale)
+  const queries: BatchQuery[] = [
+    { query: 'SELECT * FROM personalization_scope' },
+    { query: 'SELECT * FROM candidates ORDER BY priority, position DESC, viewed_at DESC, product_id' },
+    locations, ...catalog.queries, localized,
+  ]
+  return {
+    queries: queries.map(statement => {
+      const sql = statement.query.trimStart()
+      return { query: `${prefix}${sql.startsWith('WITH ') ? `, ${sql.slice(5)}` : ` ${sql}`}`, params: [...params, ...statement.params ?? []] }
+    }),
+    async read(rows: D1Result[], db: DbClient, env: CloudflareEnv) {
+      const site = rows[0]!.results[0] as (AuthoredPageSite & { organization_id: string; source_locale: string; cart_json: string }) | undefined
+      if (!site) throw new HTTPError({ statusCode: 404, statusMessage: 'Public site language not found' })
+      let cartValue: unknown
+      try { cartValue = JSON.parse(site.cart_json) }
+      catch { throw new HTTPError({ statusCode: 400, statusMessage: 'Cart cookie is invalid' }) }
+      if (!cartLinesSchema.safeParse(cartValue).success) throw new HTTPError({ statusCode: 400, statusMessage: 'Cart cookie is invalid' })
+      const organizationId = site.organization_id
+      if (!isCurrencyCode(site.default_currency)) throw new Error('The public catalog requires a supported currency')
+      const localizations = site.source_locale === locale ? null : indexStoredPublicLocalizations(rows.at(-1)!.results as StoredPublicLocalizationRow[])
+      const source = await catalog.read(rows.slice(3, -1), {
+        db, env, organizationId, locale, site, locations: rows[2]!.results as Array<{ id: string; title: string; slug: string }>, localizations,
+      })
+      const products = new Map(source.products.map(product => [product.id, product]))
+      const cards = new Map(tenantPageProductRows(source, { productIds: [...products.keys()] }, site.default_currency).map(card => [card.id, card]))
+      const candidates = rows[1]!.results as Array<{ product_id: string; product_variant_id: string | null; quantity: number }>
+      const seen = new Set<string>()
+      const items = []
+      for (const candidate of candidates) {
+        if (seen.has(candidate.product_id)) continue
+        const product = products.get(candidate.product_id)
+        const card = cards.get(candidate.product_id)
+        if (!product || !card?.available || !card.public_path) continue
+        const locations = product.locations.filter(location => location.active && location.published && source.locations.some(entry => entry.id === location.location_id))
+        const variants = product.variants.filter(variant => variant.active && (!candidate.product_variant_id || variant.id === candidate.product_variant_id))
+        const available = variants.find(variant => {
+          if (product.kind !== 'item') return true
+          if (!selectPrice(variant.prices, { currency: site.default_currency as CurrencyCode, location_id: null })) return false
+          const stock = Math.max(0, ...variant.inventory_levels.filter(level => locations.some(location => location.location_id === level.location_id)).map(level => level.available))
+          const quantity = purchasableQuantity({ ...variant, available: stock })
+          return quantity === null || quantity >= candidate.quantity
+        })
+        if (!available) continue
+        seen.add(product.id)
+        const price = candidate.product_variant_id ? selectPrice(available.prices, { currency: site.default_currency, location_id: null }) : null
+        const picture = candidate.product_variant_id && available.media_asset_id ? source.media.get(product.id)?.find(asset => asset.asset_id === available.media_asset_id) : null
+        items.push({ ...tenantProductGridItem(price ? { ...card, unit_amount: price.unit_amount, max_unit_amount: price.unit_amount,
+          currency: price.currency, compare_at_unit_amount: price.compare_at_unit_amount } : card, locale),
+          cart_recovery: candidate.product_variant_id !== null,
+          ...(candidate.product_variant_id ? { url: '/cart' } : {}), ...(picture ? { media: [picture] } : {}) })
+        if (items.length === 8) break
+      }
+      return { items }
+    },
+  }
 }

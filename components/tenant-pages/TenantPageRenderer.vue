@@ -101,7 +101,7 @@
         </div>
       </template>
 
-      <template v-else-if="block.type === 'feature_grid' || block.type === 'testimonial_grid' || block.type === 'product_grid' || block.type === 'location_grid' || block.type === 'page_grid'">
+      <template v-else-if="block.type === 'feature_grid' || block.type === 'testimonial_grid' || block.type === 'location_grid' || block.type === 'page_grid'">
         <section class="my-12">
           <h2 v-if="gridTitle(block)" class="mb-6 text-2xl font-semibold">{{ gridTitle(block) }}</h2>
           <div class="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
@@ -276,10 +276,7 @@ function asItems(value: unknown): GridItem[] {
 }
 
 function gridTitle(block: TenantPageBlock): string {
-  const title = text(block.data.title)
-  if (title || block.type !== 'product_grid') return title
-  const items = asItems(block.data.items)
-  return items.length && items.every(item => item.featured) ? t('site.posts.featured') : ''
+  return text(block.data.title)
 }
 
 /**
@@ -292,7 +289,7 @@ function gridTitle(block: TenantPageBlock): string {
  * a search for whichever media turns up.
  */
 function referencesResources(block: TenantPageBlock): boolean {
-  if (block.type === 'page_grid' || block.type === 'product_grid' || block.type === 'location_grid') return true
+  if (block.type === 'page_grid' || block.type === 'location_grid') return true
   return text(block.data.source) !== '' && text(block.data.source) !== 'manual'
 }
 

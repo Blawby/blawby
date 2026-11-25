@@ -829,5 +829,7 @@
   "checkout_state.start_again": "처음부터 다시",
   "checkout_state.sign_in": "로그인",
   "checkout_state.unavailable_help": "링크가 불완전하거나 다른 계정의 링크일 수 있습니다.",
-  "checkout_state.back_to": "{business}(으)로 돌아가기"
+  "checkout_state.back_to": "{business}(으)로 돌아가기",
+  "shop.recently_viewed": "최근 본 상품",
+  "shop.recently_viewed_failed": "최근 본 상품을 불러오지 못했습니다."
 }

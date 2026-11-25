@@ -829,5 +829,7 @@
   "checkout_state.start_again": "Bắt đầu lại",
   "checkout_state.sign_in": "Đăng nhập",
   "checkout_state.unavailable_help": "Liên kết có thể không đầy đủ hoặc thuộc về tài khoản khác.",
-  "checkout_state.back_to": "Quay lại {business}"
+  "checkout_state.back_to": "Quay lại {business}",
+  "shop.recently_viewed": "Đã xem gần đây",
+  "shop.recently_viewed_failed": "Không thể tải các sản phẩm đã xem gần đây."
 }

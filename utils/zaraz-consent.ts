@@ -1,3 +1,5 @@
+import { parseCookie } from 'cookie-es'
+
 export const ZARAZ_ANALYTICS_PURPOSE_ID = 'kc_analytics'
 
 // Zaraz owns this cookie: it holds the visitor's answer for every purpose. Its
@@ -14,3 +16,16 @@ export const ZARAZ_CONSENT_COOKIE_NAME = 'kc_analytics_consent'
  */
 export const NATIVE_PAGEVIEW_ZARAZ_EVENT = 'blawby_native_pageview'
 export const LEGACY_NATIVE_PAGEVIEW_ZARAZ_EVENT = 'krabiclaw_native_pageview'
+
+/**
+ * The visitor's own answer to the analytics purpose, from their Zaraz consent cookie. `absent`
+ * means they have not answered (or the cookie is unreadable): that is not consent.
+ */
+export function readAnalyticsConsent(cookieHeader: string): 'accepted' | 'rejected' | 'absent' {
+  const raw = parseCookie(cookieHeader)[ZARAZ_CONSENT_COOKIE_NAME]
+  if (!raw) return 'absent'
+  let purposes: unknown
+  try { purposes = JSON.parse(raw) } catch { return 'absent' }
+  if (typeof purposes !== 'object' || purposes === null) return 'absent'
+  return (purposes as Record<string, unknown>)[ZARAZ_ANALYTICS_PURPOSE_ID] === true ? 'accepted' : 'rejected'
+}

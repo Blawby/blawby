@@ -2,6 +2,10 @@ import { expect, test } from '@playwright/test'
 import { openTenantPage } from './helpers'
 import { seededTenant } from './seed/manifest'
 import { seededSiteHeaders, seededSiteURL } from './test-env'
+import { SeedClient } from './seed/client'
+import { E2E_PASSWORD, findE2eAuthFixture } from '../../config/development-auth-fixtures'
+
+test.describe.configure({ mode: 'serial' })
 
 test('physical product media, variant SEO and mobile cart quantities work through the storefront', async ({ page }) => {
   const tenant = seededTenant('experience')
@@ -81,4 +85,95 @@ test('physical product media, variant SEO and mobile cart quantities work throug
   await page.screenshot({ path: test.info().outputPath('mobile-cart.png') })
   await page.locator('header').screenshot({ path: test.info().outputPath('mobile-header.png') })
   expect(errors).toEqual([])
+})
+
+test('recently viewed and cart cards stay private, tenant-scoped and consented with one D1 batch', async ({ page, context, browser }) => {
+  const tenant = seededTenant('experience')
+  const product = tenant.products['ceramic-bowl']!
+  const base = seededSiteURL('experience')
+  const headers = seededSiteHeaders('experience')
+  const home = await openTenantPage(page, base + '/', headers)
+  expect(home?.status()).toBe(200)
+  await expect(page.locator('[data-recently-viewed]')).toHaveCount(0)
+  await context.addCookies([{ name: 'kc_analytics_consent', value: encodeURIComponent(JSON.stringify({ kc_analytics: true })), url: base }])
+  await page.goto(`${base}/products/${product.slug}`)
+  await expect(page.getByRole('heading', { name: product.name, exact: true })).toBeVisible()
+  await expect.poll(async () => (await context.cookies()).some(cookie => cookie.name === 'kc_visitor_id')).toBe(true)
+  const wheel = tenant.products['wheel-class']!
+  const recorded = page.waitForResponse(response => response.url().endsWith('/api/analytics/track')
+    && response.request().method() === 'POST' && response.request().postDataJSON()?.event_type === 'pageview'
+    && response.request().postDataJSON()?.page_path === `/experiences/${wheel.slug}`)
+  await page.goto(`${base}/experiences/${wheel.slug}?location_id=${tenant.locations['ao-nang']!.id}`)
+  expect((await recorded).status()).toBe(200)
+  await expect(page.locator('[data-recently-viewed]').getByText(product.name, { exact: true })).toBeVisible()
+  await expect(page.locator('[data-recently-viewed]').getByText(wheel.name, { exact: true })).toHaveCount(0)
+  const returned = await page.goto(base + '/')
+  expect(returned?.status()).toBe(200)
+  // SSR has no visitor products, even when the request carries the cart/history cookies.
+  expect(await returned!.text()).not.toContain(product.name)
+  const row = page.locator('[data-recently-viewed]')
+  await expect(row.getByText(product.name, { exact: true })).toBeVisible()
+  const endpoint = base + '/api/public/products?recently_viewed=true&locale=en'
+  const recent = await context.request.get(endpoint, { headers })
+  expect(recent.status(), await recent.text()).toBe(200)
+  expect(recent.headers()['cache-control']).toBe('private, no-store, max-age=0')
+  expect(recent.headers()['set-cookie']).toBeUndefined()
+  expect((await recent.json()).items.map((item: { id: string }) => item.id)).toEqual([wheel.id, product.id])
+  const cookies = (await context.cookies()).map(cookie => cookie.name).sort()
+  const fresh = await browser.newContext()
+  try {
+    const empty = await fresh.request.get(endpoint, { headers })
+    expect(empty.status(), await empty.text()).toBe(200)
+    expect(await empty.json()).toEqual({ items: [] })
+    expect(Number(recent.headers()['x-d1-round-trip-count'])).toBe(1)
+    expect(Number(recent.headers()['x-d1-batch-count'])).toBe(1)
+    expect(Number(recent.headers()['x-d1-single-count'])).toBe(0)
+  } finally { await fresh.close() }
+  const other = await context.request.get(endpoint, { headers: seededSiteHeaders('restaurant') })
+  expect(other.status(), await other.text()).toBe(200)
+  expect(await other.json()).toEqual({ items: [] })
+  await page.goto(`${base}/products/${product.slug}`)
+  await page.getByRole('button', { name: 'Large', exact: true }).click()
+  await expect(page).toHaveURL(/[?&]variant=/)
+  await page.getByRole('button', { name: 'Add to cart', exact: true }).click()
+  await page.goto(base + '/')
+  await expect(row.locator('[data-carousel-item]')).toHaveCount(2)
+  await expect(row.locator('[data-carousel-item]').first()).toHaveAttribute('href', '/cart')
+  await expect(row).toContainText('80,000.00')
+  await expect(row).toContainText('Checkout')
+  await row.screenshot({ path: test.info().outputPath('recently-viewed-cart.png') })
+  const cartPage = await page.goto(base + '/cart')
+  expect(cartPage?.status()).toBe(200)
+  const cartCookie = (await context.cookies()).find(cookie => cookie.name === `cart_${tenant.organizationId}`)!
+  const variantId = (JSON.parse(decodeURIComponent(cartCookie.value)) as Array<{ product_variant_id: string }>)[0]!.product_variant_id
+  expect(await cartPage!.text()).not.toContain(variantId)
+  await expect(page.getByRole('spinbutton')).toHaveValue('1')
+  await page.goto(base + '/')
+  const fixture = findE2eAuthFixture('user-e2e-pottery-owner')
+  const owner = await SeedClient.signedIn(base, fixture.email, E2E_PASSWORD)
+  const before = await owner.tool<{ product: { updated_at: string; active: boolean } }>(tenant.organizationId, 'get_product', { product_id: product.id })
+  try {
+    await owner.tool(tenant.organizationId, 'update_product', { product_id: product.id, updated_at: before.product.updated_at, active: false })
+    const unavailable = await context.request.get(endpoint, { headers })
+    expect(unavailable.status(), await unavailable.text()).toBe(200)
+    expect((await unavailable.json()).items.map((item: { id: string }) => item.id)).toEqual([wheel.id])
+    await page.reload()
+    await expect(row.getByText(product.name, { exact: true })).toHaveCount(0)
+    await expect(row.getByText(wheel.name, { exact: true })).toBeVisible()
+  } finally {
+    const changed = await owner.tool<{ product: { updated_at: string } }>(tenant.organizationId, 'get_product', { product_id: product.id })
+    await owner.tool(tenant.organizationId, 'update_product', { product_id: product.id, updated_at: changed.product.updated_at, active: before.product.active })
+    await owner.dispose()
+  }
+  const restored = await context.request.get(endpoint, { headers })
+  expect(restored.status(), await restored.text()).toBe(200)
+  expect((await restored.json()).items[0].id).toBe(product.id)
+  await context.addCookies([{ name: 'kc_analytics_consent', value: encodeURIComponent(JSON.stringify({ kc_analytics: false })), url: base }])
+  await page.evaluate(() => document.dispatchEvent(new Event('zarazConsentChoicesUpdated')))
+  await expect(row).toHaveCount(0)
+  const declined = await context.request.get(endpoint, { headers })
+  expect(declined.status(), await declined.text()).toBe(200)
+  expect(await declined.json()).toEqual({ items: [] })
+  // This read adds no identity, history or personalization cookie.
+  expect((await context.cookies()).map(cookie => cookie.name).filter(name => !cookies.includes(name))).toEqual([`cart_${tenant.organizationId}`].filter(name => !cookies.includes(name)))
 })

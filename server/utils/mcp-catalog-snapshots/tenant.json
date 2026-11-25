@@ -1,7 +1,7 @@
 {
   "surface": "tenant",
-  "fingerprint": "sha256:ebe16767bf61c785a054e5499e0c2b44f652ffc422180f1431e384f028f97a94",
-  "documentationFingerprint": "sha256:7ce221902c8838aad4b86bb652aec023c2466c5f321aa43afd75195543c6f620",
+  "fingerprint": "sha256:898c459ec3cca3f794f19bc7212d8fb2aaf3b2dabe20c6523352c22d671f52bd",
+  "documentationFingerprint": "sha256:8b86fe77fa0c6c1c5a21be149581633ef1f181f2dd94b90eb0827753b7b1b02e",
   "tools": [
     {
       "name": "add_organization_language",
@@ -1553,6 +1553,17 @@
                 },
                 "type": "array",
                 "uniqueItems": true
+              },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "title": {
                 "type": [
@@ -5045,6 +5056,17 @@
                 },
                 "type": "array",
                 "uniqueItems": true
+              },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "title": {
                 "type": [
@@ -17151,6 +17173,17 @@
                 "type": "array",
                 "uniqueItems": true
               },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": [
                   "string",
@@ -22938,6 +22971,17 @@
                 },
                 "type": "array",
                 "uniqueItems": true
+              },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "title": {
                 "type": [
@@ -31564,6 +31608,17 @@
                 "type": "array",
                 "uniqueItems": true
               },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": [
                   "string",
@@ -35420,6 +35475,17 @@
                 },
                 "type": "array",
                 "uniqueItems": true
+              },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "title": {
                 "type": [
@@ -40080,6 +40146,17 @@
                 },
                 "type": "array",
                 "uniqueItems": true
+              },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "title": {
                 "type": [
@@ -45307,6 +45384,17 @@
                 },
                 "type": "array",
                 "uniqueItems": true
+              },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "title": {
                 "type": [
@@ -59398,6 +59486,17 @@
                 "type": "array",
                 "uniqueItems": true
               },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": [
                   "string",
@@ -63894,6 +63993,17 @@
                 },
                 "type": "array",
                 "uniqueItems": true
+              },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "title": {
                 "type": [
@@ -77155,6 +77265,17 @@
                 "type": "array",
                 "uniqueItems": true
               },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": [
                   "string",
@@ -82126,6 +82247,17 @@
                 },
                 "type": "array",
                 "uniqueItems": true
+              },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "title": {
                 "type": [
@@ -94503,6 +94635,17 @@
                 "type": "array",
                 "uniqueItems": true
               },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": [
                   "string",
@@ -96500,6 +96643,17 @@
                 },
                 "type": "array",
                 "uniqueItems": true
+              },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "title": {
                 "type": [
@@ -109243,6 +109397,17 @@
                 },
                 "type": "array",
                 "uniqueItems": true
+              },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "title": {
                 "type": [
@@ -124440,6 +124605,17 @@
                 "type": "array",
                 "uniqueItems": true
               },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": [
                   "string",
@@ -128301,6 +128477,17 @@
                 "type": "array",
                 "uniqueItems": true
               },
+              "source": {
+                "enum": [
+                  "manual",
+                  "recently_viewed",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": [
                   "string",
@@ -131477,7 +131664,7 @@
         "text": "Update the catalog from: <items_description> Use get_workspace_context, list_organizations and list_locations to resolve the business and explicit location. Read every relevant list_location_products and list_collections page before matching existing IDs. For a restaurant menu, use update_menu with a stable idempotency_key, the stated sections and prices. Match existing product, variant, price and collection IDs. Omitted items and order remain; use set_collection_products or reorder_collections only when the user requests a complete new order. For other products, use create_product for new entries or update_product for partial edits. Use reconcile_products only when the user requests complete replacement of the supplied entries. Ask for missing prices or booking facts. Use get_product and list_location_products to read back the result, then open the returned public URL before reporting completion."
       },
       "toolContracts": {
-        "create_product": "sha256:45fc5304de2c06fd9aaf3a5d18ccaed85ff969f7b9b80432db9662257e352280",
+        "create_product": "sha256:b065c9c2584ab8bc039aa8f72fd3e28b935724d8d822f40baf908d0168c49f1d",
         "get_product": "sha256:664085dcee02d6324c765947d9dd9527b981d43b63b97484408552fa6d721a8e",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_collections": "sha256:7eb8f62291a619df46fa146bc6142f898aac1de8bda513b7a0bf92182faff563",
@@ -131532,7 +131719,7 @@
       },
       "toolContracts": {
         "attach_media": "sha256:f046b62dae00908f2346a6e1a89eb674c6476716829673f15593c20c128bd1f5",
-        "create_product": "sha256:45fc5304de2c06fd9aaf3a5d18ccaed85ff969f7b9b80432db9662257e352280",
+        "create_product": "sha256:b065c9c2584ab8bc039aa8f72fd3e28b935724d8d822f40baf908d0168c49f1d",
         "get_product": "sha256:664085dcee02d6324c765947d9dd9527b981d43b63b97484408552fa6d721a8e",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_locations": "sha256:7dd88e7fc4bd7ec81ea85799fc2bfd56d6e492a30ddab39669e4286937b9efdd",
@@ -131578,14 +131765,14 @@
       },
       "toolContracts": {
         "attach_media": "sha256:f046b62dae00908f2346a6e1a89eb674c6476716829673f15593c20c128bd1f5",
-        "get_site_page": "sha256:482ebe0f69cd34d7e8178e56141c0ff05d1400f10dc03aa8e0a362a5445d4427",
+        "get_site_page": "sha256:78687eb713625ca0df8bd1c7a0f99b93e9aad860c41779e3704cd6eaeb0cc5a2",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_media_assets": "sha256:97b5782d44d8cf6d41886665ca3b9eb4c48d0f6bedd95989ec2f671c4a651ee7",
         "list_site_pages": "sha256:5a49aa342807192ee45d329880f2f459d1914154e9a04a43562c0ea3587879cc",
         "remove_media": "sha256:19518531ae2928171943528ba7cb1e57ce9c7c46eb8d5076b1070dc989b5ce77",
         "reorder_media": "sha256:f50b93cc3e0a1235b9a70d601d2b51a671a7e91df895f2e2ee066ee8a568a3a8",
         "set_media": "sha256:3d36f1a257f4ca8e1d85c4d0c8623ee2203656d1d7f52c45260c60f9fb6cb4e8",
-        "update_site_page": "sha256:467bad83026861320c7ed582236f5c4b5f2cec39cbf5e7f74a8e976d34c9a7c1"
+        "update_site_page": "sha256:ad3bed9848189c97eb291b07c38a707d5ed06f2eaa7e6e97ce7635b0af30b8f2"
       }
     },
     {
@@ -131601,7 +131788,7 @@
         "get_location": "sha256:eeb473e44df629a24ceb82a2db6873a6b1f108dd852c2fa923f605a637439f34",
         "get_post": "sha256:fd95e9d97a5f0624dda58886752832eee80a1fef08c9c7a64d8c2af4ff3481d1",
         "get_product": "sha256:664085dcee02d6324c765947d9dd9527b981d43b63b97484408552fa6d721a8e",
-        "get_site_page": "sha256:482ebe0f69cd34d7e8178e56141c0ff05d1400f10dc03aa8e0a362a5445d4427",
+        "get_site_page": "sha256:78687eb713625ca0df8bd1c7a0f99b93e9aad860c41779e3704cd6eaeb0cc5a2",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "save_media_attachment": "sha256:01fd8d271c4692c887b04d77ae9d58c547b4973183b71591e9b1e48078ad228a",
         "set_media": "sha256:3d36f1a257f4ca8e1d85c4d0c8623ee2203656d1d7f52c45260c60f9fb6cb4e8"
@@ -131616,9 +131803,9 @@
         "text": "Use get_workspace_context and list_organizations to resolve the business. For an unfinished website use get_website_draft, save_website_draft and publish_website with the returned draft_id and updated_at. For an existing website use get_organization, list_locations, list_site_pages, get_site_page and list_products to identify the missing facts. Check for missing brand assets like logo, favicon, social card, palette colors, hero media, and about page story. Ask for those facts, use update_organization_settings, update_site_page, update_menu or create_product for the requested setup, and read back its public result."
       },
       "toolContracts": {
-        "create_product": "sha256:45fc5304de2c06fd9aaf3a5d18ccaed85ff969f7b9b80432db9662257e352280",
+        "create_product": "sha256:b065c9c2584ab8bc039aa8f72fd3e28b935724d8d822f40baf908d0168c49f1d",
         "get_organization": "sha256:be4891efa8ad393a88869138bf2dacb5a66a3af6005298cfbd261f378cb6c1aa",
-        "get_site_page": "sha256:482ebe0f69cd34d7e8178e56141c0ff05d1400f10dc03aa8e0a362a5445d4427",
+        "get_site_page": "sha256:78687eb713625ca0df8bd1c7a0f99b93e9aad860c41779e3704cd6eaeb0cc5a2",
         "get_website_draft": "sha256:c1444d21ed13337ab56e9d48764d8befe1e0016ba625bc70c8b7d6f29d179d24",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_locations": "sha256:7dd88e7fc4bd7ec81ea85799fc2bfd56d6e492a30ddab39669e4286937b9efdd",
@@ -131629,7 +131816,7 @@
         "save_website_draft": "sha256:cc23867aade1082cec3c33941dfe9bef31d4cfc6b7e1077bce1ec94f471f6439",
         "update_menu": "sha256:5dbb34f76e421c12837d6b0d97f070c986f3e4a0b29b1b2e96a0411444a489a0",
         "update_organization_settings": "sha256:4f1a62735af2470e974d07b775594aa2a76f8526128c444ee7ad240783d50f13",
-        "update_site_page": "sha256:467bad83026861320c7ed582236f5c4b5f2cec39cbf5e7f74a8e976d34c9a7c1"
+        "update_site_page": "sha256:ad3bed9848189c97eb291b07c38a707d5ed06f2eaa7e6e97ce7635b0af30b8f2"
       }
     },
     {
@@ -131662,14 +131849,14 @@
       },
       "toolContracts": {
         "attach_media": "sha256:f046b62dae00908f2346a6e1a89eb674c6476716829673f15593c20c128bd1f5",
-        "get_site_page": "sha256:482ebe0f69cd34d7e8178e56141c0ff05d1400f10dc03aa8e0a362a5445d4427",
+        "get_site_page": "sha256:78687eb713625ca0df8bd1c7a0f99b93e9aad860c41779e3704cd6eaeb0cc5a2",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_media_assets": "sha256:97b5782d44d8cf6d41886665ca3b9eb4c48d0f6bedd95989ec2f671c4a651ee7",
         "list_products": "sha256:76e112cfe8092528c778c4d066d079837db14504dab1eec99eefd21b499e7970",
         "list_site_pages": "sha256:5a49aa342807192ee45d329880f2f459d1914154e9a04a43562c0ea3587879cc",
         "set_media": "sha256:3d36f1a257f4ca8e1d85c4d0c8623ee2203656d1d7f52c45260c60f9fb6cb4e8",
         "update_product": "sha256:18737d9b30d603dea80e8f9acf0ed5baec09e10c8ea7250eabe4340001e4fd34",
-        "update_site_page": "sha256:467bad83026861320c7ed582236f5c4b5f2cec39cbf5e7f74a8e976d34c9a7c1"
+        "update_site_page": "sha256:ad3bed9848189c97eb291b07c38a707d5ed06f2eaa7e6e97ce7635b0af30b8f2"
       }
     },
     {

@@ -486,6 +486,10 @@
       </section>
     </article>
     <slot name="content" :can-book="canBook" />
+    <TenantProductGridBlock
+      v-if="!pageDocument?.blocks.some(block => block.type === 'product_grid' && block.data.source === 'recently_viewed')"
+      recently-viewed :exclude-product-id="product.id"
+    />
   </div>
 </template>
 

@@ -47,7 +47,7 @@ import { prepareTenantPageEditor, websiteEditorOrganization } from '~/server/uti
 import { prepareConnectionSummary, prepareWebsiteSettings } from '~/server/utils/organization-settings'
 import { prepareOrganizationReviews } from '~/server/utils/organization-reviews'
 import { preparePublicLocationDocument } from '~/server/utils/public-route'
-import { preparePublicAuthoredPage } from '~/server/utils/public-tenant-pages'
+import { preparePublicAuthoredPage, prepareRecentlyViewedProducts } from '~/server/utils/public-tenant-pages'
 import { preparePublicInquiryForm } from '~/server/domain/form-questions'
 import { isDocumentOnlyPublicPath } from '~/shared/public-locale-routes'
 import { blogPostCategoriesQuery, prepareBlogList, prepareBlogPost } from '~/server/utils/content/publishing'
@@ -81,6 +81,7 @@ import { platformLocale } from '~/shared/platform-locales'
 import { publicLocalizationsQuery, type StoredPublicLocalizationRow } from '~/server/utils/public-localization'
 import { preparePublicShellRows, publicDocumentCollectionKind, type PublicDocumentShell } from '~/server/utils/public-shell-query'
 import { isRecord } from '~/server/utils/type-guards'
+import { readAnalyticsConsent } from '~/utils/zaraz-consent'
 import { openPaymentReturnDocument, paymentReturnDocumentGuard, sealPaymentReturnDocument, type AuthorizedPaymentReturnDocument } from '~/server/utils/payment-return-document'
 
 interface TenantRow extends Omit<PublicBase['organization'], 'theme_id' | 'name'>, Omit<PublicConfigRow, 'default_currency'> {
@@ -163,7 +164,8 @@ function tenantSelectFor(event: H3Event) {
 async function readTenantFromHost(event: H3Event, db: DbClient, canonicalDomain: string, selection: string, parameters: string[]) {
   const read = tenantSelectFor(event)
   const host = { query: `${read.query}, ${canonicalDomain} AS canonical_domain ${selection} LIMIT 1`, params: [...read.params, ...parameters] }
-  if (event.url.searchParams.has(PREVIEW_TOKEN_QUERY) || getCookie(event, PREVIEW_COOKIE_NAME)) {
+  if ((event.url.searchParams.has(PREVIEW_TOKEN_QUERY) || getCookie(event, PREVIEW_COOKIE_NAME))
+    && !(event.url.pathname === '/api/public/products' && event.url.searchParams.get('recently_viewed') === 'true')) {
     return queryFirst<TenantRow>(db, host.query, host.params)
   }
 
@@ -246,6 +248,15 @@ async function readTenantFromHost(event: H3Event, db: DbClient, canonicalDomain:
     if (tenant?.status === 'active' && tenant.onboarding_status === 'active') {
       event.context.guestReceipt = { requestId, locale, plan, rows } satisfies GuestReceiptRead
     }
+    return tenant ?? null
+  }
+
+  if (path === '/api/public/products' && getQuery(event).recently_viewed === 'true'
+    && readAnalyticsConsent(event.req.headers.get('cookie') ?? '') === 'accepted') {
+    const plan = prepareRecentlyViewedProducts(tenantScope, getQuery(event), event.req.headers.get('cookie') ?? '')
+    const [hostRows, ...rows] = await executeBatch(db, [host, ...plan.queries], { operation: 'Read tenant and recently viewed products' })
+    const tenant = hostRows?.results[0] as TenantRow | undefined
+    if (tenant?.status === 'active' && tenant.onboarding_status === 'active') event.context.recentlyViewedProducts = { plan, rows }
     return tenant ?? null
   }
 

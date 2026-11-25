@@ -829,5 +829,7 @@
   "checkout_state.start_again": "Recommencer",
   "checkout_state.sign_in": "Se connecter",
   "checkout_state.unavailable_help": "Le lien est peut-être incomplet ou appartient à un autre compte.",
-  "checkout_state.back_to": "Retour à {business}"
+  "checkout_state.back_to": "Retour à {business}",
+  "shop.recently_viewed": "Consultés récemment",
+  "shop.recently_viewed_failed": "Impossible de charger les produits consultés récemment."
 }

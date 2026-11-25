@@ -9,7 +9,7 @@ import { dashboardMemberQuery, dashboardOrgQueryParam, getDashboardMemberContext
 import { cloudflareEnv, readRequiredBody } from '~/server/utils/api-response'
 import { assignedMemberSql, BATCH_VIEWER, joinedMemberPrincipal, memberAccessPrincipal, membershipBySlugQuery, roleAllows, withViewer } from '~/server/utils/member-access'
 import { bookedRecordsInRange, type BookedRecordInRange } from '~/server/domain/product-bookings'
-import { BOOKING_RECORDS_SQL, guestRequestMappingQuery, guestRequestQuery, requestActions, threadOperationalRecordFromRow, threadOperationalRecordQuery, validateGuestRequest, type BookedRecord } from '~/server/domain/requests'
+import { BOOKING_RECORDS_SQL, bookingDay, guestRequestMappingQuery, guestRequestQuery, requestActions, threadOperationalRecordFromRow, threadOperationalRecordQuery, validateGuestRequest, type BookedRecord } from '~/server/domain/requests'
 import { guestReplyAccountQuery, guestReplyDestination, type GuestReplyAccount } from '~/server/domain/guest-threads/operations'
 import { pendingStayChangesFromRows, pendingStayChangesQuery } from '~/server/domain/guest-threads/stay-change-requests'
 import { calendarStays, canReleaseStayNights, dashboardStayEditQueries, prepareStayReservationHome, stayAccessFor, stayCalendarOf, stayCalendarQueries, stayDetailFrom, stayDetailQuery, stayDetailSelection, type StayHome, type StayNight, type StayReservationHome } from '~/server/domain/stays'
@@ -17,7 +17,8 @@ import { guestThreadChannelQuery, parseGuestThreadChannel, type GuestThreadChann
 import { sourceLocaleFromRows, sourceLocaleQuery } from '~/server/utils/localization'
 import { placesCalendarOf, placesCalendarQueries, placesPresenceQuery, placesWindow } from '~/server/domain/places'
 import { prepareStaffBookingDetails } from '~/server/utils/dashboard-booking-details'
-import { isChannelManagedStay } from '~/shared/bookings'
+import { isChannelManagedStay, stayGuestFirstName } from '~/shared/bookings'
+import { messageListPage } from '~/server/domain/guest-message-schedule'
 import { groupMediaPlacements, mediaPlacementsQuery } from '~/server/utils/media-asset-manager'
 import { mediaStillUrl } from '~/shared/media-placement-contract'
 import { productPhotosFromPlacements } from '~/server/utils/media-placement'
@@ -143,12 +144,12 @@ export async function dashboardBookingDetails(event: H3Event, record?: { orgSlug
   const plan = prepareDashboardBookingRead(membership, bookingId)
   const rows = preloaded ?? await executeBatch(db, [membership, ...plan.queries], { operation: 'Read the staff reservation' })
   const { access, organization, booking, session } = await dashboardBookingContext(event, 'read', undefined, record, rows)
-  const viewer = { userId: session.user.id, verifiedEmail: session.user.emailVerified ? session.user.email : null, canManage: Boolean(access.manage || booking.operates || booking.assigned) }
-  const agreementOf = () => bookingAgreementFromRows(rows.slice(plan.agreementOffset), viewer, { userId: session.user.id, name: session.user.name })
+  const viewer = { userId: session.user.id, verifiedEmail: session.user.emailVerified ? session.user.email : null, canManage: Boolean(access.manage || booking.operates || booking.assigned), guest: false }
+  const agreementOf = () => bookingAgreementFromRows(env, rows.slice(plan.agreementOffset), viewer, { userId: session.user.id, name: session.user.name })
   if (booking.unit === 'slot') {
     const facts = rows.slice(2, plan.stayOffset)
     const canReadPayments = await roleAllows({ ...organization, permissions: { payments: ['read'] } })
-    return { booking: { ...await plan.timed.read(db, env, facts, canReadPayments), ...agreementOf() }, manage: access.manage }
+    return { booking: { ...await plan.timed.read(db, env, facts, canReadPayments), ...await agreementOf() }, manage: access.manage }
   }
   if (!access.manage) {
     const [stayRows, houseRows, media] = await executeBatch(db, [
@@ -188,10 +189,10 @@ export async function dashboardBookingDetails(event: H3Event, record?: { orgSlug
   const pending_changes = stay.channel === 'airbnb' && channelOwned && changes!.results.length
     ? pendingStayChangesFromRows(changes!.results, bookingId, sourceLocaleFromRows(organization.id, locale!.results).locale)
     : []
-  return { booking: { ...nightBooking(stay), available_actions, pending_changes, ...agreementOf() }, manage: true, home: { ...home, image_url: home.photo_urls[0] ?? null }, can_message_guest: canMessageGuest }
+  return { booking: { ...nightBooking(stay), available_actions, pending_changes, ...await agreementOf() }, manage: true, home: { ...home, image_url: home.photo_urls[0] ?? null }, can_message_guest: canMessageGuest }
 }
 
-interface BookingListQuery { unit?: unknown; from?: unknown; to?: unknown; product_id?: unknown; include_cancelled?: unknown }
+interface BookingListQuery { location_id?: unknown; unit?: unknown; from?: unknown; to?: unknown; product_id?: unknown; include_cancelled?: unknown }
 
 function bookingListWindow(query: BookingListQuery) {
   const { unit, from, to, product_id: productId } = query
@@ -200,7 +201,9 @@ function bookingListWindow(query: BookingListQuery) {
     throw new HTTPError({ statusCode: 422, message: 'Choose calendar dates with to after from' })
   }
   if (productId !== undefined && (typeof productId !== 'string' || !productId)) throw new HTTPError({ statusCode: 422, message: 'Invalid product ID' })
-  return { unit, from, to, productId, includeCancelled: query.include_cancelled === 'true' }
+  const locationId = query.location_id
+  if (locationId !== undefined && (typeof locationId !== 'string' || !locationId.trim())) throw new HTTPError({ statusCode: 422, message: 'Choose a valid location', data: { code: 'INVALID_BOOKING_FILTER', field: 'location_id' } })
+  return { unit, from, to, productId, locationId, includeCancelled: query.include_cancelled === 'true' }
 }
 
 type BookingWindow = ReturnType<typeof bookingListWindow>
@@ -219,7 +222,7 @@ function timedBookings(records: BookedRecordInRange[], { productId, from, to }: 
 /** The booked records of the window the caller may see, in one statement: a member's are those of the offerings and homes they are named on. */
 async function readBookedRecords({ db, organization, userId }: DashboardBookingsContext, window: BookingWindow) {
   const [records] = await executeBatch(db, [withViewer(membershipBySlugQuery(organization.slug, userId), bookedRecordsInRange(BATCH_VIEWER, { ...window, cancelled: window.includeCancelled, includeAssignedStays: true, includePayments: true }))], { operation: 'Read booked records' })
-  return (records!.results as BookedRecordInRange[])
+  return (records!.results as BookedRecordInRange[]).filter(record => !window.locationId || record.location_id === window.locationId)
 }
 
 export async function dashboardBookingList(event: H3Event, query: BookingListQuery) {
@@ -228,6 +231,36 @@ export async function dashboardBookingList(event: H3Event, query: BookingListQue
   const records = await readBookedRecords(context, window)
   const stays = window.unit === 'slot' ? [] : calendarStays(records, context.access.manage, window, record => !window.productId || record.product_id === window.productId)
   return { bookings: [...(window.unit === 'nights' ? [] : timedBookings(records, window)), ...stays], manage: context.access.manage }
+}
+
+/**
+ * Bookings found by who made them or what was booked, across every date,
+ * newest first (#2103): the web calendar's and the app's booking search. The
+ * reader sees what the booked records already let them read in full.
+ */
+export async function dashboardBookingSearch(event: H3Event, query: { q?: unknown; limit?: unknown; offset?: unknown }) {
+  const q = typeof query.q === 'string' ? query.q.trim() : ''
+  if (!q || q.length > 200) throw new HTTPError({ statusCode: 422, message: 'Search for 1 to 200 characters', data: { code: 'INVALID_SEARCH', field: 'q' } })
+  const limit = query.limit === undefined ? 20 : Number(query.limit)
+  const offset = query.offset === undefined ? 0 : Number(query.offset)
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new HTTPError({ statusCode: 422, message: 'limit must be 1 to 50', data: { code: 'INVALID_LIMIT', field: 'limit' } })
+  if (!Number.isInteger(offset) || offset < 0) throw new HTTPError({ statusCode: 422, message: 'offset must be 0 or more', data: { code: 'INVALID_OFFSET', field: 'offset' } })
+  const { db, organization, userId, access } = await dashboardBookingsContext(event)
+  const [records] = await executeBatch(db, [withViewer(membershipBySlugQuery(organization.slug, userId),
+    bookedRecordsInRange(BATCH_VIEWER, { search: { q, limit: limit + 1, offset }, cancelled: true, includeAssignedStays: true }))], { operation: 'Search bookings' })
+  const { items, pagination } = messageListPage(records!.results as BookedRecordInRange[], { limit, offset })
+  return {
+    bookings: items.map(record => ({
+      booking_id: record.id, unit: record.unit, status: record.status, product_id: record.product_id, product_kind: record.product_kind, product_name: record.product_name,
+      location_title: record.location_title,
+      // A member who looks after a home reads its guest by first name, as its turnover does.
+      guest_name: record.unit === 'nights' && !access.manage ? stayGuestFirstName(record.guest_name) : record.guest_name,
+      channel: record.channel, starts_at: record.starts_at, ends_at: record.ends_at, timezone: record.timezone,
+      day: bookingDay(record.starts_at, record.timezone),
+      conversation_id: record.viewer_seated ? record.conversation_id : null,
+    })),
+    pagination,
+  }
 }
 
 /**

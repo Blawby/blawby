@@ -10,7 +10,7 @@ import { bookingDay } from '~/server/domain/requests'
 import { groupMediaPlacements, mediaPlacementsQuery } from '~/server/utils/media-asset-manager'
 import { ownerPicture } from '~/server/notifications/hero'
 import { bookingConversationOrRecordPath, guestConversationPath } from '~/shared/messages-contract'
-import { guestGroup, UPCOMING_RESERVATION_DAYS, type BusinessToday, type TodayItem } from '~/shared/dashboard-today'
+import { guestGroup, UPCOMING_RESERVATION_DAYS, todayIcon, type BusinessToday, type TodayItem } from '~/shared/dashboard-today'
 import { isChannelManagedStay, STAY_CHANNEL_LABELS } from '~/shared/bookings'
 import { currencyFractionDigits, type CurrencyCode } from '~/shared/currencies'
 import { bookingDues, PAYMENT_TASK_KIND, unpaidQuery, type UnpaidRow } from '~/server/domain/unpaid'
@@ -45,9 +45,6 @@ const NOUNS = {
   setup: ['', ''],
 } as const
 
-/** The tile a card shows when what it is about has no picture of its own. */
-const ICONS: Record<string, string> = { stay: 'i-lucide-house', experience: 'i-lucide-ticket', service: 'i-lucide-scale', table: 'i-lucide-utensils', dish: 'i-lucide-utensils' }
-const iconOf = (kind: string | null) => (kind && ICONS[kind]) ?? 'i-lucide-calendar-check'
 type Noun = keyof typeof NOUNS
 
 /** A card as it is built: what it counts as, where it sorts, the bookings it stands for and the local day it is on. */
@@ -90,7 +87,7 @@ export function prepareToday(db: DbClient, input: TodayReadInput & ({ userId: st
     withViewer(membership, { query: `SELECT b.id, ${turnoverBeforeSql('b')} AS turnover FROM bookings b
       WHERE b.organization_id = ${org} AND b.product_session_id IS NULL AND b.status = 'confirmed' AND b.starts_at <= ? AND b.ends_at >= ?`, params: [wideTo, wideFrom] }),
     // The setup the business has not finished is Today's, after the day's cards.
-    ...setupQueries(range === 'today' ? management : { sql: 'NULL' }, { now }).map(query => withViewer(membership, query)),
+    ...setupQueries(management, { now }).map(query => withViewer(membership, query)),
     withViewer(membership, taskAssigneesQuery(managed)),
     ...(staffAccessWrites ? [withViewer(membership, staffListingsQuery(managed.sql, '(SELECT vertical FROM viewer)'))] : []),
   ]
@@ -99,7 +96,7 @@ export function prepareToday(db: DbClient, input: TodayReadInput & ({ userId: st
 
 async function presentToday(
   db: DbClient,
-  [viewerResult, recordResult, workResult, unpaidResult, productResult, locationResult, welcomeResult, readinessResult, factResult, unpricedResult, assigneeResult, listingResult]: D1Result[],
+  [viewerResult, recordResult, workResult, unpaidResult, productResult, locationResult, welcomeResult, readinessResult, factResult, unpricedResult, improvementResult, assigneeResult, listingResult]: D1Result[],
   input: TodayReadInput,
 ) {
   const { range, now, native, staffAccessWrites = true } = input
@@ -158,7 +155,7 @@ async function presentToday(
       ? { title: 'Open the reservation', detail: record.owner === 'channel' ? `No guest name came from ${STAY_CHANNEL_LABELS[record.channel]}` : 'No guest name was recorded' }
       : opens ? { title: `Say hello to your ${counterparty(record)}`, detail: 'See if they have any questions' } : { title: 'Open the reservation', detail: `See what ${guest} booked` }
     const action = welcome && opens ? { title: welcome.title, detail: welcome.detail } : named
-    const base = { image_url: image, icon: iconOf(record.product_kind), line, to, draft: welcome && opens ? welcome.message : null, bookings: [record.id], day: start }
+    const base = { image_url: image, icon: todayIcon(record.product_kind), line, to, draft: welcome && opens ? welcome.message : null, bookings: [record.id], day: start }
     if (record.status === 'pending') {
       // A request waits for a decision whenever it is for; Today shows it until it is answered.
       if (range === 'today') add({ ...base, id: `booking:${record.id}`, noun: 'request', order: [1, record.starts_at], draft: null,
@@ -269,7 +266,7 @@ async function presentToday(
       add({ id: `task:${work.id}`, noun: 'task', order: [1, at ?? ''], bookings: [], day: day ?? today(work.timezone),
         when: ['Maintenance', due].filter(Boolean).join(' · '),
         image_url: work.product_id ? picture('product', work.product_id) : picture('business_location', work.location_id),
-        icon: work.product_kind ? iconOf(work.product_kind) : 'i-lucide-list-checks', headline: work.title, line: work.product_name ?? work.location_title,
+        icon: work.product_kind ? todayIcon(work.product_kind) : 'i-lucide-list-checks', headline: work.title, line: work.product_name ?? work.location_title,
         // The job's conversation is where its note and photos go; the card's strip closes it.
         action: work.assigned_to_viewer ? { title: 'Mark as done', detail: work.notes ?? 'Add a note and photos in the job’s conversation' }
           : { title: `${first(work.assignee_name) ?? 'A teammate'} has it`, detail: 'Open the job' },
@@ -286,13 +283,13 @@ async function presentToday(
       const image = work.product_kind === 'table' ? picture('business_location', work.location_id) : picture('product', work.product_id)
       if (work.kind === 'message_delivery') {
         if (!work.message_title) throw new Error(`Delivery task ${work.id} has no scheduled message`)
-        add({ id: `task:${work.id}`, noun: 'message', order: [1, work.booking_starts_at], bookings: [], day: today(work.timezone), when: bookedWhen, image_url: image, icon: iconOf(work.product_kind), line: place, to, draft: null,
+        add({ id: `task:${work.id}`, noun: 'message', order: [1, work.booking_starts_at], bookings: [], day: today(work.timezone), when: bookedWhen, image_url: image, icon: todayIcon(work.product_kind), line: place, to, draft: null,
           headline: `${work.message_title} to ${guest ?? 'the guest'} didn’t send`, action: work.unreachable_reason
             ? { title: opens ? 'Open conversation' : 'Open booking', detail: work.unreachable_reason }
             : { title: 'Send it yourself', detail: opens ? `Open ${guest ?? 'the guest'}’s conversation` : 'Open the reservation' } })
       } else {
         const Group = group.charAt(0).toUpperCase() + group.slice(1)
-        add({ id: `task:${work.id}`, noun: 'change', order: [1, work.booking_starts_at], bookings: [], day: today(work.timezone), when: bookedWhen, image_url: image, icon: iconOf(work.product_kind), line: place, to, draft: null,
+        add({ id: `task:${work.id}`, noun: 'change', order: [1, work.booking_starts_at], bookings: [], day: today(work.timezone), when: bookedWhen, image_url: image, icon: todayIcon(work.product_kind), line: place, to, draft: null,
           headline: `${Group} asked to change their ${work.booking_unit === 'nights' ? 'stay' : 'booking'}`, action: { title: 'Review the change', detail: 'Accept or decline' } })
       }
       continue
@@ -308,7 +305,7 @@ async function presentToday(
       if (work.kind === 'turnover' && work.claim_role !== null && work.accepted_member_id === null && !manage) {
         add({ id: `task:${work.id}`, noun: 'clean', order: [0, at ?? untimed ?? ''], bookings: [], day,
           when: at ? visitWhen(at, work.timezone) : range === 'today' ? 'Today' : formatTimestamp(`${day}T12:00:00.000Z`, 'en', 'UTC', { weekday: 'short', month: 'short', day: 'numeric' }),
-          image_url: picture('product', work.product_id), icon: iconOf(work.product_kind), headline: `Clean up after ${group}`, line: work.product_name,
+          image_url: picture('product', work.product_id), icon: todayIcon(work.product_kind), headline: `Clean up after ${group}`, line: work.product_name,
           action: { title: 'Available to accept', detail: 'The first cleaner to accept has it' }, to: null, draft: null,
           claim: { path: taskUpdatePath(viewer.organization_id, work.id), version: work.version, label: 'Accept' } })
         continue
@@ -332,7 +329,7 @@ async function presentToday(
     add({
       id: `task:${work.id}`, noun: work.kind === 'consultation_follow_up' ? 'follow_up' : 'clean', order: [0, at ?? untimed ?? ''], bookings: [], day,
       when: at ? visitWhen(at, work.timezone) : range === 'today' ? 'Today' : formatTimestamp(`${day}T12:00:00.000Z`, 'en', 'UTC', { weekday: 'short', month: 'short', day: 'numeric' }),
-      image_url: picture('product', work.product_id), icon: iconOf(work.product_kind), headline: headline.charAt(0).toUpperCase() + headline.slice(1),
+      image_url: picture('product', work.product_id), icon: todayIcon(work.product_kind), headline: headline.charAt(0).toUpperCase() + headline.slice(1),
       line: work.booking_unit === 'nights' ? work.product_name : work.location_id === null ? 'Online' : work.location_title,
       // The host's own job has nobody to message: it opens the job, where its Done is.
       action: work.kind === 'turnover' && !confirmed && !manage ? { title: 'Accept or hand it back', detail: 'Open the job to confirm you can clean' }
@@ -380,7 +377,9 @@ async function presentToday(
   }
 
   // The business's unfinished setup, after the day's cards: each opens the editor or settings that finishes it.
-  const opportunities = setupViews(factResult!.results, unpricedResult!.results)?.opportunities ?? []
+  const quiet = cards.length === 0
+  const suggestions = setupViews(factResult!.results, unpricedResult!.results, quiet ? improvementResult!.results : [])?.opportunities ?? []
+  const opportunities = (range === 'today' || quiet ? suggestions : []).filter(step => quiet || step.id.startsWith('payments.connect:') || step.id.startsWith('product.create:') || step.id.startsWith('product.readiness:')).slice(0, 3)
   for (const [index, step] of opportunities.entries()) {
     add({ id: step.id, noun: 'setup', order: [2, String(index).padStart(4, '0')], bookings: [], day: '', when: null, image_url: null, icon: step.icon,
       headline: step.title, line: null, action: { title: step.detail.replace(/\.$/, ''), detail: step.status_line }, to: step.path, draft: null })
@@ -432,7 +431,7 @@ async function presentToday(
  */
 function heading(cards: Card[], range: Range): string {
   const counted = cards.filter(card => card.noun !== 'setup')
-  if (!counted.length) return cards.length ? 'Finish setting up to take bookings' : range === 'today' ? 'Nothing needs you today' : 'Nothing needs you in the coming days'
+  if (!counted.length) return cards.some(card => /^(product.create|product.readiness):/.test(card.id)) ? 'Finish setting up to take bookings' : range === 'today' ? 'Nothing needs you today' : 'Nothing needs you in the coming days'
   const parts = (Object.keys(NOUNS) as Noun[]).filter(noun => noun !== 'setup').flatMap((noun) => {
     const count = cards.filter(card => card.noun === noun).length
     return count ? [`${count} ${range === 'upcoming' ? 'upcoming ' : ''}${NOUNS[noun][count === 1 ? 0 : 1]}`] : []

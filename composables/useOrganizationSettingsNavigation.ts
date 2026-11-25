@@ -46,7 +46,7 @@ export function useOrganizationSettingsNavigation(
       }
       const can = (permissions: Parameters<typeof authClient.organization.checkRolePermission>[0]['permissions']) =>
         authClient.organization.checkRolePermission({ role: role as keyof typeof organizationRoles, permissions })
-      return { organizationId: target.id, userId, payments: can({ payments: ['read'] }), billing: can({ billing: ['read'] }), team: can({ members: ['read'] }) }
+      return { organizationId: target.id, userId, payments: can({ payments: ['read'] }), billing: can({ billing: ['read'] }), team: can({ members: ['read'] }), invite: can({ members: ['invite'] }) }
     },
     { enabled: () => Boolean(organization.value && session.value.data?.user.id), dedupe: 'defer' },
   )

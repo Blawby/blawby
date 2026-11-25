@@ -7,40 +7,27 @@ import { ApiClientError } from '~/utils/api-clients'
 
 export type CatalogCollection = Collection & { product_count: number; dish_count: number }
 
-export function useProductCatalog(organizationId: string, locationId: Ref<string | null>, immediate = true, menu = false) {
+export function useProductCatalog(organizationId: string, locationId: Ref<string | null>, immediate = true) {
   const dashboardApi = useDashboardApi()
   const realtime = useDashboardInvalidations()
-  const route = useRoute()
   type Catalog = { collections: CatalogCollection[]; products: CatalogProduct[] }
-  const key = computed(() => menu ? `product-catalog:${organizationId}:menu:${locationId.value ?? 'all'}` : `product-catalog:${organizationId}`)
+  const key = `product-catalog:${organizationId}`
   const load = useWebsiteIndexData(
     key,
     signal => dashboardApi(`/api/editor/organizations/${organizationId}/products`, {
       signal,
-      query: { include: 'collections', ...(menu ? { location_id: locationId.value ?? undefined, kind: 'dish' } : {}) },
+      query: { include: 'collections' },
       validate: (value: unknown): value is Catalog => isRecord(value) && Array.isArray(value.collections) && Array.isArray(value.products),
     }),
-    { immediate },
+    { immediate, lazy: true },
   )
   const { data, pending, error } = load
-  const menuLocation = typeof route.query.location_id === 'string' ? route.query.location_id : null
-  const relatedKeys = [
-    `product-catalog:${organizationId}`,
-    ...[...new Set(['all', ...(menuLocation ? [menuLocation] : [])])].map(id => `product-catalog:${organizationId}:menu:${id}`),
-  ]
-  const related = relatedKeys.map(key => useNuxtData<Catalog>(key).data)
   function updateReads(project: (current: Catalog) => Catalog) {
-    const visited = new Map<Catalog, Catalog>()
-    for (const [index, read] of [data, ...related].entries()) {
-      const current = read.value
-      if (!current) continue
-      if (!visited.has(current)) visited.set(current, project(current))
-      const updated = visited.get(current)!
-      visited.set(updated, updated)
-      read.value = updated
-      const held = realtime.held.begin(`website:${index === 0 ? key.value : relatedKeys[index - 1]}`, businessChanged)
-      realtime.held.hold(held, updated, Date.now() + 30_000, 16)
-    }
+    if (!data.value) return
+    const updated = project(data.value)
+    data.value = updated
+    const held = realtime.held.begin(`website:${key}`, businessChanged)
+    realtime.held.hold(held, updated, Date.now() + 30_000, 16)
   }
 
   const collections = computed(() => data.value?.collections ?? [])

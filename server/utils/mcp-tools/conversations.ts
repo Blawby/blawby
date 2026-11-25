@@ -59,7 +59,7 @@ export const CONVERSATION_TOOLS: McpToolDefinition[] = [
       kind: { type: 'string', enum: ['all', 'guests', 'support', 'team'] }, mailbox: { type: 'string', enum: ['current', 'past', 'blocked'] },
       unread: { type: 'boolean', description: 'Only conversations with a message from someone else you have not read.' },
       type: { type: 'string', enum: ['contact', 'booking', 'stay'], description: 'Guest conversations of this kind only.' },
-      q: { type: 'string', minLength: 1, maxLength: 200, description: 'Words in the guest’s name, the home or the messages.' },
+      q: { type: 'string', minLength: 1, maxLength: 200, description: 'Find conversations in Current and Past: every word must appear, ignoring case and accents, in the guest’s name or email, the home or the messages.' },
       location_id: { type: 'string', minLength: 1 }, ...paginationInputSchema,
     },
     outputSchema: { type: 'object', properties: { conversations: { type: 'array', items: listRow }, has_unread: { type: 'boolean', description: 'Your Current mailbox holds an unread conversation, whatever this page\'s filters.' }, page_info: pageInfoObject }, required: ['conversations', 'has_unread', 'page_info'] },
@@ -126,7 +126,7 @@ export async function handleConversationTools(ctx: McpExecutorContext): Promise<
   if (toolName === 'get_conversation') {
     const before = args.before ?? null
     if (before !== null && (typeof before !== 'number' || !Number.isSafeInteger(before) || before < 1)) throw new HTTPError({ statusCode: 400, message: 'Invalid transcript cursor', data: { code: 'INVALID_TRANSCRIPT_CURSOR', field: 'before' } })
-    return loadConversationPage(db, { conversationId, userId, organizationId }, { before, limit: 40 })
+    return loadConversationPage(db, env, { conversationId, userId, organizationId }, { before, limit: 40 })
   }
   const conversation = await assertConversationAccess(db, principal, conversationId)
   switch (toolName) {

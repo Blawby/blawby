@@ -176,9 +176,9 @@ async function uploadReference(event: Event) {
   if (!file || !item.value) return
   itemError.value = null
   try {
-    const uploaded = await upload(file)
+    const uploaded = await upload(file, { checklistProductId: productId.value })
     if (!uploaded) throw new Error('Only an image can be a reference photo')
-    const photo: ChecklistPhoto = { id: uploaded.asset_id, url: uploaded.public_url ?? '', thumbnail_url: uploaded.thumbnail_url ?? uploaded.public_url ?? '' }
+    const photo: ChecklistPhoto = { id: uploaded.asset_id, url: uploaded.url, thumbnail_url: uploaded.thumbnail_url ?? uploaded.url }
     item.value.reference_photo = photo
   } catch (cause) {
     itemError.value = getErrorMessage(cause, 'The photo could not be uploaded')

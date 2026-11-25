@@ -136,7 +136,7 @@ export function connectStatusPresentation(status: StripeConnectStatus | undefine
     case 'pending_review': return { label: 'Pending review', description: 'Stripe is reviewing the submitted business information.' }
     case 'creation_failed': return { label: 'Setup failed', description: 'Stripe account setup did not finish. Retry to continue.' }
     case 'creating': return { label: 'Setup started', description: 'The Stripe account is being created.' }
-    default: return { label: 'Not started', description: 'Stripe onboarding has not started.' }
+    default: return { label: 'Not started', description: 'Set up Stripe when you’re ready to accept payments through your website.' }
   }
 }
 

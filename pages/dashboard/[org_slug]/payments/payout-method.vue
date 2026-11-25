@@ -1,12 +1,12 @@
 <template>
   <!-- Airbnb's Payouts: How you get paid — the bank row with Edit, Add payout method, and a Need help card. Every control acts at once at Stripe, so there is nothing to Save. -->
   <DashboardLeafPanel id="organization-payout-method" title="How you get paid" :lead="connectPending || connectError ? undefined : payout ? 'Your money goes to the bank account on file with Stripe.' : 'Add a payout method with Stripe to receive your earnings.'" :footer="false">
-    <UAlert v-if="failure" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" title="Stripe Connect is unavailable" :description="failure" />
+    <UAlert v-if="failure" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :title="connectError ? 'Payment settings could not be loaded' : countriesError ? 'Business countries could not be loaded' : 'Stripe setup could not continue'" :description="failure" />
 
     <p v-if="connectPending" role="status" class="text-muted">Loading payout settings…</p>
 
     <p v-if="needsCountry && !connectError && !connectPending && countriesPending" role="status" class="text-muted">Loading countries…</p>
-    <UFormField v-else-if="needsCountry && !connectError && !connectPending" label="Business country" description="Where your business is legally established.">
+    <UFormField v-else-if="needsCountry && !connectError && !connectPending" label="Business country" description="Where your business is legally established. Only countries supported for Stripe online payment setup are listed.">
       <CountrySelect v-model="country" :items="countries" class="w-full" placeholder="Choose a country" />
     </UFormField>
 
@@ -48,7 +48,7 @@ const { connect, connectError, connectPending, refreshConnect, account, payout, 
 type CountryChoices = { success: true; countries: string[]; suggested_country: string | null }
 const selectedCountry = ref<string>()
 const needsCountry = computed(() => !account.value?.stripe_account_id)
-// Read only while a country is still to be chosen; Stripe answers this slowly.
+// Read country choices only while a country is still to be chosen.
 const { data: countryList, error: countriesError, status: countriesStatus, execute: loadCountries } = useAsyncData(`dashboard-connect-countries:${String(route.params.org_slug)}`,
   () => dashboardApi<CountryChoices>('/api/dashboard/connect/countries', {
     validate: (value): value is CountryChoices => isRecord(value) && value.success === true

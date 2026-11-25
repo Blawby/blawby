@@ -292,7 +292,7 @@ test('an owner answers a guest by quoting their WhatsApp alert, with nothing ask
     assert.ok(teamAlert)
     assert.deepEqual(await write('Thanks', teamAlert, 'wamid-team'), ['Reply sent.'])
     assert.deepEqual(await write('Thanks', teamAlert, 'wamid-team'), [])
-    assert.deepEqual((await conversationPageFor(db, ownerSeat, teamThread.id)).entries.flatMap(entry => entry.type === 'message' && entry.body === 'Thanks' ? [entry.author_user_id] : []), ['owner'])
+    assert.deepEqual((await conversationPageFor(db, env, ownerSeat, teamThread.id)).entries.flatMap(entry => entry.type === 'message' && entry.body === 'Thanks' ? [entry.author_user_id] : []), ['owner'])
 
     // A member removed from the business is told so, and nothing reaches the guest.
     await db.prepare("DELETE FROM member WHERE id = 'member-paid'").run()

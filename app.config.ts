@@ -6,7 +6,7 @@
   text at every width — Nuxt UI drops an unfixed `lg` field to 14px from `md`.
 */
 const field = {
-  slots: { base: 'rounded-[8px]' },
+  slots: { base: 'rounded-[8px]', content: 'z-10' },
   variants: {
     variant: { outline: 'bg-default ring-(color:--kc-field-border)' },
     size: { lg: { base: 'py-3 text-base/5' } }

@@ -163,8 +163,8 @@ export async function postJobs(env: CloudflareEnv, db: DbClient, organizationId:
     [organizationId, d1JsonStringSet([...threads.keys()])])) seatUsers.set(seat.thread_id, [...seatUsers.get(seat.thread_id) ?? [], seat.user_id])
   }
   const hostUsers = members.filter(member => isOrganizationWideRole(member.role)).map(member => member.userId)
-  const post = async (subject: JobSubject, seats: readonly string[], key: string, body: string, alertUserIds: readonly string[], threadId?: string, photoAssetIds?: readonly string[]) => {
-    const result = await postAutomaticTeamMessage(env, db, { organizationId, subject, seatMemberIds: seats, body, idempotencyKey: key, alertUserIds: quiet ? [] : alertUserIds, senderName: organization.name, threadId, photoAssetIds })
+  const post = async (task: TaskRow, subject: JobSubject, seats: readonly string[], key: string, body: string, alertUserIds: readonly string[], threadId?: string, photoAssetIds?: readonly string[]) => {
+    const result = await postAutomaticTeamMessage(env, db, { organizationId, subject, seatMemberIds: seats, body, idempotencyKey: key, alertUserIds: quiet ? [] : alertUserIds, senderName: organization.name, threadId, photoAssetIds, guard: { sql: 'EXISTS (SELECT 1 FROM tasks current_task WHERE current_task.organization_id = c.organization_id AND current_task.id = ? AND current_task.version = ?)', params: [task.id, task.version] } })
     postsByThread.set(result.threadId, (postsByThread.get(result.threadId) ?? new Map()).set(key, result.messageId))
     return result
   }
@@ -181,8 +181,6 @@ export async function postJobs(env: CloudflareEnv, db: DbClient, organizationId:
       // What the job says later; a task that is not open says nothing more.
       const plan: PlannedSend[] = []
       const prep = Boolean(task.private_prep)
-      // Prep and a repair can come back to someone they left, in the same conversation: each assignment and release is told again.
-      const reannounced = prep || task.kind === 'maintenance'
       const subject: JobSubject | null = isJobTask(task) ? jobSubject(task) : prep && task.job_booking_id ? { id: task.job_booking_id, unit: 'slot' } : null
       const jobPrefix = `job:${task.id}:`
       const endKeys = jobEndKeys(task.id)
@@ -198,10 +196,10 @@ export async function postJobs(env: CloudflareEnv, db: DbClient, organizationId:
         await executeBatch(db, plannedSendQueries(task, task.status === 'open' ? startAlert(task) : [], stamp), { operation: 'Store task start alert' })
         continue
       }
-      const view = roster || task.status === 'open' ? await taskViewForUser(db, organizationId, task.id, roster?.cleaners[0] ?? hostUsers[0] ?? null, now) : null
+      const view = roster || task.status === 'open' ? await taskViewForUser(db, env, organizationId, task.id, roster?.cleaners[0] ?? hostUsers[0] ?? null, now) : null
       // A booking may have changed while loading the card. Re-read on the
       // next queue delivery instead of using a new client's card in an old thread.
-      if ((prep || task.kind === 'maintenance') && view && view.version !== task.version) throw new Error(`Task ${task.id} changed while its job was being posted`)
+      if (view && view.version !== task.version) throw new Error(`Task ${task.id} changed while its job was being posted`)
       if (prep && view && view.booking_id !== (subject?.id ?? null)) throw new Error(`Prep task ${task.id} does not match its booking conversation`)
       const about = subject?.unit === 'nights' || subject?.unit === 'location' ? 'at' : 'with'
       const targetKey = roster && subject ? await jobThreadParticipantsKey(subject, roster.seats) : null
@@ -222,18 +220,17 @@ export async function postJobs(env: CloudflareEnv, db: DbClient, organizationId:
       for (const [threadId, thread] of elsewhere) {
         if (threadId === heldIn && task.status === 'open') continue
         const last = lastPost(threadId)
-        if (reannounced && (!last || !isJobPost(last[0]))) continue
+        if (!last || !isJobPost(last[0])) continue
         if (task.status !== 'open' && task.status !== 'cancelled' && task.closed_by_user_id !== null) continue
         const end = `${task.status === 'open' ? 'released' : task.status === 'cancelled' ? 'cancelled' : 'closed'}:${task.id}`
         const alreadyTold = postsByThread.get(threadId)?.has(end)
-        if (!reannounced && alreadyTold) continue
-        const endKey = alreadyTold && last ? `${end}:${last[1]}` : end
+        const endKey = alreadyTold ? `${end}:${last[1]}` : end
         const seated = seatUsers.get(threadId) ?? []
         // A prior booking's team only needs to know its prep is no longer theirs.
         const details = subject?.id === thread.subject_id && view ? `${jobPhrase(view, about, '')}${view.sheet.date ? `, ${view.sheet.date}` : ''}` : prep ? 'prep for this session' : 'this job'
         const label = { open: 'No longer yours', done: 'Completed', skipped: 'Skipped', cancelled: 'Cancelled' }[task.status]
         const body = `${label}: ${details}.`
-        await post({ id: thread.subject_id, unit: subject?.unit ?? 'slot' }, [], endKey, body, seated.filter(userId => !hostUsers.includes(userId)), threadId)
+        await post(task, { id: thread.subject_id, unit: subject?.unit ?? 'slot' }, [], endKey, body, seated.filter(userId => !hostUsers.includes(userId)), threadId)
       }
       if (task.status !== 'open' || !view || !task.assigned_member_id) {
         await executeBatch(db, plannedSendQueries(task, plan, stamp), { operation: 'Cancel job reminders' })
@@ -247,11 +244,9 @@ export async function postJobs(env: CloudflareEnv, db: DbClient, organizationId:
       const baseKey = jobKey(task)
       // A newer release ends an assignment. A later reactivation is a new post
       // keyed by that message, so retries still announce it once.
-      const postedForAssignment = heldIn && (reannounced
-        ? last && (last[0] === baseKey || last[0].startsWith(`${baseKey}:after:`))
-        : postsByThread.get(heldIn)?.has(baseKey))
+      const postedForAssignment = last && (last[0] === baseKey || last[0].startsWith(`${baseKey}:after:`))
       if (!postedForAssignment) {
-        const result = await post(subject, roster.seats, jobKey(task, reannounced ? last?.[1] : undefined), lines(view), roster.cleaners, heldIn ?? undefined, JSON.parse(task.report_photo_ids) as string[])
+        const result = await post(task, subject, roster.seats, jobKey(task, last?.[1]), lines(view), roster.cleaners, heldIn ?? undefined, JSON.parse(task.report_photo_ids) as string[])
         threads.set(result.threadId, { subject_id: subject.id, participants_key: targetKey! })
         heldIn = result.threadId
       }

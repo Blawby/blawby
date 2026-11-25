@@ -263,7 +263,6 @@ export function prepareAgenda(
       booking: Boolean(available.booking), stay: Boolean(available.stay), post: showPosts && !isStaff,
     })[kind])
     const requestedKinds = new Set(availableKinds.filter(wants))
-    if (!requestedKinds.size) return { items: [], available_kinds: availableKinds, locations: [] }
 
     const records = (results[bookingIndex]?.results ?? []) as BookedRecordInRange[]
     const visible = records.filter(record => record.conversation_id !== null && (!query.locationId || record.location_id === query.locationId))

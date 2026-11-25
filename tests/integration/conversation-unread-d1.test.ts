@@ -112,8 +112,10 @@ test('unread is a message from someone else after your read position, the same c
     // The guest conversation is the business's, never the cleaner's.
     assert.equal((await listConversations(db, ORG, { userId: CLEANER })).some(row => row.kind !== 'team'), false)
 
+    const env = { ...await runtime.getBindings<CloudflareEnv>(), BETTER_AUTH_SECRET: 'local-proof-secret-long-enough-for-auth',
+      BETTER_AUTH_URL: 'https://proof.example', STRIPE_SECRET_KEY: 'sk_test_local_d1_no_stripe_requests' }
     const transcript = (userId: string, conversationId: string) =>
-      loadConversationPage(db, { userId, conversationId }, { before: null, limit: 40 })
+      loadConversationPage(db, env, { userId, conversationId }, { before: null, limit: 40 })
     const guestThreads = async (userId: string, mailbox: 'current' | 'past' = 'current') =>
       (await readWorkspaceInbox(db, ORG, { userId, mailbox, kind: 'guest' }, new Date('2026-12-03T00:00:00.000Z'))).threads.map(row => row.id).sort()
     const adminThread = { organizationId: ORG, conversationId: 'booking-conversation', userId: ADMIN }
@@ -159,8 +161,6 @@ test('unread is a message from someone else after your read position, the same c
     for (const id of assigned) assert.equal((await transcript(CLEANER, id)).viewer_role, 'member')
     await markConversationRead(db, { ...adminThread, userId: CLEANER })
 
-    const env = { ...await runtime.getBindings<CloudflareEnv>(), BETTER_AUTH_SECRET: 'local-proof-secret-long-enough-for-auth',
-      BETTER_AUTH_URL: 'https://proof.example', STRIPE_SECRET_KEY: 'sk_test_local_d1_no_stripe_requests' }
     const owner = joinedMemberPrincipal({ userId: OWNER, organizationId: ORG, memberId: 'm-owner', role: 'owner' }, { env })
     const coHostGrant = { listingId: 'home', memberId: 'm-cleaner' }
     await setListingAccess(db, env, owner, { ...coHostGrant, access: 'messaging' })

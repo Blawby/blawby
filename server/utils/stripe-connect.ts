@@ -16,6 +16,16 @@ export type StripeConnectStatus =
   | 'restricted'
   | 'ready'
 
+// Stripe's generally available payments countries: https://stripe.com/global.
+// CountrySpecs also returns VN with card support, but Connect Onboarding rejects it.
+// Preview and extended-network markets aren't self-serve merchant onboarding.
+export const STRIPE_CONNECT_ONBOARDING_COUNTRIES: readonly string[] = [
+  'AU', 'AT', 'BE', 'BR', 'BG', 'CA', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
+  'DE', 'GI', 'GR', 'HK', 'HU', 'IE', 'IT', 'JP', 'LV', 'LI', 'LT', 'LU', 'MY',
+  'MT', 'MX', 'NL', 'NZ', 'NO', 'PL', 'PT', 'RO', 'SG', 'SK', 'SI', 'ES', 'SE',
+  'CH', 'TH', 'AE', 'GB', 'US',
+]
+
 export type StripeCapabilityStatus = 'active' | 'pending' | 'restricted' | 'unsupported'
 export type StripeCapabilityResolution = 'contact_stripe' | 'no_resolution' | 'provide_info'
 
@@ -500,6 +510,9 @@ export async function ensureStripeConnectedAccount(
     country: string | null
   },
 ): Promise<StripeConnectedAccount> {
+  if (input.country !== null && !STRIPE_CONNECT_ONBOARDING_COUNTRIES.includes(input.country)) {
+    throw new HTTPError({ statusCode: 422, statusMessage: 'Stripe does not support online payment setup in this business country.', data: { code: 'STRIPE_COUNTRY_UNSUPPORTED', field: 'country' } })
+  }
   const reservation = await reserveStripeConnectedAccount(db, input)
   if (reservation.stripe_account_id) return await refreshStripeConnectedAccount(db, stripe, reservation)
 

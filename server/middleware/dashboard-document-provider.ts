@@ -131,8 +131,7 @@ export default defineHandler(event => {
               if (resource === `${prefix}products` && query.include === 'collections') {
                 if (!await roleAllows({ ...organization, permissions: { products: ['read'] } })) await assertRoleAllows({ ...organization, permissions: { products: ['assigned'] } })
                 const catalog = event.context.dashboardEditorCatalog as { organization_id: string; resources: Map<string, unknown> } | undefined
-                const key = query.kind === 'dish' ? `dish:${typeof query.location_id === 'string' ? query.location_id : 'all'}` : 'all'
-                const resource = catalog?.organization_id === organization.id ? catalog.resources.get(key) : undefined
+                const resource = catalog?.organization_id === organization.id ? catalog.resources.get('all') : undefined
                 if (!resource) throw new HTTPError({ statusCode: 404, message: 'The editor catalog was not read for this document' })
                 return resource
               }

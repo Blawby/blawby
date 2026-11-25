@@ -11,10 +11,11 @@ import { creationDedupeKey, creationRecordOf, creationRecordQuery, creationReque
 import { publishBusinessInvalidation, publishConversationEvent } from '~/server/cloudflare/guest-inbox-events'
 import { conversationMemberSql, messageQueries, participantGuard } from '~/server/domain/conversations'
 import { firstName } from '~/server/domain/guest-threads/presentation'
+import type { MediaLinkEnv } from '~/server/utils/private-media'
 import { discardMessagePhotos, groupMessagePhotos, MAX_MESSAGE_PHOTOS, messagePhotoPlacements, messagePhotoRowsSql, MessagePhotoRejection, uploadMessagePhotos, type MessagePhoto, type MessagePhotoRow } from '~/server/domain/guest-threads/attachments'
 import { bookingEditorPath, guestConversationPath } from '~/server/utils/dashboard-links'
 import { ownerPicture } from '~/server/notifications/hero'
-import { groupMediaPlacements, mediaPlacementsQuery } from '~/server/utils/media-asset-manager'
+import { buildMediaPlacementInsertQuery, groupMediaPlacements, mediaPlacementsQuery } from '~/server/utils/media-asset-manager'
 import { addLocalDays, formatCalendarDate, formatTimestamp, isValidInstant, localDateAt, localDateTimeToInstant } from '~/utils/timezone'
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { BOOKING_RECORDS_SQL, bookingDay } from '~/server/domain/requests'
@@ -104,13 +105,18 @@ export function jobSubject(row: Pick<TaskRow, 'dedupe_key' | 'kind' | 'subject_t
 
 /** The key of a job's post in its team conversation (messages.payload_json $.key): the one place it is built. */
 const JOB_POST_PREFIX = 'job:'
+const JOB_END_STATES = ['released', 'cancelled', 'closed'] as const
 export const jobKey = (task: Pick<TaskRow, 'id' | 'product_id'>, after?: string) => `${JOB_POST_PREFIX}${task.id}:${task.product_id}${after ? `:after:${after}` : ''}`
+/** An assignment post still carries the job only while no later release ended it. */
 export function jobPostMatchSql(task: string, message: string): string {
   const key = `json_extract(${message}.payload_json, '$.key')`
   const base = `('${JOB_POST_PREFIX}' || ${task}.id || ':' || COALESCE(${task}.product_id, 'null'))`
-  return `(${key} = ${base} OR instr(${key}, ${base} || ':after:') = 1)`
+  const ended = `json_extract(job_end.payload_json, '$.key')`
+  return `(${key} = ${base} OR instr(${key}, ${base} || ':after:') = 1)
+    AND NOT EXISTS (SELECT 1 FROM messages job_end WHERE job_end.conversation_id = ${message}.conversation_id
+      AND job_end.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND job_end.sequence > ${message}.sequence
+      AND (${JOB_END_STATES.map(state => `(${ended} = ('${state}:' || ${task}.id) OR instr(${ended}, '${state}:' || ${task}.id || ':') = 1)`).join(' OR ')}))`
 }
-const JOB_END_STATES = ['released', 'cancelled', 'closed'] as const
 export const jobEndKeys = (taskId: string) => JOB_END_STATES.map(state => `${state}:${taskId}`)
 
 /**
@@ -628,7 +634,7 @@ function taskContextQueries(organizationId: string, listed: { sql: string; param
   ]
 }
 
-function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ results: unknown[] }>): Context {
+async function taskContext(env: MediaLinkEnv, organizationId: string, rows: TaskRow[], results: Array<{ results: unknown[] }>): Promise<Context> {
   const [organizations, members, locations, messages, privateConsultations, booked, stayRows, requests, products, pictures, closureRows, reportRows, orderRows, declineRows]
     = results.map(result => result.results) as [
       Array<{ slug: string; vertical: string }>, Array<{ id: string; userId: string; name: string }>, Array<{ id: string; title: string }>,
@@ -644,6 +650,9 @@ function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ r
   if (!organization) throw new Error(`Organization ${organizationId} is missing`)
   const placements = groupMediaPlacements(pictures)
   const offerings = new Map(products.map(product => [product.id, product]))
+  // Each home's checklist with its reference photos linked for this reader, made once for the tasks that name it.
+  const checklists = new Map(await Promise.all(products.filter(product => product.turnover_checklist !== null)
+    .map(async product => [product.id, await checklistOf(env, { turnover_checklist: product.turnover_checklist!, turnover_references: product.turnover_references! }, product.id)] as const)))
   const stays = new Map(stayRows.map(stay => [stay.id, stay]))
   const stay = (id: string) => { const row = stays.get(id); return row ? stayFacts(row) : null }
   const arrivals = new Map<string, Array<StayRow & { check_in_date: string }>>()
@@ -655,7 +664,7 @@ function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ r
   }
   const records = booked.filter(record => record.unit === 'slot' || rows.some(row => row.kind === 'booking_review' && row.subject_id === record.id))
   const photoRows = closureRows.filter((row): row is typeof row & MessagePhotoRow => row.owner_id !== null)
-  const photos = groupMessagePhotos(photoRows)
+  const photos = await groupMessagePhotos(env, photoRows)
   return {
     slug: organization.slug,
     vertical: organization.vertical,
@@ -667,7 +676,7 @@ function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ r
       if (!product) return null
       if (!product.name?.trim()) throw new Error(`Product ${product.id} has no name for this task`)
       return { name: product.name, kind: product.kind, imageUrl: ownerPicture('product', placements.get(id) ?? [], [])?.imageUrl ?? null,
-        checklist: product.turnover_checklist === null ? [] : checklistOf({ turnover_checklist: product.turnover_checklist, turnover_references: product.turnover_references! }, product.id) }
+        checklist: checklists.get(product.id) ?? [] }
     },
     locations: new Map(locations.map(location => [location.id, location.title])),
     stay,
@@ -692,7 +701,7 @@ const namedTasks = (organizationId: string, rows: TaskRow[]) => ({ sql: 'SELECT 
 /** The context of tasks already read, in one batch. */
 async function loadContext(db: DbClient, viewer: TaskViewer, rows: TaskRow[]): Promise<Context> {
   const organizationId = viewer.principal.organizationId
-  return taskContext(organizationId, rows, await executeBatch(db, taskContextQueries(organizationId, namedTasks(organizationId, rows), viewer.principal.userId)))
+  return await taskContext(viewer.principal.env, organizationId, rows, await executeBatch(db, taskContextQueries(organizationId, namedTasks(organizationId, rows), viewer.principal.userId)))
 }
 
 const initialOf = (name: string) => name.trim().charAt(0).toUpperCase()
@@ -1043,7 +1052,7 @@ export async function listTasks(db: DbClient, viewer: TaskViewer, query: TaskLis
   }
   const shown = rows.filter(row => query.range === 'today' ? isToday(row) : row.status === 'open' && !isToday(row))
   if (!shown.length) return { resolved_at: now.toISOString(), sections: [] }
-  const context = taskContext(organizationId, rows, related)
+  const context = await taskContext(viewer.principal.env, organizationId, rows, related)
   const views = shown.map(row => ({ row, view: present(row, viewer, context, now) }))
   const resolved_at = now.toISOString()
   if (query.range === 'today') {
@@ -1192,21 +1201,21 @@ export async function listTaskAssignees(db: DbClient, viewer: TaskViewer): Promi
 }
 
 /** A task as an alert to one of its people tells it: the member projection, with no guest's full name or contact. */
-export async function describeTaskForAlert(db: DbClient, organizationId: string, taskId: string, recipientUserId: string): Promise<{ eyebrow: string; title: string; detail: string | null; locationId: string | null; page: string }> {
-  const view = await taskViewForUser(db, organizationId, taskId, recipientUserId)
+export async function describeTaskForAlert(db: DbClient, env: MediaLinkEnv, organizationId: string, taskId: string, recipientUserId: string): Promise<{ eyebrow: string; title: string; detail: string | null; locationId: string | null; page: string }> {
+  const view = await taskViewForUser(db, env, organizationId, taskId, recipientUserId)
   // The alert opens what the work is about, under the organization's dashboard: its booking, else its conversation, else Today.
   const page = view.booking_id ? `/bookings/${encodeURIComponent(view.booking_id)}` : view.conversation_id ? `/messages/${encodeURIComponent(view.conversation_id)}` : ''
   return { eyebrow: [view.status_line, view.when].filter(Boolean).join(' · '), title: view.title, detail: view.detail, locationId: view.location_id, page }
 }
 
 /** A task as one member sees it, from a server path with no caller: the member projection, with no guest's full name or contact. */
-export async function taskViewForUser(db: DbClient, organizationId: string, taskId: string, userId: string | null, now = new Date()): Promise<TaskView> {
+export async function taskViewForUser(db: DbClient, env: MediaLinkEnv, organizationId: string, taskId: string, userId: string | null, now = new Date()): Promise<TaskView> {
   const row = await queryFirst<TaskRow>(db, `SELECT * FROM tasks WHERE organization_id = ? AND id = ? AND kind IN (SELECT value FROM json_each(?))`, [organizationId, taskId, SUPPORTED_TASK_KINDS])
   if (!row) throw new Error(`Task ${taskId} is not in organization ${organizationId}`)
   // The recipient's own membership answers what they may read; a view for nobody (a job with no people yet) reads as a member with no role.
   const member = userId === null ? null : await queryFirst<{ id: string; role: string }>(db, 'SELECT id, role FROM member WHERE organizationId = ? AND userId = ?', [organizationId, userId])
   if (userId !== null && !member) throw new Error(`User ${userId} is not a member of organization ${organizationId}`)
-  const viewer = { principal: { organizationId, userId: userId ?? '', role: member?.role ?? '' } as MemberAccessPrincipal, manage: false, memberId: member?.id ?? '' }
+  const viewer = { principal: { env, organizationId, userId: userId ?? '', role: member?.role ?? '' } as MemberAccessPrincipal, manage: false, memberId: member?.id ?? '' }
   return present(row, viewer, await loadContext(db, viewer, [row]), now)
 }
 
@@ -1495,19 +1504,16 @@ export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string
   const privatePrep = current.subject_type === 'product_session'
   // A maintenance job's conversation is its place's, with no booking.
   const hasThread = current.kind === 'maintenance' || (view.booking_id && (isJobTask(current) || privatePrep))
-  const thread = hasThread ? await queryFirst<{ id: string }>(db, `SELECT c.id FROM conversations c
+  const thread = hasThread ? await queryFirst<{ id: string }>(db, `WITH t(id, product_id) AS (SELECT ?, ?)
+      SELECT c.id FROM t, conversations c
       JOIN messages m ON m.conversation_id = c.id AND m.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL})
       JOIN conversation_participants seat ON seat.conversation_id = c.id AND seat.role = 'member' AND seat.user_id = ?
      WHERE c.organization_id = ? AND c.kind = 'team' AND c.booking_id IS ?
-       AND (? = 0 OR EXISTS (SELECT 1 FROM conversation_participants assignee
+       AND EXISTS (SELECT 1 FROM conversation_participants assignee
          JOIN member assigned ON assigned.organizationId = c.organization_id AND assigned.userId = assignee.user_id
-         WHERE assignee.conversation_id = c.id AND assignee.role = 'member' AND assigned.id = ?))
-       AND (json_extract(m.payload_json, '$.key') = ? OR instr(json_extract(m.payload_json, '$.key'), ?) = 1)
-       AND (? = 0 OR NOT EXISTS (SELECT 1 FROM messages later JOIN json_each(?) stop
-         ON json_extract(later.payload_json, '$.key') = stop.value OR instr(json_extract(later.payload_json, '$.key'), stop.value || ':') = 1
-         WHERE later.conversation_id = c.id AND later.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND later.sequence > m.sequence))
-     ORDER BY m.created_at DESC, m.id DESC LIMIT 1`, [viewer.principal.userId, organizationId, view.booking_id, privatePrep ? 1 : 0, current.assigned_member_id,
-    jobKey(current), `${jobKey(current)}:after:`, privatePrep ? 1 : 0, d1JsonStringSet(jobEndKeys(current.id))]) : null
+         WHERE assignee.conversation_id = c.id AND assignee.role = 'member' AND assigned.id = ?)
+       AND ${jobPostMatchSql('t', 'm')}
+     ORDER BY m.created_at DESC, m.id DESC LIMIT 1`, [current.id, current.product_id, viewer.principal.userId, organizationId, view.booking_id, current.assigned_member_id]) : null
   if ((note !== null || photos.length > 0 || checked !== null || skippedChecklist) && !thread) fail(422, 'TASK_OUTCOME_REQUIRES_CONVERSATION', 'Notes, photos and a checklist need the job’s team conversation', checked ? 'checklist' : photos.length ? 'photos' : 'note')
   const assetIds = await uploadMessagePhotos(db, input.env, organizationId, photos, { source: 'uploaded', userId: viewer.principal.userId }, MAX_MESSAGE_PHOTOS + itemOrder.length).catch((error: unknown) => {
     if (error instanceof MessagePhotoRejection) fail(422, 'INVALID_PHOTO', error.message, 'photos')
@@ -1536,6 +1542,8 @@ export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string
     ...(message && authored ? [
       { query: "SELECT CASE WHEN EXISTS (SELECT 1 FROM messages WHERE id = ?) THEN NULL ELSE json('TASK_THREAD_ACCESS_CHANGED') END", params: [message.id] },
       ...messagePhotoPlacements(organizationId, message.id, assetIds, now),
+      ...[...new Set(submission?.items.flatMap(item => item.reference_photo ? [item.reference_photo.id] : []) ?? [])].map((assetId, sortOrder) =>
+        buildMediaPlacementInsertQuery({ organizationId, ownerType: 'message', ownerId: message.id, slot: 'checklist_references', assetId, sortOrder, createdAt: now })),
     ] : [])], { operation: input.status === 'done' ? 'Complete task' : 'Skip task' })
   } catch (error) {
     await discardMessagePhotos(db, input.env, organizationId, assetIds, viewer.principal.userId, error)
@@ -1585,10 +1593,8 @@ async function jobEntryQueries(db: DbClient, viewer: TaskViewer, task: TaskRow, 
   const thread = await queryFirst<{ id: string }>(db, `WITH t(id, product_id) AS (SELECT ?, ?)
     SELECT c.id FROM t, conversations c JOIN messages m ON m.conversation_id = c.id AND m.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL})
     WHERE c.organization_id = ? AND c.kind = 'team' AND ${jobPostMatchSql('t', 'm')}
-      AND NOT EXISTS (SELECT 1 FROM messages later JOIN json_each(?) stop ON json_extract(later.payload_json, '$.key') = stop.value OR instr(json_extract(later.payload_json, '$.key'), stop.value || ':') = 1
-        WHERE later.conversation_id = c.id AND later.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND later.sequence > m.sequence)
     ORDER BY m.created_at DESC, m.id DESC LIMIT 1`,
-  [task.id, task.product_id, viewer.principal.organizationId, d1JsonStringSet(jobEndKeys(task.id))])
+  [task.id, task.product_id, viewer.principal.organizationId])
   if (!thread) fail(409, 'JOB_CONVERSATION_PENDING', 'This clean is still being posted to its conversation; try again in a moment', 'task_id')
   return messageQueries({ conversationId: thread.id, authorKind: PLATFORM_MESSAGE_AUTHOR_KIND, authorUserId: null, body,
     dedupeKey: `task-response:${task.id}:${task.version + 1}`, occurredAt: now,
@@ -1664,5 +1670,5 @@ export async function declineTask(db: DbClient, viewer: TaskViewer, taskId: stri
   await publishChangedJobs(env, organizationId, [taskId])
   await publishBusinessInvalidation(env, organizationId)
   // It is no longer theirs to read through their scope: they get it as it now stands, held by someone else.
-  return taskViewForUser(db, organizationId, taskId, viewer.principal.userId)
+  return taskViewForUser(db, env, organizationId, taskId, viewer.principal.userId)
 }

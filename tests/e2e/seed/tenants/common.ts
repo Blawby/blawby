@@ -16,9 +16,9 @@ export const alwaysOpen = () => ({ periods: [{ open: { day: 0, hour: 0, minute: 
 export async function seedLocation(tool: Tool, tenant: SeedTenant, key: string, input: {
   title: string; email: string; phone: string; hours: ReturnType<typeof everyDay> | ReturnType<typeof alwaysOpen>
   address: { regionCode: string; addressLines: string[]; locality: string; administrativeArea?: string; postalCode?: string }
-}) {
-  const { location } = await tool<{ location: Location }>('create_location', { title: input.title, timezone: tenant.timezone, idempotency_key: `seed-${tenant.key}-${key}` })
-  await tool('update_location', { location_id: location.id, status: 'active', email: input.email, phone: input.phone, address: input.address, opening_hours: input.hours })
+}, location_id?: string) {
+  const location = location_id ? { id: location_id } : (await tool<{ location: Location }>('create_location', { title: input.title, timezone: tenant.timezone, idempotency_key: `seed-${tenant.key}-${key}` })).location
+  await tool('update_location', { location_id: location.id, title: input.title, status: 'active', email: input.email, phone: input.phone, address: input.address, opening_hours: input.hours })
   const { location: saved } = await tool<{ location: Location }>('get_location', { location_id: location.id })
   if (!saved.slug) throw new Error(`Location ${input.title} has no slug`)
   tenant.locations[key] = { id: saved.id, slug: saved.slug, title: saved.title, timezone: tenant.timezone }

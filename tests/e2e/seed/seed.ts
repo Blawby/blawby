@@ -89,14 +89,14 @@ async function subscribe(baseURL: string, owner: SeedClient, organizationId: str
 }
 
 /** The first owner listed for a tenant creates it; every other fixture member joins by invitation. */
-async function createTenant(baseURL: string, plan: TenantPlan): Promise<{ owner: SeedClient; tenant: SeedTenant }> {
+async function createTenant(baseURL: string, plan: TenantPlan): Promise<{ owner: SeedClient; tenant: SeedTenant; location_id: string }> {
   const members = E2E_AUTH_FIXTURES.filter(fixture => fixture.memberships?.some(membership => membership.tenant === plan.key))
   const creator = members.find(fixture => fixture.id !== E2E_ADMIN_ID) ?? findE2eAuthFixture(E2E_ADMIN_ID)
   const owner = await SeedClient.signedIn(baseURL, creator.email, E2E_PASSWORD)
   const organization = await owner.auth<{ id: string }>('organization/create', {
     name: plan.name, slug: plan.slug, default_currency: plan.currency, timezone: plan.timezone,
   })
-  await owner.json('POST', '/api/organizations', { organization_id: organization.id, name: plan.name, subdomain: plan.subdomain, vertical: plan.vertical, source_locale: 'en' })
+  const provisioned = await owner.json<{ location_id: string }>('POST', '/api/organizations', { organization_id: organization.id, name: plan.name, subdomain: plan.subdomain, vertical: plan.vertical, source_locale: 'en' })
   await owner.auth('organization/set-active', { organizationId: organization.id })
   if (plan.subscription) await subscribe(baseURL, owner, organization.id, plan.subscription)
   for (const fixture of members) {
@@ -111,7 +111,7 @@ async function createTenant(baseURL: string, plan: TenantPlan): Promise<{ owner:
   const { members: roster } = await owner.auth<{ members: Array<{ id: string; userId: string }> }>(`organization/list-members?organizationId=${organization.id}&limit=100`)
   const memberIds = Object.fromEntries(roster.map(member => [member.userId, member.id]))
   return {
-    owner,
+    owner, location_id: provisioned.location_id,
     tenant: { key: plan.key, organizationId: organization.id, name: plan.name, slug: plan.slug, subdomain: plan.subdomain, vertical: plan.vertical, currency: plan.currency, timezone: plan.timezone, memberIds, locations: {}, products: {}, media: {}, collections: {}, categories: {} },
   }
 }
@@ -122,12 +122,13 @@ export async function seedE2e(baseURL: string) {
     await createActors(admin)
     const manifest: SeedManifest = { baseURL, adminUserId: E2E_ADMIN_ID, platformOrganizationId, tenants: {} as SeedManifest['tenants'] }
     const create: CreateTenant = plan => createTenant(baseURL, plan)
-    const [{ seedRestaurant }, { seedExperience }, { seedLegal }] = await Promise.all([
-      import('./tenants/restaurant.ts'), import('./tenants/experience.ts'), import('./tenants/legal.ts'),
+    const [{ seedRestaurant }, { seedExperience }, { seedLegal }, { seedLodging }] = await Promise.all([
+      import('./tenants/restaurant.ts'), import('./tenants/experience.ts'), import('./tenants/legal.ts'), import('./tenants/lodging.ts'),
     ])
     manifest.tenants.restaurant = await seedRestaurant(create)
     manifest.tenants.experience = await seedExperience(create)
     manifest.tenants.legal = await seedLegal(create)
+    manifest.tenants.lodging = await seedLodging(create)
     const { seedPlatform } = await import('./tenants/platform.ts')
     await seedPlatform(admin, platformOrganizationId)
     mkdirSync(new URL('.', SEED_MANIFEST_PATH), { recursive: true })

@@ -1,6 +1,6 @@
 <template>
   <DashboardIndexPanel id="menu-section" :title="collection?.name ?? 'Collection'">
-    <EditorNavigationList class="mb-10" :groups="rows" :active-item="level.child.value" variant="cards" />
+    <EditorNavigationList v-if="collection" class="mb-10" :groups="rows" :active-item="level.child.value" variant="cards" />
     <h2 class="mb-4 text-xl font-semibold text-highlighted">Items</h2>
     <DashboardListEditor
       v-model:editing="editing"
@@ -68,6 +68,7 @@
     </DashboardListItemDialog>
 
     <CollectionMoveDialog
+      v-if="moveDialogOpen"
       v-model:open="moveDialogOpen"
       v-model:saving="moving"
       :organization-id="organizationId"
@@ -110,7 +111,8 @@ const { locations, error: locationsError } = await useOrganizationLocations({ in
 const { priceLabel } = useCatalogPrice(locationId, locations)
 const loadError = computed(() => {
   const cause = catalog.error.value ?? locationsError.value
-  return cause ? getErrorMessage(cause, 'The section could not be loaded') : null
+  if (cause) return getErrorMessage(cause, 'The section could not be loaded')
+  return catalog.load.status.value === 'success' && !collection.value ? 'This section could not be found.' : null
 })
 const catalogPath = computed(() => '/dashboard/' + String(route.params.org_slug) + '/products')
 const scoped = (path: string, query: Record<string, string | undefined> = {}) => router.resolve({ path, query: { location_id: locationId.value ?? undefined, kind: route.query.kind === 'dish' ? 'dish' : undefined, ...query } }).fullPath
@@ -132,7 +134,7 @@ const committing = ref(false)
 const moving = ref(false)
 const removing = ref(false)
 const adding = ref(false)
-const busy = computed(() => committing.value || moving.value || removing.value || adding.value)
+const busy = computed(() => catalog.pending.value || committing.value || moving.value || removing.value || adding.value)
 
 function itemStatus(product: CatalogProduct): string {
   const listed = product.publications.some(publication => publication.organization_id === organizationId && publication.published)
@@ -145,9 +147,6 @@ const listItems = computed(() => loadError.value ? [] : products.value.map(row =
 
 
 useSeoMeta({ title: () => (collection.value?.name ?? 'Section') + ' | Blawby Dashboard', robots: 'noindex, nofollow' })
-watchEffect(() => {
-  if (!catalog.pending.value && !catalog.error.value && !collection.value) showError(createError({ statusCode: 404, statusMessage: 'Section not found' }))
-})
 
 function resetEditing() {
   orderDirty.value = false

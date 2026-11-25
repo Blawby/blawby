@@ -30,7 +30,7 @@ interface CheckoutInputBase {
   requestFingerprint: string
   quantity: number
   idempotencyKey: string
-  previous: CheckoutAttempt | undefined
+  previous: CheckoutAttempt | null | undefined
   seller?: Awaited<ReturnType<typeof readCheckoutSeller>>
   following: (paymentId: string) => BatchQuery[]
   /**

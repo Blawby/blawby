@@ -5,7 +5,7 @@ import { readTenantPageEditor } from '~/server/utils/tenant-pages-api'
 
 export default defineHandler(async (event) => {
   const organizationId = getRouterParam(event, 'organization_id')
-  const variantId = getRouterParam(event, 'variant_id')
+  const variantId = getRouterParam(event, 'variant_id', { decode: true })
   if (!organizationId || !variantId) return jsonResponse({ error: 'Organization and page IDs are required' }, { status: 400 })
   return jsonResponse(await readTenantPageEditor(event, organizationId, variantId), { headers: { 'cache-control': 'private, no-store' } })
 })

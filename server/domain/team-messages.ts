@@ -10,7 +10,7 @@ import type { CloudflareEnv } from '~/server/utils/auth'
 import type { MessageIdentity } from '~/shared/dashboard-invalidations'
 import { getStay, stayAccessFor } from '~/server/domain/stays'
 import type { JobSubject } from '~/server/domain/tasks'
-import { appendMessage, participantGuard, type ConversationRow, type MessageRow } from '~/server/domain/conversations'
+import { appendMessage, participantGuard, type ConversationGuard, type ConversationRow, type MessageRow } from '~/server/domain/conversations'
 import { messagePhotoPlacements, messagePreview } from '~/server/domain/guest-threads/attachments'
 
 /**
@@ -409,6 +409,8 @@ export async function postAutomaticTeamMessage(env: TeamEnv, db: DbClient, input
   threadId?: string
   /** Photos already stored that the post carries: a guest's photos of what needs repair. */
   photoAssetIds?: readonly string[]
+  /** The source record must still match when the message is written. */
+  guard?: ConversationGuard
 }): Promise<{ threadId: string; messageId: string; created: boolean }> {
   const body = input.body.trim()
   if (!body || body.length > MAX_BODY) throw new Error(`An automatic team message must be 1 to ${MAX_BODY} characters`)
@@ -437,7 +439,7 @@ export async function postAutomaticTeamMessage(env: TeamEnv, db: DbClient, input
   const messageId = crypto.randomUUID()
   const row = await appendMessage(db, {
     id: messageId, conversationId: threadId, authorKind: PLATFORM_MESSAGE_AUTHOR_KIND, authorUserId: null, body,
-    payload: { key: input.idempotencyKey }, dedupeKey: teamMessageKey(threadId, input.idempotencyKey),
+    payload: { key: input.idempotencyKey }, dedupeKey: teamMessageKey(threadId, input.idempotencyKey), guard: input.guard,
   }, messagePhotoPlacements(input.organizationId, messageId, [...input.photoAssetIds ?? []], new Date().toISOString()))
   const created = row.id === messageId
   if (created) {

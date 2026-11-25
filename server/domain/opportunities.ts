@@ -2,13 +2,13 @@ import { HTTPError } from 'nitro'
 import { executeBatch, type BatchQuery, type DbClient } from '~/server/db'
 import { assertRoleAllows, type MemberAccessPrincipal } from '~/server/utils/member-access'
 import { BOOKING_RECORDS_SQL, bookedRecordWindow } from '~/server/domain/requests'
-import { firstExperienceSetupPath, firstHomeSetupPath, firstPracticeAreaPath, guestConversationPath, productEditorPath } from '~/server/utils/dashboard-links'
+import { firstExperienceSetupPath, firstHomeSetupPath, firstPracticeAreaPath, guestConversationPath, locationEditorPath, productEditorPath } from '~/server/utils/dashboard-links'
 import { resolveBookingPresentation } from '~/utils/booking-presentation'
 import { addLocalDays, formatCalendarRange, formatTimestamp, localDateAt } from '~/utils/timezone'
 import { PRODUCT_DETAIL_FIELDS, type ProductKind } from '~/shared/product-details'
 import { platformLocale } from '~/shared/platform-locales'
 import { stayGuestFirstName } from '~/shared/bookings'
-import { UPCOMING_RESERVATION_DAYS } from '~/shared/dashboard-today'
+import { UPCOMING_RESERVATION_DAYS, todayIcon, type TodayIcon } from '~/shared/dashboard-today'
 
 /*
   What Today suggests, read from what the business has already stored: setup it
@@ -24,7 +24,7 @@ export interface OpportunityView {
   status_line: string
   title: string
   detail: string
-  icon: string
+  icon: TodayIcon
   /** Where the owner does it in the dashboard. */
   path: string
   product_id: string | null
@@ -44,7 +44,7 @@ const FIRST_OFFERING = {
 } as const
 const FIRST_KINDS = JSON.stringify(Object.fromEntries(Object.entries(FIRST_OFFERING).map(([vertical, offering]) => [vertical, offering.kind])))
 
-interface OrganizationFacts { slug: string; vertical: string; stripe_status: string | null; payments_ready: number | null; has_offering: number }
+interface OrganizationFacts { slug: string; vertical: string; stripe_status: string | null; payments_ready: number | null; has_offering: number; has_post: number }
 
 /**
  * Today's suggestions for the business: its unfinished setup (payments, a
@@ -55,14 +55,14 @@ export async function listOpportunities(db: DbClient, principal: MemberAccessPri
   // Suggestions are the owner's decisions about the business; a member is given the tasks they lead to.
   await assertRoleAllows({ ...principal, permissions: { task: ['assign'] } })
   const now = input.now ?? new Date(), organization = { sql: '?', params: [principal.organizationId] }
-  const [facts, unpriced, welcomeRows] = await executeBatch(db, [...setupQueries(organization, { now, locationId: input.locationId }), bookingWelcomesQuery(organization, { now, locationId: input.locationId })])
-  const setup = setupViews(facts!.results, unpriced!.results, { locationId: input.locationId })
+  const [facts, unpriced, improvements, welcomeRows] = await executeBatch(db, [...setupQueries(organization, { now, locationId: input.locationId }), bookingWelcomesQuery(organization, { now, locationId: input.locationId })])
+  const setup = setupViews(facts!.results, unpriced!.results, improvements!.results, { locationId: input.locationId })
   if (!setup) throw new HTTPError({ statusCode: 404, message: 'Organization not found' })
   return { opportunities: [...setup.opportunities, ...bookingWelcomeViews(welcomeRows!.results, { now, slug: setup.slug, vertical: setup.vertical })] }
 }
 
 /**
- * The setup the business has not finished, as two statements for the caller's
+ * The setup the business has not finished, as three statements for the caller's
  * batch: the organization's payments and first-offering facts, and each
  * experience without a current price. `organization` is a bound id or a SQL
  * term the batch reads; a term that is NULL reads nothing.
@@ -71,7 +71,8 @@ export function setupQueries(organization: { sql: string; params?: unknown[] }, 
   const at = input.now.toISOString(), locationId = input.locationId
   return [
     { query: `SELECT o.id, o.slug, o.vertical, s.status AS stripe_status, s.status = 'ready' AND s.card_payments_status = 'active' AS payments_ready,
-        EXISTS (SELECT 1 FROM products p WHERE p.organization_id = o.id AND p.active = 1 AND p.kind = json_extract(?, '$.' || o.vertical)) AS has_offering
+        EXISTS (SELECT 1 FROM products p WHERE p.organization_id = o.id AND p.active = 1 AND p.kind = json_extract(?, '$.' || o.vertical)) AS has_offering,
+        EXISTS (SELECT 1 FROM content_documents d WHERE d.organization_id = o.id AND d.kind = 'social_post' AND d.row_role = 'root') AS has_post
       FROM organization o LEFT JOIN stripe_connected_accounts s ON s.organization_id = o.id WHERE o.id = ${organization.sql}`, params: [FIRST_KINDS, ...organization.params ?? []] },
     // An experience without a current one-time price cannot be booked here; one booked on another site (order_url) needs none.
     { query: `SELECT p.id, p.name FROM products p JOIN organization o ON o.id = p.organization_id AND o.vertical = 'experience'
@@ -82,16 +83,29 @@ export function setupQueries(organization: { sql: string; params?: unknown[] }, 
             AND (pr.valid_from_at IS NULL OR pr.valid_from_at <= ?) AND (pr.valid_until_at IS NULL OR pr.valid_until_at > ?)
             ${locationId ? 'AND (pr.location_id IS NULL OR pr.location_id = ?)' : ''})
       ORDER BY p.created_at, p.id`, params: [...organization.params ?? [], ...(locationId ? [locationId] : []), at, at, ...(locationId ? [locationId] : [])] },
+    { query: `SELECT * FROM (
+        SELECT p.id, p.name, NULL AS slug, 'product' AS owner_type,
+          CASE WHEN NOT EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = p.organization_id
+            AND m.owner_type = 'product' AND m.owner_id = p.id AND m.slot IN ('image', 'gallery') AND m.status = 'active') THEN 'photo' ELSE 'description' END AS missing
+        FROM products p WHERE p.organization_id = ${organization.sql} AND p.active = 1 AND p.kind IN ('dish', 'experience', 'stay', 'service')
+          ${locationId ? 'AND EXISTS (SELECT 1 FROM product_locations l WHERE l.organization_id = p.organization_id AND l.product_id = p.id AND l.location_id = ?)' : ''}
+          AND (trim(p.description) = '' OR NOT EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = p.organization_id
+            AND m.owner_type = 'product' AND m.owner_id = p.id AND m.slot IN ('image', 'gallery') AND m.status = 'active'))
+        UNION ALL SELECT l.id, l.title, l.slug, 'business_location', 'photo' FROM business_locations l
+        WHERE l.organization_id = ${organization.sql} AND l.status = 'active' ${locationId ? 'AND l.id = ?' : ''}
+          AND NOT EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = l.organization_id
+            AND m.owner_type = 'business_location' AND m.owner_id = l.id AND m.slot IN ('image', 'gallery') AND m.status = 'active')
+      ) ORDER BY owner_type, name, id LIMIT 3`, params: [...organization.params ?? [], ...(locationId ? [locationId] : []), ...organization.params ?? [], ...(locationId ? [locationId] : [])] },
   ]
 }
 
-/** `setupQueries`' rows as suggestions, in order: payments, a first offering, a price for each experience without one. Null when the organization row was not read. */
-export function setupViews(factRows: unknown[], unpricedRows: unknown[], input: { locationId?: string } = {}): { slug: string; vertical: string; opportunities: OpportunityView[] } | null {
+/** `setupQueries`' rows as suggestions, in order: payments, a first offering, a price for each experience without one, then content improvements. Null when the organization row was not read. */
+export function setupViews(factRows: unknown[], unpricedRows: unknown[], improvementRows: unknown[], input: { locationId?: string } = {}): { slug: string; vertical: string; opportunities: OpportunityView[] } | null {
   const organization = factRows[0] as (OrganizationFacts & { id: string }) | undefined
   if (!organization) return null
   const slug = organization.slug, organizationId = organization.id
   const items: OpportunityView[] = []
-  const offer = (id: string, statusLine: string, title: string, detail: string, path: string, icon: string, productId: string | null = null) =>
+  const offer = (id: string, statusLine: string, title: string, detail: string, path: string, icon: TodayIcon, productId: string | null = null) =>
     items.push({ id, status_line: statusLine, title, detail, icon, path, product_id: productId, location_id: input.locationId ?? null, conversation_id: null, message: null })
 
   // Stripe is reviewing an account that is waiting on it; there is nothing for the owner to do yet.
@@ -101,8 +115,17 @@ export function setupViews(factRows: unknown[], unpricedRows: unknown[], input: 
   const first = FIRST_OFFERING[organization.vertical as keyof typeof FIRST_OFFERING]
   if (first && !organization.has_offering) offer(`product.create:${organizationId}`, 'Catalog', first.title, first.detail, first.path(slug), 'i-lucide-list-checks')
   for (const product of unpricedRows as Array<{ id: string; name: string }>) {
-    offer(`product.readiness:${product.id}`, 'Catalog', `Set a booking price for “${product.name}”`, 'This offering needs a price before guests can book it on your site.', `${productEditorPath(slug, product.id)}/price`, 'i-lucide-list-checks', product.id)
+    offer(`product.readiness:${product.id}`, 'Catalog', `Set a booking price for “${product.name}”`, 'This experience needs a price before guests can book it on your site.', `${productEditorPath(slug, product.id)}/price`, 'i-lucide-list-checks', product.id)
   }
+  for (const row of improvementRows as Array<{ id: string; name: string; slug: string | null; owner_type: string; missing: string }>) {
+    const location = row.owner_type === 'business_location'
+    const path = location ? `${locationEditorPath(slug, row.slug!)}/photos` : `${productEditorPath(slug, row.id)}/${row.missing === 'photo' ? 'photo' : 'description'}`
+    offer(`${row.owner_type}.${row.missing}:${row.id}`, location ? 'Location' : 'Catalog',
+      row.missing === 'photo' ? `Add photos of “${row.name}”` : `Describe “${row.name}”`,
+      row.missing === 'photo' ? 'Help people see what to expect.' : 'Help people decide whether it’s right for them.', path,
+      'i-lucide-list-checks', location ? null : row.id)
+  }
+  if (!items.length && !organization.has_post) offer(`marketing.post:${organizationId}`, 'Marketing', 'Create a post for your business', 'Share something people can look forward to.', `/dashboard/${encodeURIComponent(slug)}/website/posts/new`, 'i-lucide-list-checks')
   return { slug, vertical: organization.vertical, opportunities: items }
 }
 
@@ -112,7 +135,7 @@ export function bookingWelcomeViews(rows: unknown[], input: { now: Date; slug: s
     id: `booking.welcome:${welcome.requestId}`, status_line: 'Messages',
     title: welcome.kind === 'stay' ? 'Share info about your place' : 'Share how to prepare',
     detail: `Help ${welcome.guestFirstName ?? `your ${welcome.kind === 'stay' ? 'guest' : resolveBookingPresentation(welcome.productKind, input.vertical).counterpartyNoun}`} get ready`,
-    icon: 'i-lucide-messages-square', path: guestConversationPath(input.slug, welcome.requestId),
+    icon: todayIcon(welcome.productKind), path: guestConversationPath(input.slug, welcome.requestId),
     product_id: welcome.productId, location_id: welcome.locationId, conversation_id: welcome.requestId, message: welcome.message,
   }))
 }

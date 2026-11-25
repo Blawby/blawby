@@ -1,5 +1,5 @@
 /** The seeded businesses a fixture can belong to; see tests/e2e/seed. */
-export type SeedTenantKey = 'restaurant' | 'experience' | 'legal'
+export type SeedTenantKey = 'restaurant' | 'experience' | 'legal' | 'lodging'
 
 /** Seeded local actors share one password; nothing here exists outside a local E2E database. */
 export const E2E_PASSWORD = 'E2e-Local-Password-7!'
@@ -38,7 +38,7 @@ export const E2E_AUTH_FIXTURES: readonly E2eAuthFixture[] = [
     name: 'E2E Platform Admin',
     email: 'platform-admin@playwright.example',
     platformRole: 'admin',
-    memberships: [{ tenant: 'restaurant', role: 'owner' }, { tenant: 'experience', role: 'owner' }, { tenant: 'legal', role: 'owner' }],
+    memberships: [{ tenant: 'restaurant', role: 'owner' }, { tenant: 'experience', role: 'owner' }, { tenant: 'legal', role: 'owner' }, { tenant: 'lodging', role: 'owner' }],
   },
   {
     id: 'user-e2e-demo-owner',

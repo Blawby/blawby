@@ -126,11 +126,11 @@ test('a stay opens its guest conversation in the one inbox', async () => {
     assert.ok((await listConversations(db, ORG, { userId: OWNER, type: 'stay' })).some(row => row.id === ana.conversation_id))
 
     // The thread is answered like any other; a stay is changed from its own screen, not its thread.
-    const hostConversation = await conversationPageFor(db, principal(OWNER, 'owner'), ana.conversation_id)
+    const hostConversation = await conversationPageFor(db, env, principal(OWNER, 'owner'), ana.conversation_id)
     const detail = hostConversation.conversation
     assert(detail.kind === 'guest')
     assert.equal(detail.booking_id, ana.id)
-    const sheet = async () => getConversationDetails(db, (await resolveConversationAccess(db, OWNER, ana.conversation_id)).conversation, OWNER, 'member')
+    const sheet = async () => getConversationDetails(db, env, (await resolveConversationAccess(db, OWNER, ana.conversation_id)).conversation, OWNER, 'member')
     const reply = await sendGuestThreadReply(db, { threadId: ana.conversation_id, organizationId: ORG, body: 'The gate code is in your confirmation.', actorUserId: OWNER, idempotencyKey: 'reply-1', env })
     assert.deepEqual([reply.ok, reply.status], [true, 200])
     assert.deepEqual(await db.prepare(`SELECT d.channel, d.status FROM guest_thread_deliveries d JOIN messages e ON e.id = d.message_id
@@ -198,7 +198,7 @@ test('a stay opens its guest conversation in the one inbox', async () => {
     // A guest's WhatsApp number finds their stay's thread; a cancelled stay's thread is not found.
     assert.deepEqual(await findSubmissionByPhone(db, '+61491570150'), { submissionType: 'booking', submissionId: ana.conversation_id, organizationId: ORG })
     await db.prepare("UPDATE bookings SET status = 'cancelled', cancelled_at = '2026-10-15T00:00:00.000Z' WHERE id = ?").bind(ana.id).run()
-    assert.equal(await findSubmissionByPhone(db, '+61491570150'), undefined)
+    assert.equal(await findSubmissionByPhone(db, '+61491570150'), null)
 
   } finally {
     await runtime.dispose()

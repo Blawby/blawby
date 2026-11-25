@@ -80,7 +80,7 @@ async function plan(db: DbClient, template: MessageTemplateRow, source: BookedRe
     validTimestamp(template.updated_at, 'template.updated_at')
     validTimestamp(source.updated_at, 'source.updatedAt')
     const changedAt = [template.updated_at, source.updated_at].sort().at(-1)!
-    const past = due <= changedAt && (existing === undefined || existing.due_at !== due)
+    const past = due <= changedAt && (!existing || existing.due_at !== due)
     values = { due_at: due, status: past ? 'skipped' : 'pending', reason: past ? `This event was already in the past when the schedule or ${bookingNoun(source)} changed.` : null, error_code: null, error_field: null }
   } catch (error) {
     if (!(error instanceof HTTPError) || !error.data || typeof error.data !== 'object'
@@ -93,7 +93,7 @@ async function plan(db: DbClient, template: MessageTemplateRow, source: BookedRe
   await savePlan(db, template, source, existing, values, now)
 }
 
-async function savePlan(db: DbClient, template: MessageTemplateRow, source: BookedRecord, existing: ScheduledGuestMessageRow | undefined, values: Plan, now: string): Promise<void> {
+async function savePlan(db: DbClient, template: MessageTemplateRow, source: BookedRecord, existing: ScheduledGuestMessageRow | null, values: Plan, now: string): Promise<void> {
   // Both observed sources are part of the write. A stale planner can neither
   // overwrite a newer snapshot nor insert one after a concurrent edit.
   const guard = bookedRecordGuard(source)

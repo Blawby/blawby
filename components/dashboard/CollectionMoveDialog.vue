@@ -56,7 +56,7 @@ watch(open, value => {
   targetId.value = ''
   error.value = null
   snapshots.value = loadError.value ? {} : Object.fromEntries(catalog.collections.value.filter(row => row.id !== props.sourceCollectionId).map(row => [row.id, catalog.collectionProductIds(row.id)]))
-})
+}, { immediate: true })
 function useCurrent() {
   open.value = false
   emit('reset')

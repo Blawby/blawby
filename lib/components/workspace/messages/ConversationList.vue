@@ -30,7 +30,7 @@
           :unread="thread.unread"
           :name="thread.title"
           :enabled="!personalScope"
-          :archivable="!pastOnly && !blockedOnly"
+          :archivable="!pastOnly && !blockedOnly && !search"
           @toggle="toggleRead(thread)"
           @archive="archive(thread)"
         >
@@ -76,12 +76,13 @@
 
       <div v-if="page && threads.length === 0" class="py-14 text-center">
         <p class="text-base font-medium text-highlighted">{{ emptyTitle }}</p>
-        <p class="mt-1 text-sm text-muted">{{ emptyDescription }}</p>
+        <p v-if="emptyDescription" class="mt-1 text-sm text-muted">{{ emptyDescription }}</p>
       </div>
 
       <!-- Airbnb's own: a full-bleed row at the foot of the list. Past conversations are a place you go to. -->
+      <!-- A search reads Current and Past together, so it has no other mailbox to go to. -->
       <NuxtLink
-        v-if="page"
+        v-if="page && !search"
         :to="{ path: listRoute, query: pastOnly || blockedOnly ? withoutArchived : { ...route.query, archived: '' } }"
         class="-mx-4 mt-2 flex items-center justify-between gap-3 border-t border-default px-4 py-4 text-sm font-medium text-highlighted transition hover:bg-elevated/60 sm:-mx-6 sm:px-6"
       >
@@ -150,9 +151,9 @@ const inboxUnread = computed({
   set: value => { if (props.personalScope) personalUnread.value = value; else workspaceUnread.value = value },
 })
 
-const emptyTitle = computed(() => search.value || kind.value || unreadOnly.value ? 'No conversations match' : 'No conversations yet.')
+const emptyTitle = computed(() => search.value ? `No results for “${search.value}”` : kind.value || unreadOnly.value ? 'No conversations match' : 'No conversations yet.')
 const emptyDescription = computed(() => {
-  if (search.value) return `Nothing matched “${search.value}”.`
+  if (search.value) return null
   if (blockedOnly.value) return 'Guests you block appear here until you unblock them.'
   if (pastOnly.value) return 'Conversations move here when you archive them, or once they have been quiet for 30 days after the last message and any stay or booking has ended.'
   return props.personalScope ? 'Your conversations with businesses will appear here.' : `When a ${getVerticalCopy(dashboard.organization.value?.vertical).guestLabel} writes, the conversation appears here.`
@@ -161,7 +162,8 @@ const emptyDescription = computed(() => {
 const listQuery = computed(() => ({
   kind: props.personalScope ? undefined : kind.value ?? undefined,
   q: search.value ?? undefined,
-  mailbox: blockedOnly.value ? 'blocked' as const : pastOnly.value ? 'past' as const : 'current' as const,
+  // A search reads Current and Past together; Blocked is excluded.
+  mailbox: search.value ? undefined : blockedOnly.value ? 'blocked' as const : pastOnly.value ? 'past' as const : 'current' as const,
   unread: unreadOnly.value ? '1' as const : undefined,
 }))
 
@@ -173,7 +175,7 @@ const listKey = computed(() => JSON.stringify([
   organizationId.value,
   kind.value ?? 'all',
   search.value ?? '',
-  blockedOnly.value ? 'blocked' : pastOnly.value ? 'past' : 'current',
+  blockedOnly.value ? 'blocked' : search.value ? 'searched' : pastOnly.value ? 'past' : 'current',
   unreadOnly.value ? 'unread' : 'any',
 ]))
 

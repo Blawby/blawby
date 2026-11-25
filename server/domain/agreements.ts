@@ -11,14 +11,15 @@ import { renderNotificationEmail } from '~/server/emails/render'
 import { guestThreadStatusMessage } from '~/server/notifications/guest-events'
 import { organizationLogo } from '~/server/notifications/hero'
 import type { CloudflareEnv } from '~/server/utils/auth'
-import { readR2Object } from '~/server/utils/cloudflare-r2'
+import { readR2Object, type R2Visibility } from '~/server/utils/cloudflare-r2'
 import { depositQuery, presentDeposit } from '~/server/domain/deposits'
 import { getPlatformDomain, platformOrigin } from '~/server/utils/dashboard-notification-links'
 import { getEmailDeliveryMode } from '~/server/utils/email-delivery'
 import { buildMediaPlacementInsertQuery } from '~/server/utils/media-asset-manager'
 import { sniffMediaMimeType } from '~/server/utils/media-mime'
-import { sanitizeFilename, uploadPrivateDocument } from '~/server/utils/media-upload'
-import { AGREEMENT_EVENTS, agreementDocumentPath, agreementLabel, isAgreementField, type AgreementField, type AgreementSigner, type BookingAgreement } from '~/shared/agreements'
+import { sanitizeFilename, uploadResolvedMediaToAssetStore } from '~/server/utils/media-upload'
+import { mediaLinks } from '~/server/utils/private-media'
+import { AGREEMENT_EVENTS, agreementLabel, isAgreementField, type AgreementField, type AgreementSigner, type BookingAgreement } from '~/shared/agreements'
 import { PLATFORM_MESSAGE_AUTHOR_KIND, guestConversationPath } from '~/shared/messages-contract'
 import type { ProductKind } from '~/shared/product-details'
 
@@ -54,10 +55,17 @@ export interface AgreementViewer {
   /** A verified email matches a signer the business invited by email. */
   verifiedEmail: string | null
   canManage: boolean
+  /** A guest on the booking, who reads its documents; a member who only works the booking does not. */
+  guest: boolean
 }
 
-type AgreementRecord = MessageRow & { asset_id: string | null; file_name: string | null; r2_key: string | null; public_url: string | null }
-type ListingDocument = { asset_id: string; file_name: string | null; r2_key: string | null; public_url: string | null }
+type StoredDocument = { kind: string; provider: string; file_name: string | null; r2_key: string | null; public_url: string | null }
+type AgreementRecord = MessageRow & Partial<StoredDocument> & { asset_id: string | null }
+type ListingDocument = StoredDocument & { asset_id: string }
+
+/** A booking's documents are private to its conversation; the listing's own agreement is public, as guests read it before booking. */
+const MESSAGE_DOCUMENT = { owner_type: 'message', slot: 'agreement' } as const
+const LISTING_DOCUMENT = { owner_type: 'product', slot: 'agreement' } as const
 
 /**
  * The booking an agreement read is for: its ID, and its organization as a SQL
@@ -78,7 +86,7 @@ const BOOKING_CONVERSATION = (target: AgreementTarget) => ({
 function recordsQuery(target: AgreementTarget): BatchQuery {
   const conversation = BOOKING_CONVERSATION(target)
   return {
-    query: `SELECT m.*, ma.id AS asset_id, ma.file_name, ma.r2_key, ma.public_url
+    query: `SELECT m.*, ma.id AS asset_id, ma.kind, ma.provider, ma.file_name, ma.r2_key, ma.public_url
       FROM messages m
       LEFT JOIN media_placements mp ON mp.owner_type = 'message' AND mp.owner_id = m.id AND mp.slot = 'agreement' AND mp.status = 'active'
       LEFT JOIN media_assets ma ON ma.id = mp.asset_id AND ma.organization_id = mp.organization_id AND ma.status = 'active'
@@ -90,7 +98,7 @@ function recordsQuery(target: AgreementTarget): BatchQuery {
 
 function listingQuery(target: AgreementTarget): BatchQuery {
   return {
-    query: `SELECT ma.id AS asset_id, ma.file_name, ma.r2_key, ma.public_url
+    query: `SELECT ma.id AS asset_id, ma.kind, ma.provider, ma.file_name, ma.r2_key, ma.public_url
       FROM bookings b JOIN media_placements mp ON mp.organization_id = b.organization_id AND mp.owner_type = 'product' AND mp.owner_id = b.product_id AND mp.slot = 'agreement' AND mp.status = 'active'
       JOIN media_assets ma ON ma.id = mp.asset_id AND ma.organization_id = mp.organization_id AND ma.status = 'active'
       WHERE b.id = ${target.booking.sql} AND b.organization_id = ${target.organization.sql}`,
@@ -215,7 +223,15 @@ function agreementState(records: AgreementRecord[], listing: ListingDocument | n
   return { request: null, listing, listingSignature: null, fields: [], signers: [{ key: `user:${booking.bookingUserId}`, name: booking.guestName, role: 'guest', signature: null }] }
 }
 
-function presentAgreement(state: AgreementState, booking: AgreementBooking, viewer: AgreementViewer | null, signersRows?: SignerRow[] | null): BookingAgreement {
+type AgreementLinkEnv = Parameters<typeof mediaLinks>[0]
+
+/** A stored document's link for this reader, made by the one media link maker. */
+async function documentLink(env: AgreementLinkEnv, document: { asset_id: string | null } & Partial<StoredDocument>, placement: typeof MESSAGE_DOCUMENT | typeof LISTING_DOCUMENT): Promise<string> {
+  if (!document.asset_id || !document.kind || !document.provider) throw new Error('An agreement document has no stored file')
+  return (await mediaLinks(env, { id: document.asset_id, kind: document.kind, provider: document.provider, cloudflare_image_id: null, public_url: document.public_url ?? null, thumbnail_url: null }, placement)).url
+}
+
+async function presentAgreement(env: AgreementLinkEnv, state: AgreementState, booking: AgreementBooking, viewer: AgreementViewer | null, signersRows?: SignerRow[] | null): Promise<BookingAgreement> {
   const signers: AgreementSigner[] = state.signers.map(signer => ({ key: signer.key, name: signer.name, role: signer.role, signed_at: signer.signature?.occurred_at ?? null,
     signed_name: signer.signature ? signedSchema.parse(payload(signer.signature)).typed_name : null }))
   const complete = signers.length > 0 && signers.every(signer => signer.signed_at !== null)
@@ -225,58 +241,62 @@ function presentAgreement(state: AgreementState, booking: AgreementBooking, view
   const base = { label: agreementLabel(booking.productKind), fields: state.fields, viewer_signer_key: own?.key ?? null, can_manage: viewer?.canManage === true,
     document_id: document?.id ?? state.listing!.asset_id }
   if (state.request?.event_name === 'agreement.stored') {
-    const url = agreementDocumentPath(booking.conversationId, state.request.id)
+    const url = await documentLink(env, state.request, MESSAGE_DOCUMENT)
     return { ...base, source: 'booking', file_name: state.request.file_name ?? 'Agreement.pdf', url, signed_url: url, status: 'stored', completed_at: state.request.occurred_at, signers, can_sign: false }
   }
   const completedAt = complete ? signers.map(signer => signer.signed_at!).sort().at(-1)! : null
   if (document) {
+    // The signature that completed the document carries the signed copy stored with it; a listing's one signature is that signature.
+    const signedCopy = complete ? state.signers.map(signer => signer.signature).find(signature => signature?.asset_id) : null
+    if (complete && !signedCopy) throw new Error(`The signed ${base.label.toLowerCase()} ${document.id} has no signed copy`)
     return {
       ...base, source: state.request ? 'booking' : 'listing', file_name: document.file_name ?? 'Agreement.pdf',
-      url: agreementDocumentPath(booking.conversationId, document.id),
-      signed_url: complete ? agreementDocumentPath(booking.conversationId, document.id, true) : null,
+      url: await documentLink(env, document, MESSAGE_DOCUMENT),
+      signed_url: signedCopy ? await documentLink(env, signedCopy, MESSAGE_DOCUMENT) : null,
       status: complete ? 'signed' : 'signing', completed_at: completedAt, signers,
       can_sign: own !== null && own.signature === null && (own.role === 'guest' || guestsSigned),
     }
   }
   const listing = state.listing!
-  if (!listing.public_url) throw new Error(`The listing agreement ${listing.asset_id} has no public URL`)
   return {
-    ...base, source: 'listing', file_name: listing.file_name ?? 'Agreement.pdf', url: listing.public_url, signed_url: null,
+    ...base, source: 'listing', file_name: listing.file_name ?? 'Agreement.pdf', url: await documentLink(env, listing, LISTING_DOCUMENT), signed_url: null,
     status: 'signing', completed_at: null, signers, can_sign: own !== null,
   }
 }
 
 /** The booking's agreement as this viewer reads it, from `agreementFromResults`, or null when it has none. */
-export function presentBookingAgreement(read: Pick<ReturnType<typeof agreementFromResults>, 'booking' | 'records' | 'listing' | 'signerRows'>, viewer: AgreementViewer | null): BookingAgreement | null {
+export async function presentBookingAgreement(env: AgreementLinkEnv, read: Pick<ReturnType<typeof agreementFromResults>, 'booking' | 'records' | 'listing' | 'signerRows'>, viewer: AgreementViewer | null): Promise<BookingAgreement | null> {
+  // A booking's documents are read by its guests and by the business that may change them, not by a member who only works the booking.
+  if (!viewer || (!viewer.guest && !viewer.canManage && read.booking.bookingUserId !== viewer.userId)) return null
   const state = agreementState(read.records, read.listing, read.booking, new Date().toISOString())
-  return state ? presentAgreement(state, read.booking, viewer, read.signerRows) : null
+  return state ? await presentAgreement(env, state, read.booking, viewer, read.signerRows) : null
 }
 
 /** The agreement as a booking read presents it, from the rows its batch read with `agreementQueries`. */
-export function bookingAgreementFromRows(rows: { results: unknown[] }[], reader: AgreementViewer, actor: AgreementActor | null) {
+export async function bookingAgreementFromRows(env: AgreementLinkEnv, rows: { results: unknown[] }[], reader: AgreementViewer, actor: AgreementActor | null) {
   const read = agreementFromResults(rows)
   // The person who booked is the guest on their own booking, whatever they are in the business: they sign it, they do not send it.
   const viewer = { ...reader, canManage: reader.canManage && read.booking.bookingUserId !== reader.userId }
   return {
-    agreement: presentBookingAgreement(read, viewer),
+    agreement: await presentBookingAgreement(env, read, viewer),
     deposit: read.deposit,
     ...(viewer.canManage && read.signerRows && actor ? { agreement_signers: availableSigners(read.signerRows, actor), agreement_template: read.hasTemplate } : {}),
   }
 }
 
 /** The agreement, and for the business who it may ask to sign, in one D1 round trip. */
-export async function readBookingAgreement(db: DbClient, conversation: Pick<ConversationRow, 'id' | 'organization_id' | 'booking_id' | 'kind'>, viewer: AgreementViewer, actor: AgreementActor) {
-  const read = await readAgreement(db, conversation, viewer.canManage)
-  return { agreement: presentBookingAgreement(read, viewer), deposit: read.deposit, available_signers: read.signerRows ? availableSigners(read.signerRows, actor) : null }
+export async function readBookingAgreement(env: AgreementLinkEnv & { DB: DbClient }, conversation: Pick<ConversationRow, 'id' | 'organization_id' | 'booking_id' | 'kind'>, viewer: AgreementViewer, actor: AgreementActor) {
+  const read = await readAgreement(env.DB, conversation, viewer.canManage)
+  return { agreement: await presentBookingAgreement(env, read, viewer), deposit: read.deposit, available_signers: read.signerRows ? availableSigners(read.signerRows, actor) : null }
 }
 
 async function sha256(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
-async function documentBytes(env: CloudflareEnv, r2Key: string | null, label: string): Promise<Uint8Array<ArrayBuffer>> {
+async function documentBytes(env: CloudflareEnv, r2Key: string | null | undefined, label: string, visibility: R2Visibility): Promise<Uint8Array<ArrayBuffer>> {
   if (!r2Key) throw new Error(`The ${label} has no stored file`)
-  const bytes = await readR2Object(env, r2Key)
+  const bytes = await readR2Object(env, r2Key, visibility)
   if (!bytes) throw new Error(`The ${label} file is missing from storage`)
   return bytes
 }
@@ -305,11 +325,17 @@ export async function storeAgreement(env: CloudflareEnv, conversation: Conversat
   const pdf = await readUploadedPdf(file)
   const label = agreementLabel(booking.productKind).toLowerCase()
   const writer = messageQueries({ conversationId: conversation.id, authorKind: PLATFORM_MESSAGE_AUTHOR_KIND, authorUserId: actor.userId, eventName: 'agreement.stored', body: `Added the signed ${label}`, payload: { sha256: await sha256(pdf.bytes) } })
-  await uploadPrivateDocument({
-    db: env.DB, env, organizationId: conversation.organization_id, userId: actor.userId, buffer: pdf.bytes, filename: pdf.filename,
+  await storeMessageDocument(env, conversation, actor.userId, { bytes: pdf.bytes, filename: pdf.filename, source: 'uploaded' }, writer)
+  await publishConversationEvent(env, env.DB, { conversationId: conversation.id, type: 'MESSAGE_CREATE' })
+}
+
+/** A PDF placed on the agreement message written in the same batch: the file, its asset and the message commit together or not at all. */
+async function storeMessageDocument(env: CloudflareEnv, conversation: ConversationRow, userId: string, file: { bytes: Uint8Array<ArrayBuffer>; filename: string; source: 'uploaded' | 'generated' }, writer: ReturnType<typeof messageQueries>) {
+  await uploadResolvedMediaToAssetStore({
+    db: env.DB, env, organizationId: conversation.organization_id, userId, source: file.source, kind: 'file', contentType: 'application/pdf',
+    buffer: file.bytes, filename: file.filename, placement: MESSAGE_DOCUMENT,
     queries: assetId => [...writer.queries, buildMediaPlacementInsertQuery({ organizationId: conversation.organization_id, ownerType: 'message', ownerId: writer.id, slot: 'agreement', assetId, sortOrder: 0 })],
   })
-  await publishConversationEvent(env, env.DB, { conversationId: conversation.id, type: 'MESSAGE_CREATE' })
 }
 
 export interface SendAgreementInput {
@@ -354,10 +380,7 @@ export async function sendAgreement(env: CloudflareEnv, conversation: Conversati
     body: `Asked ${joinNames(guests.map(signer => signer.name))} to sign the ${label}`,
     payload: { sha256: await sha256(pdf.bytes), signers, fields },
   })
-  await uploadPrivateDocument({
-    db: env.DB, env, organizationId: conversation.organization_id, userId: actor.userId, buffer: pdf.bytes, filename: pdf.filename,
-    queries: assetId => [...writer.queries, buildMediaPlacementInsertQuery({ organizationId: conversation.organization_id, ownerType: 'message', ownerId: writer.id, slot: 'agreement', assetId, sortOrder: 0 })],
-  })
+  await storeMessageDocument(env, conversation, actor.userId, { bytes: pdf.bytes, filename: pdf.filename, source: 'uploaded' }, writer)
   await publishConversationEvent(env, env.DB, { conversationId: conversation.id, type: 'MESSAGE_CREATE' })
   const sent = await findMessageByDedupeKey(env.DB, writer.dedupeKey)
   if (!sent) throw new Error('The agreement request was not saved')
@@ -449,38 +472,61 @@ export async function signAgreement(env: CloudflareEnv, conversation: Conversati
   if (typedName.length < 2 || typedName.length > 120) throw new HTTPError({ statusCode: 422, message: 'Type your full name', data: { code: 'NAME_REQUIRED', field: 'typed_name' } })
   const { booking, records, listing, signerRows } = await readAgreement(env.DB, conversation, true)
   const state = agreementState(records, listing, booking, new Date().toISOString())
-  const agreement = state ? presentAgreement(state, booking, viewer, signerRows) : null
+  const agreement = state ? await presentAgreement(env, state, booking, viewer, signerRows) : null
   if (!state || !agreement?.can_sign || !agreement.viewer_signer_key) throw new HTTPError({ statusCode: 409, message: 'There is nothing for you to sign on this booking', data: { code: 'NOTHING_TO_SIGN', field: 'conversation_id' } })
+  const signerKey = agreement.viewer_signer_key
   const document = state.request ?? state.listing!
   const label = agreement.label.toLowerCase()
   // A document sent or replaced after the signer opened theirs is not the one they read.
   if (agreement.document_id !== input.documentId) throw new HTTPError({ statusCode: 409, message: `The ${label} changed. Open it again to read and sign the current one.`, data: { code: 'AGREEMENT_CHANGED', field: 'document_id' } })
-  const fingerprint = await sha256(await documentBytes(env, document.r2_key, label))
+  const original = await documentBytes(env, document.r2_key, label, state.request ? 'private' : 'public')
+  const fingerprint = await sha256(original)
   if (state.request && fingerprint !== sentSchema.parse(payload(state.request)).sha256) throw new Error(`The ${label} changed in storage after it was sent`)
   const requestId = state.request?.id ?? null
+  const occurredAt = new Date().toISOString()
+  const signed = { request_id: requestId, signer_key: signerKey, typed_name: typedName, sha256: fingerprint, ip: input.ip, user_agent: input.userAgent }
   const writer = messageQueries({
     conversationId: conversation.id, authorKind: PLATFORM_MESSAGE_AUTHOR_KIND, authorUserId: viewer.userId, eventName: 'agreement.signed', body: `Signed the ${label}`,
-    payload: { request_id: requestId, signer_key: agreement.viewer_signer_key, typed_name: typedName, sha256: fingerprint, ip: input.ip, user_agent: input.userAgent },
-    dedupeKey: `agreement-signed:${requestId ?? `listing:${booking.bookingId}`}:${agreement.viewer_signer_key}`,
+    payload: signed, occurredAt,
+    dedupeKey: `agreement-signed:${requestId ?? `listing:${booking.bookingId}`}:${signerKey}`,
     // The signature is written only while its request stands: not withdrawn, and nothing sent after it.
     ...(requestId ? { guard: { sql: `NOT EXISTS (SELECT 1 FROM messages later WHERE later.conversation_id = c.id AND (
         (later.event_name = 'agreement.cancelled' AND json_extract(later.payload_json, '$.request_id') = ?)
         OR (later.event_name IN ('agreement.sent', 'agreement.stored') AND later.sequence > (SELECT sequence FROM messages WHERE id = ?))))`, params: [requestId, requestId] } } : {}),
   })
-  await executeBatch(env.DB, [
-    ...writer.queries,
-    // A listing agreement may change; the signature keeps the document it signed.
-    ...requestId ? [] : [buildMediaPlacementInsertQuery({ organizationId: conversation.organization_id, ownerType: 'message', ownerId: writer.id, slot: 'agreement', assetId: state.listing!.asset_id, sortOrder: 0 })],
-  ], { operation: 'Sign agreement' })
+  // The last signature completes the document: the signed copy is drawn now and stored with it, so it is
+  // the same file every time it is opened. Signing is ordered (guests, then the business), so one signer completes it.
+  const completes = state.signers.every(signer => signer.signature !== null || signer.key === signerKey)
+  try {
+    if (!completes) {
+      await executeBatch(env.DB, writer.queries, { operation: 'Sign agreement' })
+    } else {
+      const signatures = state.signers.map(signer => {
+        if (signer.key === signerKey) return { signer, signed, at: occurredAt }
+        const earlier = signedSchema.parse(payload(signer.signature!))
+        if (earlier.sha256 !== fingerprint) throw new Error(`The ${label} in storage is not the one ${signer.name} signed`)
+        return { signer, signed: earlier, at: signer.signature!.occurred_at }
+      })
+      const copy = await renderSignedAgreement(env, {
+        original, fingerprint, fields: state.fields, signatures, label: agreement.label, fileName: document.file_name ?? 'Agreement.pdf',
+        organizationName: booking.organizationName, sentAt: state.request?.occurred_at ?? null, completedAt: occurredAt,
+      })
+      await storeMessageDocument(env, conversation, viewer.userId, { bytes: copy.bytes, filename: copy.fileName, source: 'generated' }, writer)
+    }
+  } catch (error) {
+    if (!completes) throw error
+    // A completing signature that wrote no message leaves its signed copy's placement without an owner, which fails the batch.
+    // The same signature sent twice: the first stored it and its copy. A request withdrawn or replaced meanwhile: the document changed.
+    const earlier = await findMessageByDedupeKey(env.DB, writer.dedupeKey)
+    if (!earlier) {
+      const current = agreementState((await readAgreement(env.DB, conversation)).records, listing, booking, new Date().toISOString())
+      if (current?.request?.id === requestId) throw error
+      throw new HTTPError({ statusCode: 409, message: `The ${label} changed. Open it again to read and sign the current one.`, data: { code: 'AGREEMENT_CHANGED', field: 'document_id' }, cause: error })
+    }
+    if (earlier.id === writer.id) throw error
+  }
   if (!await findMessageByDedupeKey(env.DB, writer.dedupeKey)) throw new HTTPError({ statusCode: 409, message: `The ${label} changed. Open it again to read and sign the current one.`, data: { code: 'AGREEMENT_CHANGED', field: 'document_id' } })
   await publishConversationEvent(env, env.DB, { conversationId: conversation.id, type: 'MESSAGE_CREATE' })
-}
-
-/** The document an agreement message holds, for someone who can read its conversation. */
-export async function agreementDocument(env: CloudflareEnv, conversation: ConversationRow, messageId: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; fileName: string }> {
-  const record = (await readAgreement(env.DB, conversation)).records.find(entry => entry.id === messageId)
-  if (!record?.asset_id) throw new HTTPError({ statusCode: 404, message: 'Document not found', data: { code: 'DOCUMENT_NOT_FOUND', field: 'message_id' } })
-  return { bytes: await documentBytes(env, record.r2_key, 'agreement'), fileName: record.file_name ?? 'Agreement.pdf' }
 }
 
 const SIGNATURE_COLOR = rgb(0.09, 0.09, 0.11)
@@ -535,23 +581,25 @@ export async function notoFontFor(env: CloudflareEnv, text: string, loaded: Map<
   return { key: 'tc', bytes: await loadFontAssetBytes(env, NOTO_FONT_FILES.tc, loaded) }
 }
 
+interface SignedCopyInput {
+  original: Uint8Array<ArrayBuffer>
+  fingerprint: string
+  fields: AgreementField[]
+  signatures: { signer: { key: string; name: string; role: 'guest' | 'host' }; signed: z.infer<typeof signedSchema>; at: string }[]
+  label: string
+  fileName: string
+  organizationName: string
+  /** When the business sent it to sign; a listing's agreement was never sent. */
+  sentAt: string | null
+  completedAt: string
+}
+
 /** The document with every signature where it was placed and a closing page that records who signed, when and how. */
-export async function signedAgreementDocument(env: CloudflareEnv, conversation: ConversationRow, messageId: string, viewer: AgreementViewer): Promise<{ bytes: Uint8Array<ArrayBuffer>; fileName: string }> {
-  const { booking, records, listing, signerRows } = await readAgreement(env.DB, conversation, true)
-  // The requested document's own state: a document everyone signed stays downloadable after another is sent.
-  const state = agreementState(records, listing, booking, new Date().toISOString(), records.some(record => record.id === messageId && record.event_name === 'agreement.sent') ? messageId : undefined)
-  const agreement = state ? presentAgreement(state, booking, viewer, signerRows) : null
-  const document = state?.request ?? state?.listingSignature
-  if (!state || !agreement || !document || document.id !== messageId || agreement.status !== 'signed') {
-    throw new HTTPError({ statusCode: 404, message: 'This document is not signed by everyone yet', data: { code: 'NOT_SIGNED', field: 'message_id' } })
-  }
-  const original = await documentBytes(env, document.r2_key, agreement.label.toLowerCase())
-  const fingerprint = await sha256(original)
-  const signatures = state.signers.map(signer => ({ signer, signed: signedSchema.parse(payload(signer.signature!)), at: signer.signature!.occurred_at }))
-  if (signatures.some(({ signed }) => signed.sha256 !== fingerprint)) throw new Error(`The ${agreement.label.toLowerCase()} in storage is not the one that was signed`)
-  // The signed document is the same file each time it is opened: its dates are the signing's, not the download's.
+async function renderSignedAgreement(env: CloudflareEnv, input: SignedCopyInput): Promise<{ bytes: Uint8Array<ArrayBuffer>; fileName: string }> {
+  const { original, fingerprint, signatures } = input
+  // The signed document's dates are the signing's, not the moment it was drawn.
   const pdf = await PDFDocument.load(original, { updateMetadata: false })
-  pdf.setModificationDate(new Date(agreement.completed_at!))
+  pdf.setModificationDate(new Date(input.completedAt))
   pdf.registerFontkit(fontkit)
   const [script, regular, bold] = await Promise.all([pdf.embedFont(StandardFonts.TimesRomanItalic), pdf.embedFont(StandardFonts.Helvetica), pdf.embedFont(StandardFonts.HelveticaBold)])
 
@@ -568,7 +616,7 @@ export async function signedAgreementDocument(env: CloudflareEnv, conversation: 
   }
 
   const day = (at: string) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(at))
-  for (const field of state.fields) {
+  for (const field of input.fields) {
     const page = pdf.getPage(field.page - 1)
     // Fields were placed on the page as a viewer shows it: its crop box, which need not start at the origin.
     const { x: left, y: bottom, width, height } = page.getCropBox()
@@ -596,18 +644,18 @@ export async function signedAgreementDocument(env: CloudflareEnv, conversation: 
     y -= rows * (size + 2) + 6
   }
   await line('Signature record', 16, bold)
-  await line(`${agreement.label} · ${agreement.file_name}`)
+  await line(`${input.label} · ${input.fileName}`)
   await line(`Document fingerprint (SHA-256): ${fingerprint}`, 8)
   y -= 8
   for (const { signer, signed, at } of signatures) {
-    await line(signer.role === 'host' ? `${signer.name}, for ${booking.organizationName}` : `${signer.name} (guest)`, 11, bold)
+    await line(signer.role === 'host' ? `${signer.name}, for ${input.organizationName}` : `${signer.name} (guest)`, 11, bold)
     await line(`Signed as “${signed.typed_name}” on ${new Date(at).toUTCString()}`)
     await line(`Agreed to sign electronically. IP address ${signed.ip ?? 'not recorded'}.`, 9)
     y -= 6
   }
-  if (state.request) await line(`Sent ${new Date(state.request.occurred_at).toUTCString()}. Completed ${new Date(agreement.completed_at!).toUTCString()}.`, 9)
+  if (input.sentAt) await line(`Sent ${new Date(input.sentAt).toUTCString()}. Completed ${new Date(input.completedAt).toUTCString()}.`, 9)
   await line('Signed through Blawby.', 9)
-  return { bytes: new Uint8Array(await pdf.save({ updateFieldAppearances: false })), fileName: agreement.file_name.replace(/\.pdf$/i, '') + '-signed.pdf' }
+  return { bytes: new Uint8Array(await pdf.save({ updateFieldAppearances: false })), fileName: input.fileName.replace(/\.pdf$/i, '') + '-signed.pdf' }
 }
 
 /** Who the business may ask to sign: the booking's guests in its conversation, and the business's own signer last. */

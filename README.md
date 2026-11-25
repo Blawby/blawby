@@ -73,6 +73,7 @@ business:
 | Ember & Slice | `/dashboard/ember-slice-demo` | `demo.localhost:3000` |
 | Clayhouse Studio | `/dashboard/clayhouse-studio` | `clayhouse.localhost:3000` |
 | Harbor Legal Aid | `/dashboard/harbor-legal-aid` | `harbor-legal.localhost:3000` |
+| Cove Cabins (16 homes) | `/dashboard/cove-cabins` | `cove-cabins.localhost:3000` |
 
 `yarn dev` is the editing loop. Work on the realtime inbox under
 `yarn dev:worker`: Nitro's dev server cannot upgrade the inbox WebSocket.

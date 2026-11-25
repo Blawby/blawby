@@ -31,6 +31,7 @@ import { GUEST_NOTE_EVENT, openingSentence } from '~/server/domain/guest-threads
 import { DEFAULT_IP_HOURLY_LIMIT as IP_HOURLY_LIMIT, getClientIp, hashClientIp, hashIdentifier, incrementHourlyRateLimit } from '~/server/utils/hourly-rate-limit'
 import { resolveBookingPresentation } from '~/utils/booking-presentation'
 import { HTTPError, type H3Event } from 'nitro'
+import { searchIndexMatch, searchMatchSql } from '~/server/domain/search'
 import { checkoutAttemptQuery, createPaymentCheckout, type CheckoutAttempt } from '~/server/domain/payments/checkout'
 import { paidOnline } from '~/server/domain/payments'
 import { checkoutSellerFromRows, checkoutSellerQuery, prepareOrganizationPlan } from '~/server/utils/billing-access'
@@ -705,7 +706,7 @@ async function createNightBooking(event: H3Event, env: CloudflareEnv, db: DbClie
       activity_path: accountActivityPath('stay', conversationId), message, ...(replayed ? { replayed } : {}),
     }, { status: replayed ? 200 : 201 })
   }
-  const replayRequest = async (saved: SavedRequest | undefined, buyerUserId?: string) => {
+  const replayRequest = async (saved: SavedRequest | null | undefined, buyerUserId?: string) => {
     if (!saved) return null
     const currentUserId = buyerUserId ?? (await getAuthSession(event, env))?.user.id
     if (!currentUserId || saved.user_id !== currentUserId || saved.fingerprint !== fingerprint) {
@@ -827,16 +828,16 @@ export interface BookedRecordInRange {
  * their account shows them. Today, the Agenda, the host Calendar and the
  * bookings list read it.
  */
-export function bookedRecordsInRange(viewer: ViewerTerms, range: {
-  from: string; to: string; pending?: boolean; cancelled?: boolean; guest?: boolean;
+export function bookedRecordsInRange(viewer: ViewerTerms, range: ({ from: string; to: string; search?: undefined } | { search: BookingSearch; from?: undefined; to?: undefined }) & {
+  pending?: boolean; cancelled?: boolean; guest?: boolean;
   includeAssignedStays?: boolean; includeCalendarGrants?: boolean; includePayments?: boolean;
   organizationId?: string; timedLocationId?: string; assignedMemberId?: string;
 }): BatchQuery {
-  const wideFrom = `${addLocalDays(range.from, -1)}T00:00:00.000Z`, wideTo = `${addLocalDays(range.to, 1)}T23:59:59.999Z`
   const assigned = `(${range.includeAssignedStays ? '1' : 'b.product_session_id IS NOT NULL'}
     AND ${assignedMemberSql('c', viewer.user)}${viewer.role ? ` AND ${roleMatchesSql(viewer.role, assignedOperationsRoles)}` : ''})`
   const known = `(${viewer.organizationWide} = 1 OR ${assigned}${viewer.role ? ` OR ${listingGrantSql('b.organization_id', 'b.product_id', viewer.member, 'details', viewer.role)}` : ''})`
-  const calendar = range.includeCalendarGrants && viewer.role ? listingGrantSql('b.organization_id', 'b.product_id', viewer.member, 'calendar', viewer.role) : '0'
+  // A search reads only the bookings whose details the viewer may read, since it matches their guests.
+  const calendar = range.includeCalendarGrants && viewer.role && !range.search ? listingGrantSql('b.organization_id', 'b.product_id', viewer.member, 'calendar', viewer.role) : '0'
   const privateColumn = (expression: string) => range.guest ? expression : `CASE WHEN ${known} THEN ${expression} END`
   // What was paid toward the booking's total, and what it owes, only for the people who manage the business.
   // A deposit, held or kept for damage, is not payment for the booking.
@@ -847,6 +848,10 @@ export function bookedRecordsInRange(viewer: ViewerTerms, range: {
     ELSE 0 END` : '0'
   const owed = management ? `, b.created_at, CASE WHEN ${management} THEN b.deposit_minor END AS deposit_minor,
     CASE WHEN ${management} THEN ${depositReceivedSql('b.organization_id', 'b.id')} ELSE 0 END AS deposit_received_minor, ${stayMoneyColumns('b', management)}` : ''
+  const when = range.search ? bookingSearchSql(range.search.q, { sql: viewer.organization }) : (() => {
+    const wideFrom = `${addLocalDays(range.from, -1)}T00:00:00.000Z`, wideTo = `${addLocalDays(range.to, 1)}T23:59:59.999Z`
+    return { sql: `((b.starts_at <= ? AND b.ends_at >= ?)${range.pending ? " OR (b.status = 'pending' AND b.ends_at >= ?)" : ''})`, params: [wideTo, wideFrom, ...(range.pending ? [wideFrom] : [])] }
+  })()
   const whose = range.guest
     ? `r.user_id = ${viewer.user} AND ${CURRENT_GUEST_SQL('r')} AND (b.product_session_id IS NOT NULL OR (b.owner = 'app' AND b.user_id = r.user_id))`
     : `b.organization_id = ${viewer.organization} AND (${known} OR ${calendar})`
@@ -860,7 +865,7 @@ export function bookedRecordsInRange(viewer: ViewerTerms, range: {
         c.assigned_member_id, (SELECT ${MEMBER_NAME_SQL} FROM member m JOIN user u ON u.id = m.userId LEFT JOIN member_scheduling ms ON ms.member_id = m.id AND ms.organization_id = m.organizationId
           WHERE m.id = c.assigned_member_id AND m.organizationId = b.organization_id) AS assigned_member_name, r.id AS conversation_id,
         ${conversationMemberSql('r', viewer.user)} AS viewer_seated, ${range.guest ? '1' : known} AS viewer_can_read_details
-      FROM bookings b
+      FROM ${range.search ? `(${when.sql}) found CROSS JOIN ` : ''}bookings b
       JOIN organization org ON org.id = b.organization_id
       JOIN products p ON p.organization_id = b.organization_id AND p.id = b.product_id
       LEFT JOIN product_booking_configs c ON c.organization_id = b.organization_id AND c.product_id = b.product_id
@@ -868,12 +873,30 @@ export function bookedRecordsInRange(viewer: ViewerTerms, range: {
       LEFT JOIN business_locations l ON l.organization_id = b.organization_id AND l.id = COALESCE(b.location_id, sc.location_id)
       LEFT JOIN conversations r ON r.organization_id = b.organization_id AND r.booking_id = b.id AND r.kind = 'booking'
      WHERE ${whose} ${range.cancelled ? '' : "AND b.status <> 'cancelled'"}
-       AND ((b.starts_at <= ? AND b.ends_at >= ?)${range.pending ? " OR (b.status = 'pending' AND b.ends_at >= ?)" : ''})
+       AND ${range.search ? 'b.rowid = found.id' : when.sql}
        ${range.organizationId ? 'AND b.organization_id = ?' : ''}
        ${range.timedLocationId ? 'AND (b.product_session_id IS NULL OR b.location_id = ?)' : ''}
        ${range.assignedMemberId ? 'AND b.product_session_id IS NOT NULL AND c.assigned_member_id = ?' : ''}
-     ORDER BY b.starts_at, b.id`,
-    params: [wideTo, wideFrom, ...(range.pending ? [wideFrom] : []),
-      ...[range.organizationId, range.timedLocationId, range.assignedMemberId].filter(Boolean)],
+     ORDER BY ${range.search ? 'b.starts_at DESC, b.id LIMIT ? OFFSET ?' : 'b.starts_at, b.id'}`,
+    params: [...when.params, ...[range.organizationId, range.timedLocationId, range.assignedMemberId].filter((value): value is string => Boolean(value)),
+      ...(range.search ? [range.search.limit, range.search.offset] : [])],
   }
+}
+
+/** A booking search: its words, and the page of matches newest first. */
+export interface BookingSearch { q: string; limit: number; offset: number }
+
+/** The bookings that match a search, by `shared/search.ts`'s rule: who booked, their contact, the confirmation or channel reference, and what was booked. */
+export function bookingSearchSql(q: string, organization: string | { sql: string }): { sql: string; params: Array<string | number> } {
+  const match = searchMatchSql(q, hits => [
+    `SELECT item.rowid AS id, hit.word FROM ${hits} hit CROSS JOIN bookings item WHERE ${searchIndexMatch('bookings', 'item', 'hit')}`,
+    `SELECT item.rowid AS id, hit.word FROM ${hits} hit CROSS JOIN conversations thread CROSS JOIN bookings item
+      WHERE ${searchIndexMatch('conversations', 'thread', 'hit')} AND thread.kind = 'booking' AND item.organization_id = thread.organization_id AND item.id = thread.booking_id`,
+    `SELECT item.rowid AS id, hit.word FROM ${hits} hit CROSS JOIN products offering CROSS JOIN bookings item
+      WHERE ${searchIndexMatch('products', 'offering', 'hit')} AND item.organization_id = offering.organization_id AND item.product_id = offering.id`,
+    `SELECT item.rowid AS id, hit.word FROM ${hits} hit CROSS JOIN product_stay_configs home CROSS JOIN bookings item
+      WHERE ${searchIndexMatch('product_stay_configs', 'home', 'hit')} AND item.organization_id = home.organization_id AND item.product_id = home.product_id`,
+  ].join(' UNION ALL '), { sources: ['bookings', 'conversations', 'products', 'product_stay_configs'], organization })
+  if (!match) throw new HTTPError({ statusCode: 400, message: 'Search for at least one word', data: { code: 'INVALID_SEARCH', field: 'q' } })
+  return match
 }

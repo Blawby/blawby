@@ -1,4 +1,4 @@
-import { defineHandler } from 'nitro'
+import { defineHandler, HTTPError } from 'nitro'
 import { getRouterParam } from 'nitro/h3'
 
 import { requireOrganizationAccess } from '~/server/utils/location-access'
@@ -9,10 +9,10 @@ import { hasPlatformEventPermission } from '~/server/utils/platform-admin-users'
 export default defineHandler(async (event) => {
   const organizationId = getRouterParam(event, 'organization_id')
   const locale = getRouterParam(event, 'locale')
-  if (!organizationId || !locale) throw createError({ statusCode: 400, statusMessage: 'Organization ID and locale are required' })
+  if (!organizationId || !locale) throw new HTTPError({ status: 400, message: 'Organization ID and locale are required', data: { code: 'INVALID_ROUTE_PARAMETERS' } })
   const { env, db, organization } = await requireOrganizationAccess(event, organizationId)
   if (isDemoOrganization(organization) && !(await hasPlatformEventPermission(event, env, { platform: ['access'] }))) {
-    throw createError({ statusCode: 403, statusMessage: 'Demo organization is read-only' })
+    throw new HTTPError({ status: 403, message: 'Demo organization is read-only', data: { code: 'DEMO_ORGANIZATION_READ_ONLY' } })
   }
   return { language: await disableOrganizationLanguage(db, { organizationId: organization.id, locale }) }
 })

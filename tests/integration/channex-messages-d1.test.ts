@@ -1,4 +1,5 @@
 import { PLATFORM_MESSAGE_AUTHOR_KIND } from '../../shared/messages-contract.ts'
+import { verifyFileLink } from '../../server/utils/private-media.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Miniflare } from 'miniflare'
@@ -19,7 +20,7 @@ import { joinedMemberPrincipal, memberAccessPrincipal } from '../../server/utils
 import { applySchema } from './support/schema.ts'
 
 const ORG = 'org', OWNER = 'owner'
-const hostConversation = (db: D1Database, env: CloudflareEnv, id: string) => conversationPageFor(db, memberAccessPrincipal({ userId: OWNER, organizationId: ORG, role: 'owner' }, { env }), id)
+const hostConversation = (db: D1Database, env: CloudflareEnv, id: string) => conversationPageFor(db, env, memberAccessPrincipal({ userId: OWNER, organizationId: ORG, role: 'owner' }, { env }), id)
 const hostMessages = async (db: D1Database, env: CloudflareEnv, id: string) => (await hostConversation(db, env, id)).entries.filter(entry => entry.type === 'message')
 const recordedMessages = async (db: D1Database, id: string) => (await db.prepare('SELECT * FROM messages WHERE conversation_id = ? AND organization_id = ? ORDER BY sequence').bind(id, ORG).all<MessageRow>()).results
 const NOW = '2026-10-16T00:00:00.000Z'
@@ -137,7 +138,7 @@ async function boot() {
     name: 'channel-messages-proof', compatibilityDate: '2024-11-01',
     manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: 'export class Hub { fetch() { return new Response(null, { status: 204 }) } } export default { fetch() { return new Response("ok") } }' } } },
     exports: { Hub: { type: 'durable-object', storage: 'sqlite' } },
-    env: { DB: { type: 'd1' }, AI: { type: 'ai' }, ORGANIZATION_CACHE: { type: 'kv' }, MEDIA_BUCKET: { type: 'r2' }, GUEST_INBOX_HUBS: { type: 'durable-object', worker: 'channel-messages-proof', exportName: 'Hub' } },
+    env: { DB: { type: 'd1' }, AI: { type: 'ai' }, ORGANIZATION_CACHE: { type: 'kv' }, MEDIA_BUCKET: { type: 'r2' }, PRIVATE_MEDIA_BUCKET: { type: 'r2' }, GUEST_INBOX_HUBS: { type: 'durable-object', worker: 'channel-messages-proof', exportName: 'Hub' } },
   } }] })
   try {
     const db = await runtime.getD1Database('DB')
@@ -196,17 +197,24 @@ test('empty greenfield collections are valid; inquiries mirror into the canonica
     assert(detail.conversation.kind === 'guest')
     assert.deepEqual([detail.conversation.booking_id, detail.conversation.composer, detail.conversation.title], [null, { channel: 'airbnb' }, 'Cabin'])
     const visible = detail.entries.filter(entry => entry.type === 'message')
-    // Airbnb's photo is read once when the message lands and kept as the business's own media, placed on that message.
+    // Airbnb's photo is read once when the message lands and kept as the business's own media, placed on that message, privately.
     assert.deepEqual(provider.fileReads, ['/attachment/file'])
     const stored = await db.prepare(`SELECT ma.id, ma.r2_key, ma.public_url FROM media_assets ma JOIN media_placements mp ON mp.asset_id = ma.id AND mp.organization_id = ma.organization_id
-      WHERE mp.owner_type = 'message' AND mp.owner_id = ? AND mp.slot = 'attachments' AND mp.status = 'active' AND ma.status = 'active'`).bind(entries[1]!.id).all<{ id: string; r2_key: string; public_url: string }>()
+      WHERE mp.owner_type = 'message' AND mp.owner_id = ? AND mp.slot = 'attachments' AND mp.status = 'active' AND ma.status = 'active'`).bind(entries[1]!.id).all<{ id: string; r2_key: string; public_url: string | null }>()
     assert.equal(stored.results.length, 1)
     const photo = stored.results[0]!
-    assert.ok(photo.public_url.startsWith('https://media.example.test/'), photo.public_url)
-    const kept = await (await runtime.getR2Bucket('MEDIA_BUCKET')).get(photo.r2_key)
+    // A conversation's photo has no public URL and nothing in the public bucket, whose domain serves anyone.
+    assert.equal(photo.public_url, null)
+    assert.equal(await (await runtime.getR2Bucket('MEDIA_BUCKET')).get(photo.r2_key), null)
+    const kept = await (await runtime.getR2Bucket('PRIVATE_MEDIA_BUCKET')).get(photo.r2_key)
     assert.ok(kept)
     assert.deepEqual(new Uint8Array(await kept.arrayBuffer()), GUEST_PHOTO)
-    assert.deepEqual(visible.find(entry => entry.id === entries[1]!.id)!.photos.map(item => [item.id, item.url]), [[photo.id, photo.public_url]])
+    // The thread gives its reader a link the media route accepts for this photo only.
+    const [shown] = visible.find(entry => entry.id === entries[1]!.id)!.photos
+    const link = new URL(shown!.url)
+    assert.deepEqual([shown!.id, link.origin, link.pathname], [photo.id, 'https://proof.example', `/api/media/${photo.id}`])
+    assert.equal(await verifyFileLink(env, photo.id, link.searchParams.get('exp'), link.searchParams.get('sig')), true)
+    assert.equal(await verifyFileLink(env, 'another-asset', link.searchParams.get('exp'), link.searchParams.get('sig')), false)
     assert.equal(visible.some(entry => entry.photos.some(item => item.url.startsWith('https://channex.test/'))), false, 'no Channex link reaches the conversation')
     assert.notEqual(entries[0]!.occurred_at, RAW)
     assert.equal(await db.prepare('SELECT count(*) FROM bookings').first('count(*)'), 0)

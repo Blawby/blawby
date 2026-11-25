@@ -9,6 +9,7 @@ import { recordBookingCancelled, recordBookingDecision } from '~/server/domain/b
 import { execute, executeBatch, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import { shouldSendRealEmail } from '~/server/utils/email-delivery'
 import type { ReplyEmailEnv } from '~/server/utils/submission-messages'
+import type { MediaLinkEnv } from '~/server/utils/private-media'
 import { bookingDay, getGuestRequest, getThreadOperationalRecord, noStayRequestPaymentInFlightSql, requestActions, requestSummary, stayRequestPayBySql, stayRequestRespondBySql, validateGuestRequest, type GuestRequest, type ThreadOperationalRecord } from '~/server/domain/requests'
 import type { StayAccess } from '~/server/domain/stays'
 import { bookingReviewDueAt, revokeReviewRequestQuery } from '~/server/utils/review-requests'
@@ -286,11 +287,11 @@ function replySubject(submissionType: GuestThreadSubmissionType, fromName: strin
  * outbound message. A member's reply leads with their own words; a status
  * update leads with what changed.
  */
-async function renderMemberReply(env: ReplyEmailEnv, db: DbClient, organizationId: string, organizationName: string, entry: MessageRow, locale: string | undefined, photoCount: number) {
+async function renderMemberReply(env: ReplyEmailEnv & MediaLinkEnv, db: DbClient, organizationId: string, organizationName: string, entry: MessageRow, locale: string | undefined, photoCount: number) {
   const [guest, organizationLogoUrl, photoRows, manageUrl] = await Promise.all([
     guestPresentation(db, { organizationId, organizationName, locale }),
     organizationLogo(db, organizationId),
-    photoCount ? listMessagePhotos(db, [entry.id]) : null,
+    photoCount ? listMessagePhotos(db, env, [entry.id]) : null,
     buildBuyerRequestActivityUrl(env, db, { organizationId, threadId: entry.conversation_id }),
   ])
   const photos = photoRows?.get(entry.id) ?? []

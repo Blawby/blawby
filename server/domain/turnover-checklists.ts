@@ -1,4 +1,6 @@
 import { HTTPError } from 'nitro'
+import { d1JsonStringSet, queryAll, type DbClient } from '~/server/db'
+import { mediaLinks, type LinkedMediaAsset, type MediaLinkEnv } from '~/server/utils/private-media'
 import { formatCalendarDate } from '~/utils/timezone'
 import { isRecord } from '~/utils/api-clients'
 import {
@@ -24,13 +26,33 @@ export function fail(statusCode: number, code: string, message: string, field?: 
   throw new HTTPError({ statusCode, message, data: { code, ...(field ? { field } : {}), ...extra } })
 }
 
+/** What a reference photo's link is made from (`mediaLinks`). */
+const referenceAssetColumns = `'id', ma.id, 'kind', ma.kind, 'provider', ma.provider, 'cloudflare_image_id', ma.cloudflare_image_id, 'public_url', ma.public_url, 'thumbnail_url', ma.thumbnail_url`
+type ReferenceAsset = LinkedMediaAsset
+
+/** A reference photo's links: a checklist slot is private, so they are signed and expire. */
+async function referencePhoto(env: MediaLinkEnv, asset: ReferenceAsset, slot = `${SLOT}reference`): Promise<ChecklistPhoto> {
+  const links = await mediaLinks(env, asset, { owner_type: 'product', slot })
+  return { id: asset.id, url: links.url, thumbnail_url: links.thumbnail_url ?? links.url }
+}
+
+/** The reference photos submissions name, by asset id, linked for their reader. */
+export async function submittedReferencePhotos(db: DbClient, env: MediaLinkEnv, organizationId: string, payloads: unknown[]): Promise<Map<string, ChecklistPhoto>> {
+  const ids = [...new Set(payloads.flatMap(payload => isRecord(payload) && Array.isArray(payload.items)
+    ? payload.items.flatMap(item => isRecord(item) && isRecord(item.reference_photo) && typeof item.reference_photo.id === 'string' ? [item.reference_photo.id] : []) : []))]
+  if (!ids.length) return new Map()
+  const rows = await queryAll<ReferenceAsset>(db, `SELECT ma.id, ma.kind, ma.provider, ma.cloudflare_image_id, ma.public_url, ma.thumbnail_url FROM media_assets ma WHERE ma.organization_id = ? AND ma.id IN (SELECT value FROM json_each(?)) AND ma.status = 'active'`,
+    [organizationId, d1JsonStringSet(ids)])
+  return new Map(await Promise.all(rows.map(async row => [row.id, await referencePhoto(env, row)] as const)))
+}
+
 /** The checklist and its reference photos, as columns of a projection that reads the home as `alias`. */
 export function checklistColumnsSql(alias: string): string {
   return `${alias}.turnover_checklist AS turnover_checklist,
-    (SELECT json_group_array(json_object('slot', mp.slot, 'id', ma.id, 'url', ma.public_url, 'thumbnail_url', COALESCE(ma.thumbnail_url, ma.public_url)))
+    (SELECT json_group_array(json_object('slot', mp.slot, ${referenceAssetColumns}))
       FROM media_placements mp JOIN media_assets ma ON ma.id = mp.asset_id AND ma.organization_id = mp.organization_id
       WHERE mp.organization_id = ${alias}.organization_id AND mp.owner_type = 'product' AND mp.owner_id = ${alias}.product_id
-        AND mp.slot GLOB '${SLOT}*' AND mp.status = 'active' AND ma.status = 'active' AND ma.public_url IS NOT NULL) AS turnover_references`
+        AND mp.slot GLOB '${SLOT}*' AND mp.status = 'active' AND ma.status = 'active') AS turnover_references`
 }
 
 export interface ChecklistColumns { turnover_checklist: string; turnover_references: string }
@@ -46,10 +68,10 @@ function storedItems(json: string, productId: string): TurnoverChecklistItem[] {
   })
 }
 
-/** The home's items, each with its reference photo. */
-export function checklistOf(row: ChecklistColumns, productId: string): HomeTurnoverChecklist['items'] {
-  const references = new Map((JSON.parse(row.turnover_references) as Array<ChecklistPhoto & { slot: string }>)
-    .map(({ slot, ...photo }) => [slot.slice(SLOT.length), photo]))
+/** The home's items, each with its reference photo, linked for this reader. */
+export async function checklistOf(env: MediaLinkEnv, row: ChecklistColumns, productId: string): Promise<HomeTurnoverChecklist['items']> {
+  const references = new Map(await Promise.all((JSON.parse(row.turnover_references) as Array<ReferenceAsset & { slot: string }>)
+    .map(async ({ slot, ...asset }) => [slot.slice(SLOT.length), await referencePhoto(env, asset, slot)] as const)))
   return storedItems(row.turnover_checklist, productId).map(item => ({ ...item, reference_photo: references.get(item.id) ?? null }))
 }
 
@@ -138,7 +160,7 @@ export function checkedSubmission(taskId: string, checklist: TaskChecklist, raw:
     if (item.photo_required && !photos.has(item.id)) missing.push({ id: item.id, title: item.title, missing: 'photo' })
     const shortage = item.type === 'count' && counted !== null ? Math.max(0, item.required! - counted) : null
     return { id: item.id, title: item.title, instructions: item.instructions, type: item.type, photo_required: item.photo_required, required: item.required,
-      counted, confirmed, shortage, flagged: item.type === 'count' ? (shortage ?? 0) > 0 : confirmed === false, reference_photo: item.reference_photo }
+      counted, confirmed, shortage, flagged: item.type === 'count' ? (shortage ?? 0) > 0 : confirmed === false, reference_photo: item.reference_photo ? { id: item.reference_photo.id } : null }
   })
   if (missing.length) {
     const needs = missing.map(entry => entry.missing === 'photo' ? `add a photo of ${entry.title}` : `answer ${entry.title}`)
@@ -155,14 +177,15 @@ export function submissionBody(submission: ChecklistSubmission): string {
 /** The body of a job closed past its checklist. */
 export const WITHOUT_CHECKLIST = 'Done without the checklist'
 
-/** A stored submission as a conversation draws it, its photos the message's own. */
-export function submissionView(stored: unknown, photos: ReadonlyArray<{ id: string; url: string; thumbnailUrl: string }>): ChecklistSubmissionView | null {
+/** A stored submission as a conversation draws it, its photos the message's own and its reference photos from `submittedReferencePhotos`. */
+export function submissionView(stored: unknown, photos: ReadonlyArray<{ id: string; url: string; thumbnailUrl: string }>, references: ReadonlyMap<string, ChecklistPhoto>): ChecklistSubmissionView | null {
   if (!isRecord(stored) || typeof stored.task_id !== 'string' || !Array.isArray(stored.items)) return null
   const submission = stored as unknown as ChecklistSubmission
   const byId = new Map(photos.map(photo => [photo.id, { id: photo.id, url: photo.url, thumbnail_url: photo.thumbnailUrl }]))
   return {
     ...submission, note: submission.note ?? null, summary: checklistSummary(submission.items),
-    items: flaggedFirst(submission.items.map(item => ({ ...item, photo: item.photo_id ? byId.get(item.photo_id) ?? null : null }))),
+    items: flaggedFirst(submission.items.map(item => ({ ...item, photo: item.photo_id ? byId.get(item.photo_id) ?? null : null,
+      reference_photo: item.reference_photo ? references.get(item.reference_photo.id) ?? null : null }))),
   }
 }
 

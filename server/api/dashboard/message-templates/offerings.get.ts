@@ -14,8 +14,8 @@ export default defineHandler(async (event) => {
   const words = scheduleVocabulary(organization.vertical)
   const triggers: Array<{ id: GuestMessageSchedule['trigger']; label: string }> = [
     { id: 'booking_received', label: `5 minutes after ${words.received}` },
-    { id: 'check_in', label: words.aroundCheckIn },
-    { id: 'check_out', label: words.aroundCheckOut },
+    { id: 'check_in', label: words.start_label },
+    { id: 'check_out', label: words.end_label },
   ]
   const offsets = (unit: 'day' | 'hour', maximum: number, zero: string) =>
     Array.from({ length: 2 * maximum + 1 }, (_, index) => {

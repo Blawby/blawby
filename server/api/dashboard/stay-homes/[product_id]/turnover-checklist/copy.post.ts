@@ -11,5 +11,5 @@ export default defineHandler(async (event) => {
   const { env, db, organization } = await getDashboardMemberContext(event, {})
   const access = await stayAccessFor(memberAccessPrincipal(organization, { env, event }))
   const body = await readRequiredBody<Record<string, unknown>>(event)
-  return jsonResponse(await copyHomeChecklist(db, access, getRouterParam(event, 'product_id') ?? '', body))
+  return jsonResponse(await copyHomeChecklist(db, env, access, getRouterParam(event, 'product_id') ?? '', body))
 })

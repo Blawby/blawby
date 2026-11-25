@@ -1,6 +1,7 @@
 import { queryAll, type BatchQuery, type DbClient } from '~/server/db'
 import { MEMBER_REPLY_EVENT, SCHEDULED_MESSAGE_EVENT, type ConversationWindow, type MessageRow } from './conversations'
 import { groupMessagePhotos, messagePhotoRowsSql, type MessagePhotoRow } from './guest-threads/attachments'
+import type { MediaLinkEnv } from '~/server/utils/private-media'
 import { HISTORY_DELIVERY_COLUMNS, HISTORY_DELIVERY_FIELDS, groupMessageDeliveries, type HistoryDelivery } from './guest-threads/deliveries'
 import type { ConversationEntry, ConversationMessage } from '~/shared/messages-contract'
 import type { GuestThreadEntryAttachmentViewModel } from './guest-threads/types'
@@ -88,8 +89,9 @@ export function conversationHistorySql(
     )
     -- An anonymous author on a conversation is its guest, named by what they typed (the guest snapshot), not the "Anonymous" Better Auth names the account.
     SELECT m.*, CASE WHEN a.anonymous = 1 THEN COALESCE((SELECT c.payload_json ->> '$.guest.name' FROM conversations c WHERE c.id = m.conversation_id), a.name) ELSE a.name END AS author_name,
-      CASE WHEN m.enrich THEN (SELECT json_group_array(json_object('owner_id', p.owner_id, 'id', p.id, 'public_url', p.public_url,
-        'thumbnail_url', p.thumbnail_url, 'alt_text', p.alt_text, 'width', p.width, 'height', p.height)) FROM (${photos}) p) END AS photo_rows,
+      CASE WHEN m.enrich THEN (SELECT json_group_array(json_object('owner_id', p.owner_id, 'id', p.id, 'kind', p.kind, 'provider', p.provider,
+        'cloudflare_image_id', p.cloudflare_image_id, 'public_url', p.public_url, 'thumbnail_url', p.thumbnail_url, 'alt_text', p.alt_text,
+        'width', p.width, 'height', p.height)) FROM (${photos}) p) END AS photo_rows,
       ${receipts} AS delivery_rows,
       CASE WHEN m.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND instr(json_extract(m.payload_json, '$.key'), 'job:') = 1
         THEN (SELECT t.status FROM tasks t WHERE t.organization_id = m.organization_id
@@ -107,12 +109,12 @@ export function conversationHistorySql(
 }
 
 /** A notification quote uses the same bounded page as the transcript. */
-export async function readConversationHistory(db: DbClient, conversationId: string, filter: string, window: ConversationWindow) {
+export async function readConversationHistory(db: DbClient, env: MediaLinkEnv, conversationId: string, filter: string, window: ConversationWindow) {
   const { query, params } = conversationHistorySql(window, { query: `m.conversation_id = ? AND (${filter})`, params: [conversationId] })
-  return projectConversationHistory(await queryAll<HistoryRow>(db, query, params), window.limit)
+  return await projectConversationHistory(env, await queryAll<HistoryRow>(db, query, params), window.limit)
 }
 
-export function projectConversationHistory(rows: HistoryRow[], limit: number) {
+export async function projectConversationHistory(env: MediaLinkEnv, rows: HistoryRow[], limit: number) {
   const hasOlder = rows.length > limit
   const entries = hasOlder ? rows.slice(1) : rows
   const actors = new Map<string, string>()
@@ -127,7 +129,7 @@ export function projectConversationHistory(rows: HistoryRow[], limit: number) {
   }
   return {
     entries,
-    photos: groupMessagePhotos(messagePhotos),
+    photos: await groupMessagePhotos(env, messagePhotos),
     actors,
     deliveriesByMessage: groupMessageDeliveries(deliveries),
     page: {
@@ -138,4 +140,4 @@ export function projectConversationHistory(rows: HistoryRow[], limit: number) {
   }
 }
 
-export type ConversationHistory = ReturnType<typeof projectConversationHistory>
+export type ConversationHistory = Awaited<ReturnType<typeof projectConversationHistory>>

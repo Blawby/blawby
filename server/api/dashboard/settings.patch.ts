@@ -26,7 +26,7 @@ export default defineHandler(async (event) => {
   try {
     const isPlatformAdmin = await hasPlatformEventPermission(event, env, { platform: ['access'] })
     if (isDemoOrganization(organization) && !isPlatformAdmin) {
-      return jsonResponse({ error: 'Demo organization is read-only' }, { status: 403 })
+      return jsonResponse({ error: 'Demo organization is read-only', code: 'DEMO_ORGANIZATION_READ_ONLY' }, { status: 403 })
     }
 
     const result = await updateOrganizationSettingsFields(

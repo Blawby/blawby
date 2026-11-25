@@ -1,4 +1,4 @@
-import { bookingEndsInstant, type GuestRequest, type ThreadOperationalRecord } from '~/server/domain/requests'
+import { BOOKING_ENDS_SQL, bookingEndsInstant, type GuestRequest, type ThreadOperationalRecord } from '~/server/domain/requests'
 
 /**
  * Where a conversation lives in the inbox: Current or Past, the way Airbnb's
@@ -70,7 +70,7 @@ export function resolveGuestThreadMailbox(
  */
 export function pastByRuleSql(now: string): { sql: string; params: string[] } {
   return {
-    sql: `(MAX(gt.last_message_at, COALESCE(op.ends_at, '')) < ?)`,
+    sql: `(MAX(gt.last_message_at, COALESCE(${BOOKING_ENDS_SQL('op')}, '')) < ?)`,
     params: [quietSince(now)],
   }
 }

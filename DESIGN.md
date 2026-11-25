@@ -138,8 +138,9 @@ The personal Today shows the buyer's agenda with `TodayAgendaCard`.
 ### Calendar
 
 Calendar cards read the same agenda and open beneath their day. Previous and next
-day controls keep the location and filters. A business with one location opens
-that location; with several, the day view offers the location selector. On desktop, the
+day controls keep the location and filters. A business with one location can
+manage its availability directly; this leaves the agenda on All locations so
+online bookings remain visible. With several locations, the day view offers the selector. On desktop, the
 agenda sits beside the record; below the pane breakpoint the record is one
 screen and Close returns to the same range and filters.
 

@@ -170,8 +170,8 @@ test('Today shows every booking type as one card for its own business, with the 
     assert.equal(table.status, 201, JSON.stringify(table.body))
 
     // The native calendar's explicit location filter reads the same persisted booking.
-    for (const [location, expected] of [['bistro-site', [table.body.booking_id]], ['law-site', []]] as const) {
-      const response = await app.request(Object.assign(new Request(`https://proof.example/api/dashboard/bookings?org=bistro&from=${inTwoDays}&to=${inThreeDays}&location_id=${location}`, {
+    for (const [org, location, expected] of [['bistro', 'bistro-site', [table.body.booking_id]], ['bistro', 'law-site', []], ['inn', 'inn-site', [stay.id]], ['inn', 'bistro-site', []]] as const) {
+      const response = await app.request(Object.assign(new Request(`https://proof.example/api/dashboard/bookings?org=${org}&from=${inTwoDays}&to=${inThreeDays}&location_id=${location}`, {
         headers: { authorization: `Bearer ${token}` },
       }), { runtime: { name: 'cloudflare', cloudflare: { env } } }))
       assert.equal(response.status, 200, await response.clone().text())

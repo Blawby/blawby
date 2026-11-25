@@ -33,7 +33,7 @@ interface UploadResolvedMediaInputBase {
    * the people allowed to read its owner reach it: a Cloudflare image that
    * requires a signed URL, or the private R2 bucket. Omitted, the file is public.
    */
-  placement?: MediaPlacementSlot;
+  placement?: MediaPlacementSlot & { owner_id?: string };
   /** The rest of the operation, committed in the asset row's batch or not at all. */
   queries?: (assetId: string) => BatchQuery[];
 }
@@ -64,13 +64,13 @@ export type UploadResolvedMediaResult = {
 )
 
 interface MediaUploadIdentity {
-  organizationId: string; idempotencyKey: string; sourceFileId: string; posterSourceFileId?: string; category?: MediaAsset['category'] | null; altText?: string | null
+  organizationId: string; idempotencyKey: string; sourceFileId: string; posterSourceFileId?: string; category?: MediaAsset['category'] | null; altText?: string | null; placement?: MediaPlacementSlot & { owner_id: string }
 }
 
 async function uploadCreation(identity: MediaUploadIdentity) {
   const key = identity.idempotencyKey.trim()
   if (!key || key.length > 200 || !identity.sourceFileId) throw new HTTPError({ statusCode: 400, statusMessage: 'A media upload needs its source file ID and idempotency key' })
-  return { dedupeKey: `media-upload:${identity.organizationId}:${key}`, requestHash: await creationRequestHash({ file_id: identity.sourceFileId, poster_file_id: identity.posterSourceFileId ?? null, category: identity.category ?? null, alt_text: identity.altText ?? null }) }
+  return { dedupeKey: `media-upload:${identity.organizationId}:${key}`, requestHash: await creationRequestHash({ file_id: identity.sourceFileId, poster_file_id: identity.posterSourceFileId ?? null, category: identity.category ?? null, alt_text: identity.altText ?? null, ...(identity.placement ? { placement: identity.placement } : {}) }) }
 }
 
 /** A retry can read the saved asset even after the host’s temporary download URL expires. */
@@ -119,7 +119,7 @@ export async function uploadResolvedMediaToAssetStore(
   if (input.kind === 'video' && !POSTER_IMAGE_MIME_TYPES.has(input.poster.contentType)) {
     throw new HTTPError({ statusCode: 415, message: 'Video posters must be JPEG, PNG, WebP or GIF', data: { code: 'UNSUPPORTED_MEDIA_TYPE', field: 'poster' } })
   }
-  const identity = input.idempotencyKey ? { organizationId: input.organizationId, idempotencyKey: input.idempotencyKey, sourceFileId: input.sourceFileId ?? '', posterSourceFileId: input.posterSourceFileId, category: input.category, altText: input.altText } : null
+  const identity = input.idempotencyKey ? { organizationId: input.organizationId, idempotencyKey: input.idempotencyKey, sourceFileId: input.sourceFileId ?? '', posterSourceFileId: input.posterSourceFileId, category: input.category, altText: input.altText, ...(input.placement?.owner_id ? { placement: { ...input.placement, owner_id: input.placement.owner_id } } : {}) } : null
   const creation = identity ? await uploadCreation(identity) : undefined
   const earlier = identity ? await getMediaUploadReplay(input.db, identity) : null
   if (earlier) return earlier
@@ -349,7 +349,7 @@ export async function storePlacedMediaPrivately(input: { db: DbClient; env: Uplo
     const publicImageId = asset.cloudflare_image_id
     const bytes = await downloadImageBuffer(env, publicImageId)
     if (!bytes) throw new Error(`Media asset ${asset.id} names Cloudflare image ${publicImageId}, which is gone`)
-    const stored = await uploadImageBuffer(env, bytes, asset.file_name ?? 'photo', asset.mime_type ?? 'image/jpeg', { privateAssetId: asset.id })
+    const stored = await uploadImageBuffer(env, bytes, asset.file_name ?? 'photo', asset.mime_type ?? 'image/jpeg', { privateAssetId: asset.id, replacedImageId: publicImageId })
     const [result] = await executeBatch(db, [{
       query: `UPDATE media_assets SET cloudflare_image_id = ?, public_url = NULL, thumbnail_url = NULL, updated_at = ? WHERE id = ? AND organization_id = ? AND cloudflare_image_id = ?`,
       params: [stored.imageId, new Date().toISOString(), asset.id, asset.organization_id, publicImageId],

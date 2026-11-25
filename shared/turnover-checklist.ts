@@ -78,7 +78,7 @@ export interface SubmittedChecklistItem extends Pick<TurnoverChecklistItem, 'id'
   /** The cleaner's photo: one of the message's own photos. */
   photo_id: string | null
   /** The reference photo the item had when it was submitted, by asset id: its link is made when the submission is read, as it expires. */
-  reference_photo_id: string | null
+  reference_photo: Pick<ChecklistPhoto, 'id'> | null
 }
 
 /** What the closing message's payload holds (`payload.checklist`): the checklist as it was made against. */

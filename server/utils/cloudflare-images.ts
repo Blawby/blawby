@@ -87,13 +87,13 @@ async function sha256Hex(buffer: ArrayBuffer | Uint8Array<ArrayBuffer>): Promise
  * reuses the image the first attempt stored instead of storing a second one.
  */
 export async function uploadImageBuffer(env: CloudflareImagesEnv, buffer: ArrayBuffer | Uint8Array<ArrayBuffer>, filename: string, contentType?: string, image?: { id: string }): Promise<{ imageId: string; publicUrl: string; thumbnailUrl: string }>
-export async function uploadImageBuffer(env: CloudflareImagesEnv, buffer: ArrayBuffer | Uint8Array<ArrayBuffer>, filename: string, contentType: string, image: { privateAssetId: string }): Promise<{ imageId: string; publicUrl: null; thumbnailUrl: null }>
+export async function uploadImageBuffer(env: CloudflareImagesEnv, buffer: ArrayBuffer | Uint8Array<ArrayBuffer>, filename: string, contentType: string, image: { privateAssetId: string; replacedImageId?: string }): Promise<{ imageId: string; publicUrl: null; thumbnailUrl: null }>
 export async function uploadImageBuffer(
   env: CloudflareImagesEnv,
   buffer: ArrayBuffer | Uint8Array<ArrayBuffer>,
   filename: string,
   contentType = 'image/png',
-  image: { id: string } | { privateAssetId: string } = { id: `image-${crypto.randomUUID()}` },
+  image: { id: string } | { privateAssetId: string; replacedImageId?: string } = { id: `image-${crypto.randomUUID()}` },
 ): Promise<{ imageId: string; publicUrl: string | null; thumbnailUrl: string | null }> {
   assertCloudflareImagesConfigured(env)
   const contentHash = await sha256Hex(buffer)
@@ -106,7 +106,7 @@ export async function uploadImageBuffer(
   form.append('file', new Blob([buffer], { type: contentType }), filename)
   if ('id' in image) form.append('id', image.id)
   else form.append('requireSignedURLs', 'true')
-  form.append('metadata', JSON.stringify({ content_sha256: contentHash, ...(privateAssetId ? { asset_id: privateAssetId } : {}) }))
+  form.append('metadata', JSON.stringify({ content_sha256: contentHash, ...(privateAssetId ? { asset_id: privateAssetId, ...('replacedImageId' in image && image.replacedImageId ? { replaced_image_id: image.replacedImageId } : {}) } : {}) }))
   let imageId: string
   try {
     const res = await fetch(`${apiBase(env)}/v1`, {

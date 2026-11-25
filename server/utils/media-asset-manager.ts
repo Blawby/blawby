@@ -808,8 +808,9 @@ export async function deleteMediaAsset(db: DbClient, env: MediaProviderEnv, id: 
     created_by_user_id: string | null
     source: string
     status: string
+    public_url: string | null
   }>(db, `
-    SELECT id, provider, cloudflare_image_id, r2_key, organization_id, created_by_user_id, source, status
+    SELECT id, provider, cloudflare_image_id, r2_key, organization_id, created_by_user_id, source, status, public_url
     FROM media_assets
     WHERE id = ? AND organization_id = ?
   `, [id, organizationId]) ?? null
@@ -832,8 +833,8 @@ export async function deleteMediaAsset(db: DbClient, env: MediaProviderEnv, id: 
   const deletions: Array<{ label: string; run: () => Promise<void> }> = []
   if (pendingAsset.provider === 'cloudflare_r2' && pendingAsset.r2_key && !references.r2ReferencedElsewhere) {
     const r2Key = pendingAsset.r2_key
-    // A file is kept in the bucket its slot's privacy chose; its placements are gone once the row is claimed, so a retry removes it from both.
-    deletions.push({ label: `R2 object ${r2Key}`, run: async () => { await Promise.all([deleteFromR2(env, r2Key, 'public'), deleteFromR2(env, r2Key, 'private')]) } })
+    const visibility = pendingAsset.public_url === null ? 'private' : 'public'
+    deletions.push({ label: `R2 object ${r2Key}`, run: () => deleteFromR2(env, r2Key, visibility) })
   }
   if (pendingAsset.cloudflare_image_id && !references.cloudflareImageReferencedElsewhere) {
     const imageId = pendingAsset.cloudflare_image_id

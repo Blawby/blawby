@@ -2,7 +2,8 @@
 // private (#2092): conversation photos stored as public images under our own
 // id, and documents in the public bucket. Each is stored privately by the same
 // code new uploads use (storePlacedMediaPrivately), and its public copy is
-// deleted. Run after the release that declares the slots private is deployed:
+// deleted. Run --prepare before deployment to copy R2 destinations without
+// changing existing reads, then run the ordinary repair after deployment. Run after the release that declares the slots private is deployed:
 // until then that release's reads already sign links, which work for a public
 // image too, so nothing breaks in between. Repeating it changes nothing.
 //
@@ -25,11 +26,13 @@ import { parseArgs } from 'node:util'
 import { Miniflare } from 'miniflare'
 import { startRemoteProxySession, unstable_readConfig } from 'wrangler'
 import { executeBatch, queryAll, type DbClient } from '../server/db/index.ts'
-import { storePlacedMediaPrivately } from '../server/utils/media-upload.ts'
+import { storePlacedMediaPrivately, uploadResolvedMediaToAssetStore } from '../server/utils/media-upload.ts'
+import { readR2Object, uploadToR2 } from '../server/utils/cloudflare-r2.ts'
+import { deleteImage, downloadImageBuffer } from '../server/utils/cloudflare-images.ts'
 import { privateMediaPlacementSql } from '../shared/media-placement-contract.ts'
 
 const { values } = parseArgs({
-  options: { staging: { type: 'boolean', default: false }, production: { type: 'boolean', default: false }, 'dry-run': { type: 'boolean', default: false } },
+  options: { staging: { type: 'boolean', default: false }, production: { type: 'boolean', default: false }, 'dry-run': { type: 'boolean', default: false }, prepare: { type: 'boolean', default: false } },
   strict: true,
 })
 if (values.staging === values.production) throw new Error('Pass exactly one of --staging or --production.')
@@ -82,6 +85,7 @@ try {
   const db = bound.DB as DbClient
   const images = bound.IMAGES as ImagesBinding
   const publicBucket = bound.MEDIA_BUCKET as R2Bucket
+  const privateBucket = bound.PRIVATE_MEDIA_BUCKET as R2Bucket
   const env = {
     ...bound,
     CF_ACCOUNT_ID: process.env.CF_ACCOUNT_ID, CLOUDFLARE_IMAGES_API_TOKEN: process.env.CLOUDFLARE_IMAGES_API_TOKEN,
@@ -96,10 +100,38 @@ try {
     .filter(([, variant]) => variant.neverRequireSignedURLs).map(([name]) => name)
   if (unsigned.length) throw new Error(`Cloudflare Images variants ${unsigned.join(', ')} never require a signed URL, so a private image is public through them; turn that off first`)
 
-  // A file a private slot shares with a public one (an old listing signature that placed the listing's own agreement) would leave its public owner unreadable.
-  const shared = await queryAll<{ id: string }>(db, `SELECT DISTINCT held.asset_id AS id FROM media_placements held JOIN media_placements other ON other.asset_id = held.asset_id AND other.organization_id = held.organization_id
-    WHERE held.status = 'active' AND other.status = 'active' AND ${privateMediaPlacementSql('held')} AND NOT ${privateMediaPlacementSql('other')}`)
-  if (shared.length) throw new Error(`Media assets ${shared.map(row => row.id).join(', ')} are in a private and a public slot; separate them before running this`)
+  const storageEnv = env as Parameters<typeof storePlacedMediaPrivately>[0]['env']
+  if (values.prepare) {
+    // Prepare the destination before deploy; the installed Worker still reads
+    // the public copy. The ordinary repair removes that copy after cutover.
+    for (const asset of await queryAll<Candidate>(db, PRIVATE_SLOT_ASSETS)) {
+      if (asset.provider !== 'cloudflare_r2' || !asset.r2_key) continue
+      if (!write) { console.log(`Prepare private R2 file ${asset.id}`); continue }
+      const bytes = await readR2Object(storageEnv, asset.r2_key, 'public')
+      if (!bytes) throw new Error(`Missing public R2 file ${asset.id}`)
+      await uploadToR2(storageEnv, asset.r2_key, bytes, asset.mime_type ?? 'application/octet-stream', 'private')
+      const copied = await privateBucket.head(asset.r2_key)
+      if (!copied || copied.size !== bytes.byteLength) throw new Error(`Private R2 copy ${asset.id} was not stored`)
+    }
+    console.log('Private R2 destinations prepared; source rows and public copies unchanged.')
+  } else {
+  // A shared listing photo keeps its public owner. Its private placements
+  // receive a separate private asset through the ordinary upload boundary.
+  const shared = await queryAll<Candidate>(db, `${PRIVATE_SLOT_ASSETS} AND EXISTS (SELECT 1 FROM media_placements other
+    WHERE other.asset_id = ma.id AND other.organization_id = ma.organization_id AND other.status = 'active' AND NOT ${privateMediaPlacementSql('other')})`)
+  if (write) for (const asset of shared) {
+    const bytes = asset.provider === 'cloudflare_images' && asset.cloudflare_image_id
+      ? await downloadImageBuffer(storageEnv, asset.cloudflare_image_id)
+      : asset.r2_key ? await readR2Object(storageEnv, asset.r2_key, 'public') : null
+    if (!bytes) throw new Error(`Shared media asset ${asset.id} has no file`)
+    await uploadResolvedMediaToAssetStore({ db, env: storageEnv, organizationId: asset.organization_id, userId: null, source: 'external',
+      kind: 'image', provider: 'cloudflare_r2', buffer: bytes, contentType: asset.mime_type ?? 'image/jpeg', filename: asset.file_name ?? 'reference-photo',
+      placement: { owner_type: 'product', slot: 'turnover_checklist.reference' },
+      queries: assetId => [{ query: `UPDATE media_placements SET asset_id = ?, updated_at = ?
+        WHERE asset_id = ? AND organization_id = ? AND ${privateMediaPlacementSql('media_placements')}`,
+        params: [assetId, new Date().toISOString(), asset.id, asset.organization_id] }],
+    })
+  }
 
   /** The private slot files still readable without a signed link: an image that does not require one, or a file in the public bucket. */
   async function stillPublic(): Promise<(Candidate & { reason: string })[]> {
@@ -111,6 +143,8 @@ try {
         if (!details && production) found.push({ ...asset, reason: 'image production replaced' })
         else if (!details) throw new Error(`Media asset ${asset.id} names Cloudflare image ${asset.cloudflare_image_id}, which is gone`)
         else if (!details.requireSignedURLs) found.push({ ...asset, reason: 'public image' })
+        else if (!production && typeof details.meta?.replaced_image_id === 'string'
+          && await images.hosted.image(details.meta.replaced_image_id).details()) found.push({ ...asset, reason: 'public original awaiting deletion' })
       } else if (asset.provider === 'cloudflare_r2' && asset.r2_key) {
         if (await publicBucket.head(asset.r2_key)) found.push({ ...asset, reason: 'file in the public bucket' })
       } else {
@@ -126,6 +160,13 @@ try {
   if (write) {
     // Files first: on staging they move whether or not production has stored its images yet.
     for (const asset of [...before].sort((a, b) => Number(a.provider === 'cloudflare_images') - Number(b.provider === 'cloudflare_images'))) {
+      if (asset.reason === 'public original awaiting deletion' && asset.cloudflare_image_id) {
+        const details = await images.hosted.image(asset.cloudflare_image_id).details()
+        const original = details?.meta?.replaced_image_id
+        if (typeof original !== 'string') throw new Error(`Private image ${asset.id} lost its public source identity`)
+        await deleteImage(storageEnv, original)
+        continue
+      }
       if (production && asset.provider === 'cloudflare_images') {
         // Staging's row is a copy of production's: it takes the private image production stored for the same asset.
         const [stored] = await queryAll<{ cloudflare_image_id: string | null }>(bound.PRODUCTION_DB as DbClient, 'SELECT cloudflare_image_id FROM media_assets WHERE id = ? AND organization_id = ?', [asset.id, asset.organization_id])
@@ -135,13 +176,14 @@ try {
           params: [stored.cloudflare_image_id, new Date().toISOString(), asset.id, asset.organization_id, asset.cloudflare_image_id] }], { operation: 'Adopt production private image' })
         continue
       }
-      await storePlacedMediaPrivately({ db, env: env as Parameters<typeof storePlacedMediaPrivately>[0]['env'], asset: { ...asset, provider: asset.provider as 'cloudflare_images' | 'cloudflare_r2' } })
+      await storePlacedMediaPrivately({ db, env: storageEnv, asset: { ...asset, provider: asset.provider as 'cloudflare_images' | 'cloudflare_r2' } })
     }
     const after = await stillPublic()
     console.log(`${target.databaseName}: ${after.length} private slot files readable without a signed link after the run`, summary(after))
     if (after.length) throw new Error(`${after.length} private slot files are still public: ${after.map(asset => asset.id).join(', ')}`)
   } else {
-    console.log('Dry run: nothing written.')
+    console.log(`Dry run: nothing written; ${shared.length} shared private references will receive separate assets.`)
+  }
   }
 } finally {
   await runtime.dispose()

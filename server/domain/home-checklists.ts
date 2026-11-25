@@ -1,10 +1,9 @@
 import { d1JsonStringSet, executeBatch, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import { MAX_D1_BATCH_STATEMENTS } from '~/server/db/d1-limits'
-import { organizationEventQuery } from '~/server/utils/organization-events'
+import { creationRequestHash, organizationEventQuery } from '~/server/utils/organization-events'
 import { mediaLinks, type MediaLinkEnv } from '~/server/utils/private-media'
 import { buildMediaPlacementInsertQuery, getMediaAsset } from '~/server/utils/media-asset-manager'
-import { uploadResolvedMediaToAssetStore, type UploadResolvedMediaInput } from '~/server/utils/media-upload'
-import { privateMediaPlacementSql } from '~/shared/media-placement-contract'
+import { getMediaUploadReplay, uploadResolvedMediaToAssetStore, type UploadResolvedMediaInput } from '~/server/utils/media-upload'
 import { requireManager, visibleHomes, type StayAccess } from '~/server/domain/stays'
 import { checkedItem, checklistColumnsSql, checklistOf, fail, SLOT, type ChecklistColumns } from '~/server/domain/turnover-checklists'
 import { CHECKLIST_LIMITS, checklistRevision, type HomeTurnoverChecklist, type TurnoverChecklistItem } from '~/shared/turnover-checklist'
@@ -98,11 +97,11 @@ export async function saveHomeChecklist(db: DbClient, env: MediaLinkEnv, access:
   const assetIds = [...new Set(items.flatMap(item => item.reference_photo_id ? [item.reference_photo_id] : []))]
   const home = homeQuery(access, productId)
   const [homeRows, assetRows] = (await executeBatch(db, [home, {
-    // A reference photo is private (#2092): one uploaded for a checklist slot, stored where only signed links reach it — it has no
-    // public URL — and on no public slot, so a listing photo is never made a reference.
-    query: `SELECT id FROM media_assets ma WHERE organization_id = ? AND id IN (SELECT value FROM json_each(?)) AND kind = 'image' AND status = 'active' AND public_url IS NULL
-      AND NOT EXISTS (SELECT 1 FROM media_placements held WHERE held.asset_id = ma.id AND held.organization_id = ma.organization_id AND NOT ${privateMediaPlacementSql('held')})`,
-    params: [access.organizationId, d1JsonStringSet(assetIds)],
+    // Only a reference already placed on this home's checklist can be saved.
+    query: `SELECT ma.id FROM media_assets ma WHERE ma.organization_id = ? AND ma.id IN (SELECT value FROM json_each(?)) AND ma.kind = 'image' AND ma.status = 'active'
+      AND EXISTS (SELECT 1 FROM media_placements held WHERE held.asset_id = ma.id AND held.organization_id = ma.organization_id
+        AND held.owner_type = 'product' AND held.owner_id = ? AND held.slot GLOB '${SLOT}*' AND held.status = 'active')`,
+    params: [access.organizationId, d1JsonStringSet(assetIds), productId],
   }], { operation: 'Read a turnover checklist to save' })).map(result => result.results as Array<Record<string, string>>)
   const current = homeRows![0] as (ChecklistColumns & { product_id: string; location_id: string; references_key: string }) | undefined
   if (!current) fail(404, 'HOME_NOT_FOUND', 'That place to stay is not in this organization')
@@ -161,14 +160,22 @@ export async function copyHomeChecklist(db: DbClient, env: MediaLinkEnv, access:
  * slots it does not name. It is never a library or listing picture.
  */
 export async function storeReferencePhoto(db: DbClient, env: UploadResolvedMediaInput['env'] & MediaLinkEnv, input: {
-  organizationId: string; userId: string; productId: string; buffer: Uint8Array<ArrayBuffer>; contentType: string; filename: string
+  organizationId: string; userId: string; productId: string; idempotencyKey?: string; sourceFileId?: string; category?: UploadResolvedMediaInput['category']; altText?: string | null; file: () => Promise<{ buffer: Uint8Array<ArrayBuffer>; contentType: string; filename: string }>
 }): Promise<{ asset_id: string; url: string; thumbnail_url: string }> {
-  const placement = { owner_type: 'product', slot: `${SLOT}upload-${crypto.randomUUID()}` } as const
-  const uploaded = await uploadResolvedMediaToAssetStore({
-    db, env, organizationId: input.organizationId, userId: input.userId, source: 'uploaded', kind: 'image',
-    buffer: input.buffer, contentType: input.contentType, filename: input.filename, placement,
-    queries: assetId => [buildMediaPlacementInsertQuery({ organizationId: input.organizationId, ownerType: 'product', ownerId: input.productId, slot: placement.slot, assetId, sortOrder: 0 })],
-  })
+  const home = await queryFirst<{ product_id: string }>(db, 'SELECT product_id FROM product_stay_configs WHERE organization_id = ? AND product_id = ?', [input.organizationId, input.productId])
+  if (!home) fail(404, 'HOME_NOT_FOUND', 'That place to stay is not in this organization', 'checklist_product_id')
+  const placement = { owner_type: 'product', owner_id: input.productId, slot: `${SLOT}upload-${input.idempotencyKey ? (await creationRequestHash({ key: input.idempotencyKey.trim() })).slice(0, 48) : crypto.randomUUID()}` } as const
+  const identity = input.idempotencyKey ? { ...input, idempotencyKey: input.idempotencyKey, sourceFileId: input.sourceFileId ?? '', placement } : null
+  let uploaded = identity ? await getMediaUploadReplay(db, identity) : null
+  if (!uploaded) {
+    const file = await input.file()
+    uploaded = await uploadResolvedMediaToAssetStore({
+      db, env, organizationId: input.organizationId, userId: input.userId, source: 'uploaded', kind: 'image',
+      ...file, placement,
+      idempotencyKey: input.idempotencyKey, sourceFileId: input.sourceFileId, category: input.category, altText: input.altText,
+      queries: assetId => [buildMediaPlacementInsertQuery({ organizationId: input.organizationId, ownerType: 'product', ownerId: input.productId, slot: placement.slot, assetId, sortOrder: 0 })],
+    })
+  }
   const asset = await getMediaAsset(db, uploaded.assetId, input.organizationId)
   if (!asset) throw new Error(`Reference photo ${uploaded.assetId} was not saved`)
   const links = await mediaLinks(env, asset, placement)

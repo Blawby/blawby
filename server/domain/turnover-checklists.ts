@@ -39,7 +39,7 @@ async function referencePhoto(env: MediaLinkEnv, asset: ReferenceAsset, slot = `
 /** The reference photos submissions name, by asset id, linked for their reader. */
 export async function submittedReferencePhotos(db: DbClient, env: MediaLinkEnv, organizationId: string, payloads: unknown[]): Promise<Map<string, ChecklistPhoto>> {
   const ids = [...new Set(payloads.flatMap(payload => isRecord(payload) && Array.isArray(payload.items)
-    ? payload.items.flatMap(item => isRecord(item) && typeof item.reference_photo_id === 'string' ? [item.reference_photo_id] : []) : []))]
+    ? payload.items.flatMap(item => isRecord(item) && isRecord(item.reference_photo) && typeof item.reference_photo.id === 'string' ? [item.reference_photo.id] : []) : []))]
   if (!ids.length) return new Map()
   const rows = await queryAll<ReferenceAsset>(db, `SELECT ma.id, ma.kind, ma.provider, ma.cloudflare_image_id, ma.public_url, ma.thumbnail_url FROM media_assets ma WHERE ma.organization_id = ? AND ma.id IN (SELECT value FROM json_each(?)) AND ma.status = 'active'`,
     [organizationId, d1JsonStringSet(ids)])
@@ -160,7 +160,7 @@ export function checkedSubmission(taskId: string, checklist: TaskChecklist, raw:
     if (item.photo_required && !photos.has(item.id)) missing.push({ id: item.id, title: item.title, missing: 'photo' })
     const shortage = item.type === 'count' && counted !== null ? Math.max(0, item.required! - counted) : null
     return { id: item.id, title: item.title, instructions: item.instructions, type: item.type, photo_required: item.photo_required, required: item.required,
-      counted, confirmed, shortage, flagged: item.type === 'count' ? (shortage ?? 0) > 0 : confirmed === false, reference_photo_id: item.reference_photo?.id ?? null }
+      counted, confirmed, shortage, flagged: item.type === 'count' ? (shortage ?? 0) > 0 : confirmed === false, reference_photo: item.reference_photo ? { id: item.reference_photo.id } : null }
   })
   if (missing.length) {
     const needs = missing.map(entry => entry.missing === 'photo' ? `add a photo of ${entry.title}` : `answer ${entry.title}`)
@@ -185,7 +185,7 @@ export function submissionView(stored: unknown, photos: ReadonlyArray<{ id: stri
   return {
     ...submission, note: submission.note ?? null, summary: checklistSummary(submission.items),
     items: flaggedFirst(submission.items.map(item => ({ ...item, photo: item.photo_id ? byId.get(item.photo_id) ?? null : null,
-      reference_photo: item.reference_photo_id ? references.get(item.reference_photo_id) ?? null : null }))),
+      reference_photo: item.reference_photo ? references.get(item.reference_photo.id) ?? null : null }))),
   }
 }
 

@@ -336,8 +336,13 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
 
     // A home's turnover checklist (#2091): Done names what is missing, counts follow the party arriving next, and the submission is one message.
     // A reference photo is uploaded for the checklist and stored privately: its link is signed, and it is never a library asset.
-    const reference = (await storeReferencePhoto(db, env, { organizationId: ORG, userId: 'owner', productId: cabin.id, buffer: pixels, contentType: 'image/avif', filename: 'bed.avif' })).asset_id
+    const reference = (await storeReferencePhoto(db, env, { organizationId: ORG, userId: 'owner', productId: cabin.id, idempotencyKey: 'bed-reference', sourceFileId: 'bed-file', file: async () => ({ buffer: pixels, contentType: 'image/avif', filename: 'bed.avif' }) })).asset_id
     assert.equal((await db.prepare('SELECT public_url FROM media_assets WHERE id = ?').bind(reference).first('public_url')), null)
+    const replayedReference = await storeReferencePhoto(db, env, { organizationId: ORG, userId: 'owner', productId: cabin.id, idempotencyKey: 'bed-reference', sourceFileId: 'bed-file',
+      file: async () => { throw new Error('The original attachment URL has expired') } })
+    assert.equal(replayedReference.asset_id, reference)
+    await assert.rejects(storeReferencePhoto(db, env, { organizationId: ORG, userId: 'owner', productId: 'not-a-home',
+      file: async () => { throw new Error('Invalid home must be refused before resolving its file') } }), { status: 404 })
     const saved = await saveHomeChecklist(db, env, manager, cabin.id, { items: [
       { title: 'Bed made', type: 'confirm', photo_required: true, reference_photo_id: reference },
       { title: 'TV remote', type: 'confirm', photo_required: false, reference_photo_id: null },

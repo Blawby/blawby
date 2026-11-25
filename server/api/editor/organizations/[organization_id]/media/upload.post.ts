@@ -58,8 +58,8 @@ export default defineHandler(async (event) => {
       // A home's checklist reference photo is private: stored for its checklist, never the library.
       const checklistProductId = queryValue(query.checklist_product_id)
       if (checklistProductId) {
-        const reference = await storeReferencePhoto(db, env, { organizationId, userId: session.user.id, productId: checklistProductId, buffer: imageData, contentType: imageContentType,
-          filename: sanitizeFilename(imagePart.name || queryValue(query.filename) || undefined) })
+        const reference = await storeReferencePhoto(db, env, { organizationId, userId: session.user.id, productId: checklistProductId, file: async () => ({ buffer: imageData, contentType: imageContentType,
+          filename: sanitizeFilename(imagePart.name || queryValue(query.filename) || undefined) }) })
         return jsonResponse({ ...reference, public_url: null, kind: 'image', status: 'active' })
       }
       const uploaded = await uploadResolvedMediaToAssetStore({

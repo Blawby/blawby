@@ -352,10 +352,13 @@ export async function handleMediaTools(ctx: McpExecutorContext): Promise<unknown
       const checklistProductId = optionalString(args, 'checklist_product_id')
       if (checklistProductId) {
         if (args.placement !== undefined) throw mcpProtocolError(MCP_ERROR.invalidParams, 'Pass placement or checklist_product_id, not both.')
-        const resolved = await resolveUserUploadedMediaFile(fileReference)
-        if (resolved.kind !== 'image') throw mcpProtocolError(MCP_ERROR.invalidParams, 'A checklist reference photo must be an image.')
-        const reference = await storeReferencePhoto(organization.db, organization.env as never, { organizationId: organization.organizationId, userId: organization.userId,
-          productId: checklistProductId, buffer: resolved.buffer, contentType: resolved.contentType, filename: resolved.filename })
+        if (posterReference) throw mcpProtocolError(MCP_ERROR.invalidParams, 'A checklist reference photo cannot have a video poster.')
+        const reference = await storeReferencePhoto(organization.db, organization.env, { ...identity, userId: organization.userId, productId: checklistProductId,
+          file: async () => {
+            const resolved = await resolveUserUploadedMediaFile(fileReference)
+            if (resolved.kind !== 'image') throw mcpProtocolError(MCP_ERROR.invalidParams, 'A checklist reference photo must be an image.')
+            return resolved
+          } })
         return { asset_id: reference.asset_id, status: 'active', public_url: null, url: reference.url, thumbnail_url: reference.thumbnail_url, kind: 'image', placement: null, context: await mutationContextPayload(organization) }
       }
       const saved = await getMediaUploadReplay(organization.db, identity)
@@ -400,14 +403,14 @@ export async function handleMediaTools(ctx: McpExecutorContext): Promise<unknown
       const uploadInput = {
         ...identity,
         db: organization.db,
-        env: organization.env as never,
+        env: organization.env,
         organizationId: organization.organizationId,
         userId: organization.userId,
         buffer: resolved.buffer,
         contentType: resolved.contentType,
         filename: resolved.filename,
         source: "uploaded",
-        category: (category as never) ?? null,
+        category: identity.category,
         altText: description ?? fileReference.file_name ?? fileReference.file_id,
       } as const
       let uploaded

@@ -29,6 +29,7 @@ import { executeBatch, queryAll, type DbClient } from '../server/db/index.ts'
 import { storePlacedMediaPrivately, uploadResolvedMediaToAssetStore } from '../server/utils/media-upload.ts'
 import { readR2Object, uploadToR2 } from '../server/utils/cloudflare-r2.ts'
 import { deleteImage, downloadImageBuffer, getUploadedImage } from '../server/utils/cloudflare-images.ts'
+import { buildMediaPlacementInsertQuery } from '../server/utils/media-asset-manager.ts'
 import { privateMediaPlacementSql } from '../shared/media-placement-contract.ts'
 
 const { values } = parseArgs({
@@ -112,6 +113,17 @@ try {
     }
     console.log('Private R2 destinations prepared; source rows and public copies unchanged.')
   } else {
+    // A submitted checklist owns its reference photos even after the home's
+    // editor replaces them. Preserve those existing snapshots as placements.
+    if (write) for (const message of await queryAll<{ id: string; organization_id: string; payload_json: string; created_at: string }>(db,
+      `SELECT id, organization_id, payload_json, created_at FROM messages m WHERE json_type(payload_json, '$.checklist.items') = 'array'
+        AND NOT EXISTS (SELECT 1 FROM media_placements mp WHERE mp.owner_type = 'message' AND mp.owner_id = m.id AND mp.slot = 'checklist_references')`)) {
+      const payload = JSON.parse(message.payload_json)
+      const references = [...new Set<string>(payload.checklist.items.flatMap((item: { reference_photo?: { id: string } | null }) => item.reference_photo ? [item.reference_photo.id] : []))]
+      if (references.length) await executeBatch(db, references.map((assetId, sortOrder) => buildMediaPlacementInsertQuery({
+        organizationId: message.organization_id, ownerType: 'message', ownerId: message.id, slot: 'checklist_references', assetId, sortOrder, createdAt: message.created_at,
+      })), { operation: 'Preserve submitted checklist references' })
+    }
     // A shared listing photo keeps its public owner. Its private placements
     // receive a separate private asset through the ordinary upload boundary.
     const shared = await queryAll<Candidate>(db, `${PRIVATE_SLOT_ASSETS} AND EXISTS (SELECT 1 FROM media_placements other

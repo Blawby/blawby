@@ -406,6 +406,13 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     assert.deepEqual(submittedCard && [submittedCard.summary, submittedCard.items[0]!.id, submittedCard.items[0]!.shortage, submittedCard.items.find(item => item.id === towels)!.required], ['3 of 4 done · 1 short', paper, 1, 4])
     assert.match((await cyCard(at(day(9), '09:00')))!.line ?? '', /Ready · shortage flagged/)
     assert.equal(submittedCard!.items.find(item => item.id === bed)!.photo?.id, submitted[0]!.type === 'message' ? submitted[0]!.photos[0]!.id : null)
+    // A submission keeps its own reference after the editor removes the home's reference.
+    const editedChecklist = await readHomeChecklist(db, env, manager, cabin.id)
+    await saveHomeChecklist(db, env, manager, cabin.id, { expected_revision: editedChecklist.revision,
+      items: editedChecklist.items.map(({ reference_photo: _photo, ...item }) => ({ ...item, reference_photo_id: null })) })
+    const retainedCard = (await conversationPageFor(db, env, cook, annThread.id)).entries.find(entry => entry.type === 'message' && entry.checklist)
+    const retainedPhoto = retainedCard?.type === 'message' ? retainedCard.checklist!.items.find(item => item.id === bed)!.reference_photo : null
+    assert.equal(retainedPhoto?.id, reference)
     // An owner closes a job past the checklist, and its message says so.
     const reopened = await reopenTask(db, ownerViewer, annTurnover.id, { version: (await taskRow(`turnover:${ann.id}`))!.version })
     await closeTask(db, ownerViewer, annTurnover.id, { status: 'done', env })

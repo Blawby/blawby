@@ -21,7 +21,7 @@ export const MEDIA_PLACEMENT_SLOTS = {
   review_request: ['gallery'],
   // The photos a message in a conversation carries, in the order they were sent;
   // `agreement` is the PDF a booking's agreement message stored or sent for signing.
-  message: ['attachments', 'agreement'],
+  message: ['attachments', 'agreement', 'checklist_references'],
   stay_photo_room: ['photo'],
   stay_home_accessibility: [],
   stay_room_accessibility: [],
@@ -68,7 +68,7 @@ export const INDEXED_MEDIA_PLACEMENT_SLOTS = [
  * Vrbo. Organization `compliance_document`s are shown on the public site.
  */
 const PRIVATE_PLACEMENTS = new Set([
-  'message:attachments', 'message:agreement', 'product:agreement_template',
+  'message:attachments', 'message:agreement', 'message:checklist_references', 'product:agreement_template',
 ])
 
 export interface MediaPlacementSlot { owner_type: string; slot: string }
@@ -88,7 +88,7 @@ export function privateMediaPlacementSql(alias: string): string {
 const ORDERED_PLACEMENTS = new Set([
   'business_location:gallery', 'product:gallery', 'content_document:gallery',
   'content_block:gallery', 'review:gallery', 'review_request:gallery',
-  'organization:compliance_document', 'message:attachments', 'stay_photo_room:photo',
+  'organization:compliance_document', 'message:attachments', 'message:checklist_references', 'stay_photo_room:photo',
 ])
 
 /**

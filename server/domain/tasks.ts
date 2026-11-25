@@ -15,7 +15,7 @@ import type { MediaLinkEnv } from '~/server/utils/private-media'
 import { discardMessagePhotos, groupMessagePhotos, MAX_MESSAGE_PHOTOS, messagePhotoPlacements, messagePhotoRowsSql, MessagePhotoRejection, uploadMessagePhotos, type MessagePhoto, type MessagePhotoRow } from '~/server/domain/guest-threads/attachments'
 import { bookingEditorPath, guestConversationPath } from '~/server/utils/dashboard-links'
 import { ownerPicture } from '~/server/notifications/hero'
-import { groupMediaPlacements, mediaPlacementsQuery } from '~/server/utils/media-asset-manager'
+import { buildMediaPlacementInsertQuery, groupMediaPlacements, mediaPlacementsQuery } from '~/server/utils/media-asset-manager'
 import { addLocalDays, formatCalendarDate, formatTimestamp, isValidInstant, localDateAt, localDateTimeToInstant } from '~/utils/timezone'
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { BOOKING_RECORDS_SQL, bookingDay } from '~/server/domain/requests'
@@ -1540,6 +1540,8 @@ export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string
     ...(message && authored ? [
       { query: "SELECT CASE WHEN EXISTS (SELECT 1 FROM messages WHERE id = ?) THEN NULL ELSE json('TASK_THREAD_ACCESS_CHANGED') END", params: [message.id] },
       ...messagePhotoPlacements(organizationId, message.id, assetIds, now),
+      ...[...new Set(submission?.items.flatMap(item => item.reference_photo ? [item.reference_photo.id] : []) ?? [])].map((assetId, sortOrder) =>
+        buildMediaPlacementInsertQuery({ organizationId, ownerType: 'message', ownerId: message.id, slot: 'checklist_references', assetId, sortOrder, createdAt: now })),
     ] : [])], { operation: input.status === 'done' ? 'Complete task' : 'Skip task' })
   } catch (error) {
     await discardMessagePhotos(db, input.env, organizationId, assetIds, viewer.principal.userId, error)

@@ -85,6 +85,7 @@ for (const tenant of tenants) {
     await page.setViewportSize({ width: 1440, height: 900 })
     const response = await openTenantPage(page, `${tenant.baseURL}/`, tenant.headers)
     expect(response?.status()).toBe(200)
+    if (tenant.name === 'Kikuzuki') await page.locator('[data-public-consent]').getByRole('button', { name: 'Accept', exact: true }).click()
     expect(new URL(page.url()).origin).toBe(new URL(tenant.baseURL).origin)
     await expectTenantDocument(page, tenant)
     await page.locator(`a[href="${tenant.listPath}"]`).first().click()
@@ -101,8 +102,6 @@ for (const tenant of tenants) {
     for (const text of tenant.forbidden) await expect(page.locator('body')).not.toContainText(text)
 
     if (tenant.name === 'Kikuzuki') {
-      await page.getByRole('button', { name: 'Cookie preferences', exact: true }).click()
-      await page.getByRole('button', { name: 'Accept', exact: true }).click()
       await page.locator('header').getByRole('link', { name: /Kikuzuki Krabi Thailand home/i }).click()
       const recent = page.locator('[data-recently-viewed]')
       await expect(recent).toContainText('Tuna Sushi')

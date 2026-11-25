@@ -59,35 +59,35 @@ test.describe('dashboard pane hierarchy', () => {
     const tenant = seededTenant('restaurant')
     const release = await acquireTenantMutationLock(testInfo, tenant.organizationId)
     try {
-    const endpoint = `/api/editor/organizations/${tenant.organizationId}`
-    const read = async () => {
-      const response = await page.request.get(`${endpoint}/products?include=collections`)
-      expect(response.status(), await response.text()).toBe(200)
-      return response.json() as Promise<{ products: CatalogProduct[]; collections: Array<{ id: string; name: string }> }>
-    }
-    const members = (catalog: Awaited<ReturnType<typeof read>>, id: string) => catalog.products.flatMap(product => {
-      const membership = product.collections.find(row => row.collection_id === id)
-      return membership ? [{ id: product.id, order: membership.sort_order }] : []
-    }).sort((a, b) => a.order - b.order).map(row => row.id)
-    const before = await read()
-    const source = before.collections.find(row => row.name === 'Pizzas')!
-    const target = before.collections.find(row => row.name === 'Starters')!
-    const dish = before.products.find(row => row.name === 'Margherita')!
-    try {
-      await page.setViewportSize(PHONE)
-      await open(page, `/dashboard/${tenant.slug}/products/menu/${source.id}?kind=dish`)
-      const section = page.locator('#dashboard-panel-menu-section')
-      await section.getByTestId('list-editor-toggle').click()
-      await section.getByRole('checkbox', { name: 'Select Margherita', exact: true }).check()
-      await section.getByTestId('product-move-open').click()
-      const dialog = page.getByRole('dialog', { name: 'Move item', exact: true })
-      await dialog.getByRole('radio', { name: /Starters/ }).check()
-      await dialog.getByRole('button', { name: 'Move', exact: true }).click()
-      await expect(dialog).not.toBeVisible()
-      const after = await read()
-      expect(members(after, source.id)).toEqual(members(before, source.id).filter(id => id !== dish.id))
-      expect(members(after, target.id)).toEqual([...members(before, target.id), dish.id])
-    } finally {
+      const endpoint = `/api/editor/organizations/${tenant.organizationId}`
+      const read = async () => {
+        const response = await page.request.get(`${endpoint}/products?include=collections`)
+        expect(response.status(), await response.text()).toBe(200)
+        return response.json() as Promise<{ products: CatalogProduct[]; collections: Array<{ id: string; name: string }> }>
+      }
+      const members = (catalog: Awaited<ReturnType<typeof read>>, id: string) => catalog.products.flatMap(product => {
+        const membership = product.collections.find(row => row.collection_id === id)
+        return membership ? [{ id: product.id, order: membership.sort_order }] : []
+      }).sort((a, b) => a.order - b.order).map(row => row.id)
+      const before = await read()
+      const source = before.collections.find(row => row.name === 'Pizzas')!
+      const target = before.collections.find(row => row.name === 'Starters')!
+      const dish = before.products.find(row => row.name === 'Margherita')!
+      try {
+        await page.setViewportSize(PHONE)
+        await open(page, `/dashboard/${tenant.slug}/products/menu/${source.id}?kind=dish`)
+        const section = page.locator('#dashboard-panel-menu-section')
+        await section.getByTestId('list-editor-toggle').click()
+        await section.getByRole('checkbox', { name: 'Select Margherita', exact: true }).check()
+        await section.getByTestId('product-move-open').click()
+        const dialog = page.getByRole('dialog', { name: 'Move item', exact: true })
+        await dialog.getByRole('radio', { name: /Starters/ }).check()
+        await dialog.getByRole('button', { name: 'Move', exact: true }).click()
+        await expect(dialog).not.toBeVisible()
+        const after = await read()
+        expect(members(after, source.id)).toEqual(members(before, source.id).filter(id => id !== dish.id))
+        expect(members(after, target.id)).toEqual([...members(before, target.id), dish.id])
+      } finally {
         const current = await read()
         for (const collection of [source, target]) {
           const restored = await page.request.put(`${endpoint}/collections/${collection.id}/products`, { data: { product_ids: members(before, collection.id), expected_product_ids: members(current, collection.id) } })
@@ -95,7 +95,7 @@ test.describe('dashboard pane hierarchy', () => {
         }
         const restored = await read()
         for (const collection of [source, target]) expect(members(restored, collection.id)).toEqual(members(before, collection.id))
-    }
+      }
     } finally { await release() }
   })
 
@@ -164,16 +164,16 @@ test.describe('dashboard pane hierarchy', () => {
     const tenant = seededTenant('restaurant')
     const release = await acquireTenantMutationLock(testInfo, tenant.organizationId)
     try {
-    const balances = await page.request.get(`/api/dashboard/payments/unpaid?org=${tenant.slug}`)
-    expect(balances.status(), await balances.text()).toBe(200)
-    expect(await balances.json()).toEqual({ bookings: [] })
-    await page.setViewportSize(PHONE)
-    await open(page, `/dashboard/${tenant.slug}/payments`)
-    const payments = page.locator('#dashboard-panel-organization-payments')
-    await expect(payments.getByRole('link', { name: /Accept online payments/ })).toBeVisible()
-    await expect(payments.getByText('Loading payments to collect…', { exact: true })).toHaveCount(0)
-    await expect(payments.getByRole('link', { name: /Payments to collect|Unpaid/ })).toHaveCount(0)
-    await expect(payments.getByText('Nobody owes you money', { exact: true })).toHaveCount(0)
+      const balances = await page.request.get(`/api/dashboard/payments/unpaid?org=${tenant.slug}`)
+      expect(balances.status(), await balances.text()).toBe(200)
+      expect(await balances.json()).toEqual({ bookings: [] })
+      await page.setViewportSize(PHONE)
+      await open(page, `/dashboard/${tenant.slug}/payments`)
+      const payments = page.locator('#dashboard-panel-organization-payments')
+      await expect(payments.getByRole('link', { name: /Accept online payments/ })).toBeVisible()
+      await expect(payments.getByText('Loading payments to collect…', { exact: true })).toHaveCount(0)
+      await expect(payments.getByRole('link', { name: /Payments to collect|Unpaid/ })).toHaveCount(0)
+      await expect(payments.getByText('Nobody owes you money', { exact: true })).toHaveCount(0)
     } finally { await release() }
   })
 

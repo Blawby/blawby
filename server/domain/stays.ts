@@ -3333,7 +3333,8 @@ export async function applyChannelBooking(db: DbClient, env: GuestInboxPublicati
               version = bookings.version + 1, updated_at = excluded.updated_at, booked_product_id = excluded.booked_product_id,
               channel_listing_id = COALESCE(excluded.channel_listing_id, bookings.channel_listing_id)
             WHERE bookings.organization_id = excluded.organization_id AND bookings.id = ? AND bookings.product_id = ? AND bookings.version IS ?
-              AND (bookings.provider_updated_at IS NULL OR bookings.provider_updated_at < excluded.provider_updated_at)`,
+              AND (bookings.provider_updated_at IS NULL OR bookings.provider_updated_at < excluded.provider_updated_at)
+            RETURNING id`,
     params: [id, organizationId, guestUserId, landing, home.variant_id, home.location_id, window.starts_at, window.ends_at, home.timezone,
       booking.adults + booking.children, booking.adults, booking.children, booking.infants, booking.channel, booking.cancelled ? 'cancelled' : 'confirmed', booking.cancelled ? 1 : 0, ...availability.params, ...bookedAvailability.params, policy,
       booking.total_minor, booking.currency, booking.provider, booking.external_booking_id, booking.channel_booking_id, booking.revision_id,
@@ -3391,7 +3392,7 @@ export async function applyChannelBooking(db: DbClient, env: GuestInboxPublicati
   closedBookingPaymentTasksQuery(organizationId, id, now),
   ]
   const writes = await executeBatch(db, write, { operation: 'Apply channel booking' })
-  const changed = writes[existing?.external_booking_id === null || reimported !== null ? 2 : 1]?.meta.changes
+  const changed = writes[existing?.external_booking_id === null || reimported !== null ? 2 : 1]?.results.length
   if (changed !== 0 && changed !== 1) fail(500, 'CHANNEL_REVISION_WRITE_RESULT_REQUIRED', 'The channel revision write did not report its affected row count', 'changes')
   const current = await currentChannelStay()
   if (!current) fail(500, 'CHANNEL_STAY_NOT_READABLE', 'The saved channel booking could not be read', 'external_booking_id')

@@ -102,7 +102,7 @@ test.describe('dashboard pane hierarchy', () => {
     await page.setViewportSize(PHONE)
     await open(page, `/dashboard/${restaurant.slug}/messages/automatic/new`)
     const editor = page.locator('#dashboard-panel-new-automatic-message')
-    await expect(editor.getByRole('button', { name: 'Tables', exact: true })).toBeVisible()
+    await expect(editor.getByRole('button', { name: 'Tables and experiences', exact: true })).toBeVisible()
     await editor.getByRole('button', { name: 'Timing', exact: true }).click()
     await page.getByPlaceholder('Search timing', { exact: true }).fill('1 hour before')
     await page.getByRole('option', { name: '1 hour before', exact: true }).click()

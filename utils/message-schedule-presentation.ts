@@ -11,7 +11,7 @@ export function scheduleVocabulary(vertical: string | null) {
   if (vertical === 'lodging') return { received: 'a new reservation', check_in: 'check-in', check_out: 'checkout', start_label: 'Check-in', end_label: 'Checkout', checkInDay: 'On check-in day', checkOutDay: 'On checkout day', zone: 'home’s time zone', scope: 'Homes' }
   const { noun } = resolveAggregateBookingPresentation([{ kind: vertical === 'restaurant' ? 'table' : 'experience', vertical }])
   return { received: `a new ${noun}`, check_in: `the ${noun} starts`, check_out: `the ${noun} ends`, start_label: `${noun.charAt(0).toUpperCase() + noun.slice(1)} start`, end_label: `${noun.charAt(0).toUpperCase() + noun.slice(1)} end`,
-    checkInDay: `On the day the ${noun} starts`, checkOutDay: `On the day the ${noun} ends`, zone: `${noun}’s time zone`, scope: vertical === 'restaurant' ? 'Tables' : vertical === 'service' ? 'Consultations' : 'Experiences' }
+    checkInDay: `On the day the ${noun} starts`, checkOutDay: `On the day the ${noun} ends`, zone: `${noun}’s time zone`, scope: vertical === 'restaurant' ? 'Tables and experiences' : vertical === 'service' ? 'Consultations' : 'Experiences' }
 }
 
 export function messageScheduleLabel(schedule: GuestMessageSchedule, vertical: string | null): string {

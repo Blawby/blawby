@@ -422,11 +422,21 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     await declineTask(db, dot, eveClean.id, { version: (await taskRow(`turnover:${eve.id}`))!.version, reason: null })
     assert.equal((await taskRow(`turnover:${eve.id}`))!.assigned_member_id, 'm-cook', 'with no cleaner left it reaches the host')
     assert.deepEqual((await getTask(db, ownerViewer, eveClean.id)).confirmation?.declined, [{ name: 'Cara', reason: 'Away that week' }, { name: 'Dot', reason: null }])
+    // The host is alerted by the job's post in their own conversation, which says who could not do it and why.
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:31'))
+    const hostPost = await db.prepare(`SELECT m.id, m.body FROM messages m JOIN conversation_participants seat ON seat.conversation_id = m.conversation_id AND seat.user_id = 'cook'
+      WHERE m.author_kind = ? AND json_extract(m.payload_json, '$.key') = ? ORDER BY m.sequence DESC LIMIT 1`).bind(PLATFORM_MESSAGE_AUTHOR_KIND, jobKey(eveClean)).first<{ id: string; body: string }>()
+    assert.match(hostPost!.body, /Cara can’t do it: Away that week\.\nDot can’t do it\./)
+    assert.equal(await alerted(hostPost!.id), 1, 'the host is alerted')
     // Accept makes a clean confirmed, by name.
     const fayClean = (await taskRow(`turnover:${fay.id}`))!
     await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:32'))
     await acceptTask(db, cara, fayClean.id, { version: fayClean.version })
     assert.equal((await getTask(db, ownerViewer, fayClean.id)).confirmation?.label, 'Confirmed by Cara')
+    // Handed to someone else and back by hand, it is confirmed only once Cara accepts again.
+    for (const memberId of ['m-dot', 'm-cara']) await updateTask(db, ownerViewer, fayClean.id, { version: (await taskRow(`turnover:${fay.id}`))!.version, assigned_member_id: memberId })
+    assert.equal((await getTask(db, ownerViewer, fayClean.id)).confirmation?.label, 'Not confirmed yet')
+    await acceptTask(db, cara, fayClean.id, { version: (await taskRow(`turnover:${fay.id}`))!.version })
     // Offered to all: the host holds it until the first cleaner to accept takes it; a race leaves exactly one holding it.
     await setHomeCleaning(db, env, manager, cabin.id, { offer_cleans_to_all: true })
     assert.equal((await taskRow(`turnover:${fay.id}`))!.accepted_member_id, 'm-cara', 'an accepted clean stays with its cleaner')
@@ -439,6 +449,15 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     assert.ok(race.some(result => result.status === 'rejected' && (result.reason as { data?: { code?: string } }).data?.code === 'TASK_CLAIM_UNAVAILABLE'))
     const won = (await taskRow(`turnover:${gus.id}`))!
     assert.ok(['m-cara', 'm-dot'].includes(won.assigned_member_id!) && won.accepted_member_id === won.assigned_member_id && won.claim_role === null)
+    // An offered clean handed to Ann by hand is hers, not offered: no one else can take it.
+    const hal = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'hal', check_in_date: day(28), check_out_date: day(29), adults: 1, guest_name: 'Hal', guest_email: 'hal@example.test', total_minor: 15_000 })
+    const halClean = (await taskRow(`turnover:${hal.id}`))!
+    assert.equal(halClean.claim_role, 'cleaner')
+    await updateTask(db, ownerViewer, halClean.id, { version: halClean.version, assigned_member_id: 'm-cara' })
+    const handedHal = (await taskRow(`turnover:${hal.id}`))!
+    assert.deepEqual([handedHal.claim_role, handedHal.accepted_member_id, (await getTask(db, ownerViewer, halClean.id)).confirmation?.label], [null, null, 'Not confirmed yet'])
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:34'))
+    await assert.rejects(acceptTask(db, dot, halClean.id, { version: handedHal.version }), { status: 404 })
   } finally {
     await runtime.dispose()
   }

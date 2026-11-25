@@ -122,12 +122,13 @@ export async function seedE2e(baseURL: string) {
     await createActors(admin)
     const manifest: SeedManifest = { baseURL, adminUserId: E2E_ADMIN_ID, platformOrganizationId, tenants: {} as SeedManifest['tenants'] }
     const create: CreateTenant = plan => createTenant(baseURL, plan)
-    const [{ seedRestaurant }, { seedExperience }, { seedLegal }] = await Promise.all([
-      import('./tenants/restaurant.ts'), import('./tenants/experience.ts'), import('./tenants/legal.ts'),
+    const [{ seedRestaurant }, { seedExperience }, { seedLegal }, { seedLodging }] = await Promise.all([
+      import('./tenants/restaurant.ts'), import('./tenants/experience.ts'), import('./tenants/legal.ts'), import('./tenants/lodging.ts'),
     ])
     manifest.tenants.restaurant = await seedRestaurant(create)
     manifest.tenants.experience = await seedExperience(create)
     manifest.tenants.legal = await seedLegal(create)
+    manifest.tenants.lodging = await seedLodging(create)
     const { seedPlatform } = await import('./tenants/platform.ts')
     await seedPlatform(admin, platformOrganizationId)
     mkdirSync(new URL('.', SEED_MANIFEST_PATH), { recursive: true })

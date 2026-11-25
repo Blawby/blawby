@@ -157,7 +157,7 @@ export function parseStoredFormQuestions(value: unknown): FormQuestion[] {
   return formQuestionsSchema.parse(raw)
 }
 
-function cyrb53(text: string): string {
+export function cyrb53(text: string): string {
   let h1 = 0xdeadbeef, h2 = 0x41c6ce57
   for (let index = 0; index < text.length; index += 1) {
     const code = text.charCodeAt(index)

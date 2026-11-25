@@ -21,6 +21,8 @@ import type { CloudflareEnv } from '~/server/utils/auth'
 import { organizationPublicUrl } from '~/server/utils/domains'
 import { createPreviewToken, PREVIEW_TOKEN_QUERY, PREVIEW_TOKEN_TTL_MS, previewSecretOf, PUBLIC_WEBSITE_QUERY } from '~/server/utils/preview-token'
 import { isDemoOrganization } from '~/shared/demo'
+import { turnoverBeforeSql } from '~/server/domain/turnover-checklists'
+import { turnoverReadiness, type StoredTurnover } from '~/shared/turnover-checklist'
 
 /*
   Today and Upcoming for the person looking: the bookings they host in the
@@ -73,7 +75,7 @@ export function prepareToday(db: DbClient, input: TodayReadInput & ({ userId: st
   const queries = [
     membership,
     withViewer(membership, bookedRecordsInRange(BATCH_VIEWER, { from, to, pending: range === 'today', includePayments: true })),
-    withViewer(membership, openWorkQuery(BATCH_VIEWER, to)),
+    withViewer(membership, openWorkQuery(BATCH_VIEWER, to, now.toISOString())),
     // What the bookings with a payment due today owe, for the people who manage the business.
     withViewer(membership, unpaidQuery(range === 'today' ? management : { sql: 'NULL' }, {
       sql: `SELECT subject_id FROM tasks WHERE organization_id = ${org} AND kind = '${PAYMENT_TASK_KIND}' AND status = 'open' AND due_at <= ?`, params: [wideTo] })),
@@ -84,6 +86,9 @@ export function prepareToday(db: DbClient, input: TodayReadInput & ({ userId: st
       sql: `SELECT location_id FROM bookings WHERE organization_id = ${org} AND location_id IS NOT NULL AND status <> 'cancelled' AND ${window}
         UNION SELECT location_id FROM tasks WHERE organization_id = ${org} AND status = 'open' AND kind = 'maintenance' AND product_id IS NULL`, params: [wideTo, wideFrom] } })),
     withViewer(membership, bookingWelcomesQuery(managed, { now })),
+    // Whether each arriving stay's home is ready: the stored status of the turnover before it.
+    withViewer(membership, { query: `SELECT b.id, ${turnoverBeforeSql('b')} AS turnover FROM bookings b
+      WHERE b.organization_id = ${org} AND b.product_session_id IS NULL AND b.status = 'confirmed' AND b.starts_at <= ? AND b.ends_at >= ?`, params: [wideTo, wideFrom] }),
     // The setup the business has not finished is Today's, after the day's cards.
     ...setupQueries(range === 'today' ? management : { sql: 'NULL' }, { now }).map(query => withViewer(membership, query)),
     withViewer(membership, taskAssigneesQuery(managed)),
@@ -94,7 +99,7 @@ export function prepareToday(db: DbClient, input: TodayReadInput & ({ userId: st
 
 async function presentToday(
   db: DbClient,
-  [viewerResult, recordResult, workResult, unpaidResult, productResult, locationResult, welcomeResult, factResult, unpricedResult, assigneeResult, listingResult]: D1Result[],
+  [viewerResult, recordResult, workResult, unpaidResult, productResult, locationResult, welcomeResult, readinessResult, factResult, unpricedResult, assigneeResult, listingResult]: D1Result[],
   input: TodayReadInput,
 ) {
   const { range, now, native, staffAccessWrites = true } = input
@@ -125,6 +130,7 @@ async function presentToday(
     return record.party_size === 1 ? noun : `${noun}s`
   }
 
+  const turnovers = new Map((readinessResult!.results as Array<{ id: string; turnover: string | null }>).map(row => [row.id, row.turnover === null ? null : JSON.parse(row.turnover) as StoredTurnover]))
   const cards: Card[] = []
   const byBooking = new Map<string, Card>()
   const byClass = new Map<string, { card: Card; party: number }>()
@@ -162,14 +168,18 @@ async function presentToday(
     }
     if (record.unit === 'nights') {
       const timed = (value: string) => value.length > 10 ? time(value, zone) : nights(record)
+      // Ready, Ready with a shortage, or Not cleaned yet: the turnover before this arrival as it is stored. From two hours out it is the card's action.
+      const readiness = turnoverReadiness(turnovers.get(record.id) ?? null, record.starts_at, now)
+      const arriving = readiness ? { ...base, line: [place, readiness.label, administration ? money(record) : null].filter(Boolean).join(' · ') } : base
+      const ready = readiness?.urgent ? { title: 'Not cleaned yet', detail: `Guests arrive ${record.starts_at.length > 10 ? `at ${time(record.starts_at, zone)}` : 'today'}` } : action
       // A stay unnamed by its channel is "a group of 2 from Airbnb"; one added by hand without a name, "a group of 2 you added".
       const who = guest ? group : `${group} ${record.owner === 'channel' ? `from ${STAY_CHANNEL_LABELS[record.channel]}` : 'you added'}`
       const Who = who.charAt(0).toUpperCase() + who.slice(1)
       if (range === 'upcoming') {
-        if (shows(start, zone)) add({ ...base, id: `booking:${record.id}`, noun: 'reservation', order: [0, record.starts_at], when: nights(record), headline: Who, action })
+        if (shows(start, zone)) add({ ...arriving, id: `booking:${record.id}`, noun: 'reservation', order: [0, record.starts_at], when: nights(record), headline: Who, action })
         continue
       }
-      if (start === today(zone)) add({ ...base, id: `arrival:${record.id}`, noun: 'reservation', order: [0, record.starts_at], when: timed(record.starts_at), headline: `${Who} checks in`, action })
+      if (start === today(zone)) add({ ...arriving, id: `arrival:${record.id}`, noun: 'reservation', order: [0, record.starts_at], when: timed(record.starts_at), headline: `${Who} checks in`, action: ready })
       if (end === today(zone)) add({ ...base, day: end, id: `departure:${record.id}`, noun: 'reservation', order: [0, record.ends_at], when: timed(record.ends_at), headline: `${Who} checks out`, action: guest && opens ? { title: `Message ${guest}`, detail: 'See if they have any questions' } : named })
       continue
     }
@@ -292,9 +302,20 @@ async function presentToday(
     if (work.kind === 'consultation_follow_up' && range === 'upcoming') continue
     // A job always has someone. Another person's clean is the action of its booking's card on that day ("Casey is cleaning");
     // the viewer's own job is its own card, which opens the job's conversation, where its Done is.
+    const confirmed = work.accepted_member_id !== null && work.accepted_member_id === work.assigned_member_id
     if (!work.assigned_to_viewer) {
+      // A clean offered to the home's cleaners: any of them accepts it from its card; the first to do so has it.
+      if (work.kind === 'turnover' && work.claim_role !== null && work.accepted_member_id === null && !manage) {
+        add({ id: `task:${work.id}`, noun: 'clean', order: [0, at ?? untimed ?? ''], bookings: [], day,
+          when: at ? visitWhen(at, work.timezone) : range === 'today' ? 'Today' : formatTimestamp(`${day}T12:00:00.000Z`, 'en', 'UTC', { weekday: 'short', month: 'short', day: 'numeric' }),
+          image_url: picture('product', work.product_id), icon: iconOf(work.product_kind), headline: `Clean up after ${group}`, line: work.product_name,
+          action: { title: 'Available to accept', detail: 'The first cleaner to accept has it' }, to: null, draft: null,
+          claim: { path: taskUpdatePath(viewer.organization_id, work.id), version: work.version, label: 'Accept' } })
+        continue
+      }
       const held = work.kind === 'turnover' && work.booking_id ? byBooking.get(work.booking_id) : undefined
-      if (held?.day === day) held.action = { title: `${first(work.assignee_name) ?? 'A teammate'} is cleaning`, detail: guest && work.viewer_seated ? `Message ${guest}` : held.action.detail }
+      const cleaner = first(work.assignee_name) ?? 'A teammate'
+      if (held?.day === day) held.action = { title: confirmed ? `${cleaner} is cleaning` : `${cleaner} hasn’t confirmed yet`, detail: guest && work.viewer_seated ? `Message ${guest}` : held.action.detail }
       continue
     }
     // Prep is the host's own preparation for a visit already on their list.
@@ -314,7 +335,8 @@ async function presentToday(
       image_url: picture('product', work.product_id), icon: iconOf(work.product_kind), headline: headline.charAt(0).toUpperCase() + headline.slice(1),
       line: work.booking_unit === 'nights' ? work.product_name : work.location_id === null ? 'Online' : work.location_title,
       // The host's own job has nobody to message: it opens the job, where its Done is.
-      action: manage ? { title: 'Open the job', detail: 'Tap Done when it’s finished' }
+      action: work.kind === 'turnover' && !confirmed && !manage ? { title: 'Accept or hand it back', detail: 'Open the job to confirm you can clean' }
+        : manage ? { title: 'Open the job', detail: 'Tap Done when it’s finished' }
         : { title: 'Message the host', detail: range === 'today' ? 'Send photos when you’re done' : 'Ask anything before the day' },
       // The job's conversation is written with the job; a job read before it exists is not linked anywhere else.
       to: team ? guestConversationPath(viewer.slug, team) : null, draft: null,

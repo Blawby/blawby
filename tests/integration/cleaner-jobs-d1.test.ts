@@ -12,7 +12,7 @@ import { cancelStay, createStay, updateStayHome, type StayAccess } from '../../s
 import { conversationPageFor } from './support/conversation-page.ts'
 import { sendConversationMessage } from '../../server/domain/send-conversation-message.ts'
 import { createTeamThread } from '../../server/domain/team-messages.ts'
-import { closeTask, createTask, getTask, jobKey, maintenanceOptions, reopenTask, taskViewer, updateTask, type TaskRow, type TaskView } from '../../server/domain/tasks.ts'
+import { acceptTask, closeTask, createTask, declineTask, getTask, jobKey, listTasks, maintenanceOptions, reopenTask, taskViewer, updateTask, type TaskRow, type TaskView } from '../../server/domain/tasks.ts'
 import { listConversations } from '../../server/domain/guest-threads/repository.ts'
 import { appendMessage, markConversationRead, resolveConversationAccess } from '../../server/domain/conversations.ts'
 import { messagePhotoPlacements, uploadMessagePhotos } from '../../server/domain/guest-threads/attachments.ts'
@@ -25,6 +25,10 @@ import { createAuth, type CloudflareEnv } from '../../server/utils/auth.ts'
 import completeTaskRoute from '../../server/api/organizations/[organization_id]/tasks/[task_id]/complete.post.ts'
 import readTaskRoute from '../../server/api/organizations/[organization_id]/tasks/[task_id]/read.post.ts'
 import { applySchema } from './support/schema.ts'
+import { copyHomeChecklist, readHomeChecklist, saveHomeChecklist } from '../../server/domain/home-checklists.ts'
+import { setHomeCleaning } from '../../server/domain/home-cleaning.ts'
+import { setListingAccess } from '../../server/domain/conversation-participants.ts'
+import { checklistRevision } from '../../shared/turnover-checklist.ts'
 
 // A cleaner's job is a team conversation: the job is posted there when it is
 // theirs, reminders follow in it, a reassignment or cancellation is told
@@ -327,6 +331,133 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     await db.prepare("DELETE FROM member WHERE id = 'm-fixer'").run()
     await reconcileResponsibilities(env, db, { organizationId: ORG })
     assert.equal(await db.prepare('SELECT assigned_member_id FROM tasks WHERE id = ?').bind(leak.id).first<string>('assigned_member_id'), 'm-owner')
+
+    // A home's turnover checklist (#2091): Done names what is missing, counts follow the party arriving next, and the submission is one message.
+    const reference = (await uploadMessagePhotos(db, env, ORG, [{ bytes: pixels, filename: 'bed.avif' }], { source: 'uploaded', userId: 'owner' }))[0]!
+    const saved = await saveHomeChecklist(db, manager, cabin.id, { items: [
+      { title: 'Bed made', type: 'confirm', photo_required: true, reference_photo_id: reference },
+      { title: 'TV remote', type: 'confirm', photo_required: false, reference_photo_id: null },
+      { title: 'Bath towels', type: 'count', minimum: 1, per_guest: true, baseline: 2, photo_required: false, reference_photo_id: null },
+      { title: 'Spare toilet paper', type: 'count', minimum: 2, per_guest: false, photo_required: false, reference_photo_id: null },
+    ], expected_revision: checklistRevision([]) })
+    assert.equal(saved.items[0]!.reference_photo?.id, reference)
+    const [bed, remote, towels, paper] = saved.items.map(item => item.id) as [string, string, string, string]
+    // A save made against an older read is refused; a copy gives another home the same items and reference photo.
+    await assert.rejects(saveHomeChecklist(db, manager, cabin.id, { items: [], expected_revision: checklistRevision([]) }), { status: 409, data: { code: 'CHECKLIST_CHANGED', field: 'expected_revision' } })
+    await db.prepare(`INSERT INTO business_locations (id, organization_id, slug, title, status, timezone, created_at, updated_at)
+      VALUES ('loft-site', ?, 'loft', 'Loft', 'active', ?, '2026-10-15T00:00:00.000Z', '2026-10-15T00:00:00.000Z')`).bind(ORG, ZONE).run()
+    const loft = await createProduct(db, { env, organizationId: ORG, actor: { actorId: 'owner' }, product: {
+      kind: 'stay', name: 'Loft', variants: [{ name: 'Loft', prices: [{ unit_amount: 12_000, currency: 'USD' }] }],
+      stay: { location_id: 'loft-site', check_in_time: '15:00', check_out_time: '10:00', max_guests: 2, min_nights: 1, assigned_member_id: 'm-owner' },
+    } })
+    assert.deepEqual((await copyHomeChecklist(db, manager, cabin.id, { product_ids: [loft.id] })).product_ids, [loft.id])
+    assert.deepEqual((await readHomeChecklist(db, manager, loft.id)).items, saved.items)
+    const ann = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'ann', check_in_date: day(10), check_out_date: day(12), adults: 2, guest_name: 'Ann', guest_email: 'ann@example.test', total_minor: 30_000 })
+    const bo = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'bo', check_in_date: day(13), check_out_date: day(14), adults: 3, children: 1, guest_name: 'Bo', guest_email: 'bo@example.test', total_minor: 15_000 })
+    const annTurnover = (await taskRow(`turnover:${ann.id}`))!
+    const required = async () => (await getTask(db, cookViewer, annTurnover.id)).checklist!
+    assert.deepEqual([(await required()).arrival, (await required()).items.find(item => item.id === towels)!.required], [{ guests: 4, check_in_date: day(13) }, 4])
+    // The arrival is read as it stands: cancelled, the baseline applies.
+    await cancelStay(db, env, manager, bo.id, { version: bo.version, reason: 'Plans changed', financial_writes_allowed: false })
+    assert.deepEqual([(await required()).arrival_label, (await required()).items.find(item => item.id === towels)!.required], ['No arrival booked yet', 2])
+    const cy = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'cy', check_in_date: day(13), check_out_date: day(14), adults: 4, guest_name: 'Cy', guest_email: 'cy@example.test', total_minor: 15_000 })
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:20'))
+    const submit = async (body: FormData) => app.request(Object.assign(new Request(`https://proof.example/api/organizations/${ORG}/tasks/${annTurnover.id}/complete`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}` }, body,
+    }), { runtime: { name: 'cloudflare', cloudflare: { env } } }))
+    const answers = (withBedPhoto: boolean) => {
+      const form = new FormData()
+      form.set('checklist', JSON.stringify({ items: [{ id: bed, confirmed: true }, { id: remote, confirmed: true }, { id: towels, counted: 4 }, { id: paper, counted: 1 }] }))
+      if (withBedPhoto) form.append(`photo:${bed}`, new File([pixels], 'bed.avif', { type: 'image/avif' }))
+      return form
+    }
+    // Cy's card says the home is not cleaned yet, from the stored turnover; once Cy has arrived, the open job is no longer open work.
+    const cyCard = async (when: Date) => (await readToday(db, { slug: ORG, userId: 'owner', range: 'upcoming', now: when })).cards.find(item => item.id === `booking:${cy.id}`)
+    assert.match((await cyCard(at(day(9), '09:00')))!.line ?? '', /Not cleaned yet/)
+    const afterArrival = at(day(13), '16:00')
+    assert.match((await getTask(db, cookViewer, annTurnover.id, afterArrival)).status_line ?? '', /^Not marked done/)
+    assert.ok(!(await listTasks(db, cookViewer, { range: 'today', assignee: 'all' }, afterArrival)).sections.some(section => section.tasks.some(task => task.id === annTurnover.id)), 'a lapsed turnover is not open work')
+    // The installed app's empty Done: a cleaner is told to update, whatever the client.
+    const bare = await submit(new FormData())
+    assert.equal(bare.status, 422)
+    assert.deepEqual(await bare.json().then(body => [(body as { data: { code: string } }).data.code, (body as { message: string }).message]), ['CHECKLIST_REQUIRED', 'This home has a cleaning checklist. Update Blawby to complete it.'])
+    const refused = await submit(answers(false))
+    assert.equal(refused.status, 422)
+    assert.deepEqual((await refused.json() as { data: unknown }).data, { code: 'CHECKLIST_INCOMPLETE', field: 'checklist', missing: [{ id: bed, title: 'Bed made', missing: 'photo' }] })
+    assert.equal((await taskRow(`turnover:${ann.id}`))!.status, 'open')
+    const accepted = await submit(answers(true))
+    assert.equal(accepted.status, 200, await accepted.clone().text())
+    assert.equal((await taskRow(`turnover:${ann.id}`))!.status, 'done')
+    const annThread = (await teamThreads(cook)).find(item => item.booking_id === ann.id)!
+    const submitted = (await conversationPageFor(db, cook, annThread.id)).entries.filter(entry => entry.type === 'message' && !entry.automatic)
+    assert.equal(submitted.length, 1, 'one message carries the whole checklist')
+    const submittedCard = submitted[0]!.type === 'message' ? submitted[0]!.checklist! : null
+    assert.deepEqual(submittedCard && [submittedCard.summary, submittedCard.items[0]!.id, submittedCard.items[0]!.shortage, submittedCard.items.find(item => item.id === towels)!.required], ['3 of 4 done · 1 short', paper, 1, 4])
+    assert.match((await cyCard(at(day(9), '09:00')))!.line ?? '', /Ready · shortage flagged/)
+    assert.equal(submittedCard!.items.find(item => item.id === bed)!.photo?.id, submitted[0]!.type === 'message' ? submitted[0]!.photos[0]!.id : null)
+    // An owner closes a job past the checklist, and its message says so.
+    const reopened = await reopenTask(db, ownerViewer, annTurnover.id, { version: (await taskRow(`turnover:${ann.id}`))!.version })
+    await closeTask(db, ownerViewer, annTurnover.id, { status: 'done', env })
+    assert.equal(await db.prepare('SELECT body FROM messages WHERE dedupe_key = ?').bind(`task-closed:${annTurnover.id}:${reopened.version + 1}`).first<string>('body'), 'Done without the checklist')
+
+    // Section 8: the home's cleaners, first first. A clean goes to the first; Can't do it hands it to the next, then to the host.
+    for (const [id, name] of [['cara', 'Cara Clean'], ['dot', 'Dot Dust']]) {
+      await db.prepare('INSERT INTO user (id, name, email, "emailVerified", createdAt, updatedAt) VALUES (?, ?, ?, 1, 0, 0)').bind(id, name, `${id}@example.test`).run()
+      await db.prepare("INSERT INTO member (id, organizationId, userId, role, createdAt) VALUES (?, ?, ?, 'cleaner', 0)").bind(`m-${id}`, ORG, id).run()
+    }
+    const ownerPrincipal = principal('owner', 'owner,maintenance', 'm-owner')
+    for (const memberId of ['m-dot', 'm-cara']) await setListingAccess(db, env, ownerPrincipal, { listingId: cabin.id, memberId, access: 'tasks' })
+    const team = await setHomeCleaning(db, env, manager, cabin.id, { cleaner_ids: ['m-cara', 'm-dot'] })
+    assert.deepEqual([team.cleaner_ids, team.host.member_id], [['m-cara', 'm-dot'], 'm-cook'])
+    const cara = await taskViewer(principal('cara', 'cleaner')), dot = await taskViewer(principal('dot', 'cleaner'))
+    const eve = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'eve', check_in_date: day(20), check_out_date: day(22), adults: 1, guest_name: 'Eve', guest_email: 'eve@example.test', total_minor: 30_000 })
+    const fay = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'fay', check_in_date: day(23), check_out_date: day(24), adults: 1, guest_name: 'Fay', guest_email: 'fay@example.test', total_minor: 15_000 })
+    const eveClean = (await taskRow(`turnover:${eve.id}`))!
+    assert.equal(eveClean.assigned_member_id, 'm-cara', 'a new clean goes to the first cleaner')
+    assert.equal((await getTask(db, ownerViewer, eveClean.id)).confirmation?.label, 'Not confirmed yet')
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:30'))
+    await declineTask(db, cara, eveClean.id, { version: eveClean.version, reason: 'Away that week' })
+    assert.equal((await taskRow(`turnover:${eve.id}`))!.assigned_member_id, 'm-dot')
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:31'))
+    await declineTask(db, dot, eveClean.id, { version: (await taskRow(`turnover:${eve.id}`))!.version, reason: null })
+    assert.equal((await taskRow(`turnover:${eve.id}`))!.assigned_member_id, 'm-cook', 'with no cleaner left it reaches the host')
+    assert.deepEqual((await getTask(db, ownerViewer, eveClean.id)).confirmation?.declined, [{ name: 'Cara', reason: 'Away that week' }, { name: 'Dot', reason: null }])
+    // The host is alerted by the job's post in their own conversation, which says who could not do it and why.
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:31'))
+    const hostPost = await db.prepare(`SELECT m.id, m.body FROM messages m JOIN conversation_participants seat ON seat.conversation_id = m.conversation_id AND seat.user_id = 'cook'
+      WHERE m.author_kind = ? AND json_extract(m.payload_json, '$.key') = ? ORDER BY m.sequence DESC LIMIT 1`).bind(PLATFORM_MESSAGE_AUTHOR_KIND, jobKey(eveClean)).first<{ id: string; body: string }>()
+    assert.match(hostPost!.body, /Cara can’t do it: Away that week\.\nDot can’t do it\./)
+    assert.equal(await alerted(hostPost!.id), 1, 'the host is alerted')
+    // Accept makes a clean confirmed, by name.
+    const fayClean = (await taskRow(`turnover:${fay.id}`))!
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:32'))
+    await acceptTask(db, cara, fayClean.id, { version: fayClean.version })
+    assert.equal((await getTask(db, ownerViewer, fayClean.id)).confirmation?.label, 'Confirmed by Cara')
+    // Handed to someone else and back by hand, it is confirmed only once Cara accepts again.
+    for (const memberId of ['m-dot', 'm-cara']) await updateTask(db, ownerViewer, fayClean.id, { version: (await taskRow(`turnover:${fay.id}`))!.version, assigned_member_id: memberId })
+    assert.equal((await getTask(db, ownerViewer, fayClean.id)).confirmation?.label, 'Not confirmed yet')
+    await acceptTask(db, cara, fayClean.id, { version: (await taskRow(`turnover:${fay.id}`))!.version })
+    // Offered to all: the host holds it until the first cleaner to accept takes it; a race leaves exactly one holding it.
+    await setHomeCleaning(db, env, manager, cabin.id, { offer_cleans_to_all: true })
+    assert.equal((await taskRow(`turnover:${fay.id}`))!.accepted_member_id, 'm-cara', 'an accepted clean stays with its cleaner')
+    const gus = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'gus', check_in_date: day(26), check_out_date: day(27), adults: 1, guest_name: 'Gus', guest_email: 'gus@example.test', total_minor: 15_000 })
+    const gusClean = (await taskRow(`turnover:${gus.id}`))!
+    assert.deepEqual([gusClean.assigned_member_id, gusClean.claim_role], ['m-cook', 'cleaner'])
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:33'))
+    const race = await Promise.allSettled([acceptTask(db, cara, gusClean.id, { version: gusClean.version }), acceptTask(db, dot, gusClean.id, { version: gusClean.version })])
+    assert.equal(race.filter(result => result.status === 'fulfilled').length, 1)
+    assert.ok(race.some(result => result.status === 'rejected' && (result.reason as { data?: { code?: string } }).data?.code === 'TASK_CLAIM_UNAVAILABLE'))
+    const won = (await taskRow(`turnover:${gus.id}`))!
+    assert.ok(['m-cara', 'm-dot'].includes(won.assigned_member_id!) && won.accepted_member_id === won.assigned_member_id && won.claim_role === null)
+    // An offered clean handed to Ann by hand is hers, not offered: no one else can take it.
+    const hal = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'hal', check_in_date: day(28), check_out_date: day(29), adults: 1, guest_name: 'Hal', guest_email: 'hal@example.test', total_minor: 15_000 })
+    const halClean = (await taskRow(`turnover:${hal.id}`))!
+    assert.equal(halClean.claim_role, 'cleaner')
+    await updateTask(db, ownerViewer, halClean.id, { version: halClean.version, assigned_member_id: 'm-cara' })
+    const handedHal = (await taskRow(`turnover:${hal.id}`))!
+    assert.deepEqual([handedHal.claim_role, handedHal.accepted_member_id, (await getTask(db, ownerViewer, halClean.id)).confirmation?.label], [null, null, 'Not confirmed yet'])
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:34'))
+    await assert.rejects(acceptTask(db, dot, halClean.id, { version: handedHal.version }), { status: 404 })
   } finally {
     await runtime.dispose()
   }

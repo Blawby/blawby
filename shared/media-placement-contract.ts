@@ -53,6 +53,8 @@ export const INDEXED_MEDIA_PLACEMENT_SLOTS = [
   { ownerType: 'content_block', runtime: /^images\.\d+$/, sqlGlob: 'images.[0-9]*' },
   { ownerType: 'content_block', runtime: /^features\.\d+\.icon$/, sqlGlob: 'features.[0-9]*.icon' },
   { ownerType: 'content_block', runtime: /^people\.\d+\.image$/, sqlGlob: 'people.[0-9]*.image' },
+  // A turnover checklist item's reference photo: how it should look. Staff only, never a listing picture.
+  { ownerType: 'product', runtime: /^turnover_checklist\.[A-Za-z0-9_-]{1,64}$/, sqlGlob: 'turnover_checklist.*' },
 ] as const satisfies ReadonlyArray<{ ownerType: MediaPlacementOwnerType; runtime: RegExp; sqlGlob: string }>
 
 const ORDERED_PLACEMENTS = new Set([

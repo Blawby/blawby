@@ -9,7 +9,7 @@ import { resolveRequestedOrganization } from '~/server/utils/dashboard-context'
 import {
   buildStripeSubscriptionMetadata, isStripeGa4IntentAction, type StripeGa4IntentAction, } from '~/shared/stripe-ga4'
 import { recordStripeGa4Intent } from '~/server/utils/stripe-ga4-intents'
-import { readAnalyticsConsent } from '~/server/utils/ga4-delivery'
+import { readAnalyticsConsent } from '~/utils/zaraz-consent'
 import { withdrawStripeGaIdentifiers } from '~/server/utils/stripe-ga4'
 import { SESSION_COOKIE, isCanonicalEventId } from '~/server/utils/pageview-tracking'
 import { queryFirst } from '~/server/db'

@@ -432,7 +432,8 @@ export function mediaPlacementsQuery(input: {
      WHERE mp.organization_id = ${typeof input.organizationId === 'string' ? '?' : input.organizationId.sql}
        AND ((mp.owner_type = ${typeof input.ownerType === 'string' ? '?' : input.ownerType.sql} AND mp.owner_id IN (${owners.sql}))
          ${input.includeOrganizationFallback ? "OR (mp.owner_type = 'organization' AND mp.owner_id = mp.organization_id AND mp.slot = 'social_share')" : ''})
-       ${input.slot ? 'AND mp.slot = ?' : ''}
+       -- A turnover checklist's reference photos are read only by the checklist (server/domain/turnover-checklists.ts).
+       ${input.slot ? 'AND mp.slot = ?' : "AND mp.slot NOT GLOB 'turnover_checklist.*'"}
        AND (mp.status = 'active' ${input.includePendingSocialCard ? "OR (mp.slot = 'social_card' AND mp.status = 'pending')" : ''}) AND ma.status = 'active'
        -- A private document (a booking's PDF, a listing's template) is read only through its owner's route, never as media.
        AND ma.public_url IS NOT NULL
@@ -626,6 +627,9 @@ export function listMediaAssetsQuery(
   }
   // A booking's private document belongs to that booking, never the media library.
   conditions.push(`(ma.r2_key IS NULL OR ma.r2_key NOT LIKE 'private/%')`)
+  // A turnover checklist's reference photo is the cleaning team's, never the website's.
+  conditions.push(`NOT EXISTS (SELECT 1 FROM media_placements staff WHERE staff.asset_id = ma.id AND staff.organization_id = ma.organization_id
+    AND staff.owner_type = 'product' AND staff.slot GLOB 'turnover_checklist.*')`)
   if (opts.kind) { conditions.push(`ma.kind = ?`); params.push(opts.kind) }
   if (opts.search) { conditions.push(`ma.file_name LIKE ? ESCAPE '\\'`); params.push(`%${opts.search.replace(/[\\%_]/g, '\\$&')}%`) }
   if (opts.ownerType && opts.ownerId) {

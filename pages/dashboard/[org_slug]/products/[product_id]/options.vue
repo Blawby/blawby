@@ -25,8 +25,19 @@
           </div>
           <UInput v-model="option.values" :aria-label="`${option.name || 'Option'} values`" placeholder="Ruby reds, Celadon, Tenmoku" class="mt-3 w-full" />
           <p class="mt-1 text-sm text-muted">Separate values with commas.</p>
+          <!-- Shopify's option-value swatch: buyers pick a colour value by its colour; two colours show half and half, for a pair. -->
+          <div v-if="valuesOf(option).length" class="mt-4 space-y-2">
+            <p class="text-sm text-muted">Swatches, optional: one colour, or two for a pair.</p>
+            <div v-for="value in valuesOf(option)" :key="value" class="flex items-center gap-3">
+              <span class="size-7 shrink-0 rounded-full ring-1 ring-default" :style="option.swatches[value] ? { background: swatchBackground(option.swatches[value]!) } : undefined" />
+              <span class="min-w-0 flex-1 truncate text-sm text-highlighted">{{ value }}</span>
+              <input type="color" class="size-8 cursor-pointer rounded" :aria-label="`${value} colour`" :value="option.swatches[value]?.[0] ?? '#000000'" @input="setSwatch(option, value, 0, $event)">
+              <input type="color" class="size-8 cursor-pointer rounded" :class="{ 'opacity-30': !option.swatches[value]?.[1] }" :aria-label="`${value} second colour`" :value="option.swatches[value]?.[1] ?? '#ffffff'" @input="setSwatch(option, value, 1, $event)">
+              <UButton v-if="option.swatches[value]" color="neutral" variant="ghost" size="sm" icon="i-lucide-x" :aria-label="`Remove ${value} swatch`" @click="delete option.swatches[value]" />
+            </div>
+          </div>
         </div>
-        <UButton v-if="options.length < 3" color="neutral" variant="link" class="px-0" @click="options.push({ name: '', values: '' })">Add option, such as Size or Colour</UButton>
+        <UButton v-if="options.length < 3" color="neutral" variant="link" class="px-0" @click="options.push({ name: '', values: '', swatches: {} })">Add option, such as Size or Colour</UButton>
       </section>
 
       <section class="mt-8">
@@ -62,7 +73,7 @@
 import { productEditorKey } from '~/components/dashboard/ProductEditorPage.vue'
 import SettingRow from '~/components/dashboard/SettingRow.vue'
 import { applicationFetch } from '~/composables/dashboardFetch'
-import { optionCombinations, variantTitle, type ProductOption } from '~/shared/goods'
+import { optionCombinations, swatchBackground, variantTitle, type ProductOption } from '~/shared/goods'
 import { majorAmountToMinor, minorAmountToMajor, selectPrice } from '~/shared/prices'
 import { getErrorMessage } from '~/utils/errors'
 import { isRecord } from '~/utils/api-clients'
@@ -77,7 +88,14 @@ watchEffect(() => { if (!stockLocationId.value || !locations.value.some(location
 
 // `price_id` and `opened_price` are the price as the page opened: an unchanged price is not written, an edited one only onto that same offer.
 interface Row { key: string; id: string | null; option_values: string[]; title: string; price: string; price_id: string | null; opened_price: string; sku: string; available: string; media_asset_id: string | undefined }
-const options = ref<Array<{ name: string; values: string }>>([])
+interface OptionDraft { name: string; values: string; swatches: Record<string, string[]> }
+const options = ref<OptionDraft[]>([])
+const valuesOf = (option: OptionDraft) => [...new Set(option.values.split(',').map(value => value.trim()).filter(Boolean))]
+function setSwatch(option: OptionDraft, value: string, position: 0 | 1, event: Event) {
+  const color = (event.target as HTMLInputElement).value.toLowerCase()
+  const current = option.swatches[value] ?? []
+  option.swatches[value] = position === 0 ? [color, ...current.slice(1)] : [current[0] ?? color, color]
+}
 const tracked = ref(false)
 const madeToOrder = ref(false)
 const rows = ref<Row[]>([])
@@ -97,7 +115,12 @@ async function loadLevels() {
   levelsError.value = ''
 }
 
-const parsedOptions = computed<ProductOption[]>(() => options.value.map(option => ({ name: option.name.trim(), values: [...new Set(option.values.split(',').map(value => value.trim()).filter(Boolean))] })).filter(option => option.name && option.values.length))
+const parsedOptions = computed<ProductOption[]>(() => options.value.map(option => {
+  const values = valuesOf(option)
+  // A swatch follows its value: one renamed or removed takes its swatch with it.
+  const swatches = Object.fromEntries(Object.entries(option.swatches).filter(([value]) => values.includes(value)))
+  return { name: option.name.trim(), values, ...(Object.keys(swatches).length ? { swatches } : {}) }
+}).filter(option => option.name && option.values.length))
 const neutralPrice = (variant: NonNullable<typeof product.value>['variants'][number]) => selectPrice(variant.prices, { currency: p.currency, location_id: null })
 
 function savedRow(optionValues: string[]): Row {
@@ -126,7 +149,7 @@ watch([stockLocationId, levels], () => { rows.value = rows.value.map(row => ({ .
 const openedSwitches = { tracked: false, madeToOrder: false }
 function reset() {
   error.value = ''
-  options.value = (product.value?.options ?? []).map(option => ({ name: option.name, values: option.values.join(', ') }))
+  options.value = (product.value?.options ?? []).map(option => ({ name: option.name, values: option.values.join(', '), swatches: structuredClone(option.swatches ?? {}) }))
   tracked.value = product.value?.variants.some(variant => variant.inventory_tracked) ?? false
   madeToOrder.value = product.value?.variants.some(variant => variant.inventory_policy === 'continue') ?? false
   Object.assign(openedSwitches, { tracked: tracked.value, madeToOrder: madeToOrder.value })

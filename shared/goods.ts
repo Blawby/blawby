@@ -7,6 +7,12 @@
  */
 import { z } from 'zod'
 
+export const cartLinesSchema = z.array(z.object({
+  product_variant_id: z.string().min(1),
+  quantity: z.number().int().min(1).max(99),
+}).strict()).max(50).refine(lines => new Set(lines.map(line => line.product_variant_id)).size === lines.length, 'Each cart variant must appear once')
+export type CartLine = z.infer<typeof cartLinesSchema>[number]
+
 export const PRODUCT_OPTION_LIMITS = { options: 3, values: 100, name: 50, value: 100, variants: 100 } as const
 export const INVENTORY_POLICIES = ['deny', 'continue'] as const
 export type InventoryPolicy = typeof INVENTORY_POLICIES[number]
@@ -19,9 +25,14 @@ export type OrderStatus = typeof ORDER_STATUSES[number]
 
 const trimmed = (max: number) => z.string().trim().min(1).max(max)
 
+/** A swatch's colours, as Shopify's option-value swatch: one colour, or two shown half and half (a glaze pair, a two-tone shirt). */
+export const swatchColorsSchema = z.array(z.string().regex(/^#[0-9a-f]{6}$/u, 'Use a colour such as #1f4e8c')).min(1).max(2)
+
 export const productOptionSchema = z.object({
   name: trimmed(PRODUCT_OPTION_LIMITS.name),
   values: z.array(trimmed(PRODUCT_OPTION_LIMITS.value)).min(1).max(PRODUCT_OPTION_LIMITS.values),
+  /** A value's swatch, keyed by the value it shows. A value without one is shown by name. */
+  swatches: z.record(z.string(), swatchColorsSchema).optional(),
 }).strict()
 export type ProductOption = z.infer<typeof productOptionSchema>
 
@@ -38,6 +49,9 @@ export const productOptionsSchema = z.array(productOptionSchema).max(PRODUCT_OPT
       if (values.has(key)) ctx.addIssue({ code: 'custom', path: [index, 'values', valueIndex], message: `"${value}" is listed twice in ${option.name}` })
       values.add(key)
     })
+    for (const value of Object.keys(option.swatches ?? {})) {
+      if (!option.values.includes(value)) ctx.addIssue({ code: 'custom', path: [index, 'swatches', value], message: `"${value}" has a swatch but is not a value of ${option.name}` })
+    }
   })
 })
 
@@ -56,6 +70,11 @@ export function optionCombinations(options: readonly ProductOption[]): string[][
   if (count > PRODUCT_OPTION_LIMITS.variants) throw new Error(`These options make ${count} variants; at most ${PRODUCT_OPTION_LIMITS.variants} are allowed`)
   const combinations = options.reduce<string[][]>((rows, option) => rows.flatMap(row => option.values.map(value => [...row, value])), [[]])
   return options.length ? combinations : []
+}
+
+/** A swatch's fill: one colour, or two split down the middle. */
+export function swatchBackground(colors: readonly string[]): string {
+  return colors.length === 2 ? `linear-gradient(90deg, ${colors[0]} 50%, ${colors[1]} 50%)` : colors[0]!
 }
 
 /** The variant's name as Shopify titles it: its option values joined. */

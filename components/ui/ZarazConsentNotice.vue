@@ -17,8 +17,8 @@
         <a :href="privacyUrl">{{ t('legal.analytics_notice_link') }}</a>.
       </p>
       <div class="consent-actions">
-        <button type="button" class="consent-choice consent-accept" data-consent-value="true">{{ t('legal.accept') }}</button>
         <button type="button" class="consent-choice consent-reject" data-consent-value="false">{{ t('legal.reject') }}</button>
+        <button type="button" class="consent-choice consent-accept" data-consent-value="true">{{ t('legal.accept') }}</button>
       </div>
     </div>
   </div>

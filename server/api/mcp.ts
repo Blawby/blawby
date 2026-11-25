@@ -220,6 +220,7 @@ function createTenantMcpServer(ctx: McpRequestContext): McpServer {
       content: [
         { type: "text" as const, text: failed ? structuredJson : modelText },
         ...(failed && modelText !== structuredJson ? [{ type: "text" as const, text: modelText }] : []),
+        ...(!failed && isRender && result.images ? result.images.map((image: { data: string; mimeType: string }) => ({ type: "image" as const, data: image.data, mimeType: image.mimeType })) : []),
       ],
       ...(isRender && result.privateMeta ? { _meta: result.privateMeta } : {}),
     };

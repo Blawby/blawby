@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type Stripe from 'stripe'
 import { buildStripePurchaseValue, buildStripeRefundValue, classifyStripeInvoicePurchase } from '../../server/utils/stripe-ga4.ts'
-import { readAnalyticsConsent } from '../../server/utils/ga4-delivery.ts'
+import { readAnalyticsConsent } from '../../utils/zaraz-consent.ts'
 import { ga4Items, projectConversionToGa4 } from '../../utils/ga4-projection.ts'
 
 const invoice = (overrides: Record<string, unknown> = {}) => ({

@@ -27,25 +27,44 @@ export async function taskReadResponse(event: H3Event) {
   return jsonResponse({ task: await getTask(db, await viewer(), routeId(event, 'task_id')) }, { headers: { 'cache-control': 'private, no-store' } })
 }
 
+/**
+ * Done or Skip. JSON `{ note?, checklist? }`, or multipart with `note`, `photos`, a `checklist`
+ * JSON field and one `photo:<item id>` file per checklist item that carries a photo.
+ */
 export async function taskCloseResponse(event: H3Event, status: 'done' | 'skipped') {
   const { db, env, viewer } = await taskRouteContext(event)
   const multipart = event.req.headers.get('content-type')?.startsWith('multipart/form-data') ?? false
+  const invalidPhoto = () => new HTTPError({ statusCode: 422, message: 'Each photo must be a file of at most 10 MB. Send no more than ten photos besides one per checklist item.', data: { code: 'INVALID_PHOTO', field: 'photos' } })
+  const toPhoto = async (file: File): Promise<MessagePhoto> => ({ bytes: new Uint8Array(await file.arrayBuffer()), filename: file.name })
   let note: unknown
+  let checklist: unknown
   let photos: MessagePhoto[] = []
+  const checklistPhotos = new Map<string, MessagePhoto>()
   if (multipart) {
     const form = await event.req.formData()
-    if ([...form.keys()].some(key => key !== 'note' && key !== 'photos') || form.getAll('note').length > 1) {
-      throw new HTTPError({ statusCode: 400, message: 'Send one note and its photos', data: { code: 'INVALID_BODY', field: 'body' } })
+    const keys = [...form.keys()]
+    if (keys.some(key => key !== 'note' && key !== 'photos' && key !== 'checklist' && !key.startsWith('photo:'))
+      || form.getAll('note').length > 1 || form.getAll('checklist').length > 1) {
+      throw new HTTPError({ statusCode: 400, message: 'Send one note, its photos, and one checklist with a photo per item', data: { code: 'INVALID_BODY', field: 'body' } })
     }
     const files = form.getAll('photos')
-    if (files.length > MAX_MESSAGE_PHOTOS || files.some(file => !(file instanceof File) || file.size > MAX_IMAGE_BYTES)) {
-      throw new HTTPError({ statusCode: 422, message: 'Each photo must be a file of at most 10 MB. Send no more than ten photos.', data: { code: 'INVALID_PHOTO', field: 'photos' } })
+    if (files.length > MAX_MESSAGE_PHOTOS || files.some(file => !(file instanceof File) || file.size > MAX_IMAGE_BYTES)) throw invalidPhoto()
+    photos = await Promise.all((files as File[]).map(toPhoto))
+    for (const key of new Set(keys.filter(key => key.startsWith('photo:')))) {
+      const [file, ...more] = form.getAll(key)
+      if (more.length || !(file instanceof File) || file.size > MAX_IMAGE_BYTES) throw invalidPhoto()
+      checklistPhotos.set(key.slice('photo:'.length), await toPhoto(file))
     }
-    photos = await Promise.all((files as File[]).map(async file => ({ bytes: new Uint8Array(await file.arrayBuffer()), filename: file.name })))
     note = form.get('note')
+    const answers = form.get('checklist')
+    if (answers !== null) {
+      if (typeof answers !== 'string') throw new HTTPError({ statusCode: 422, message: 'checklist must be JSON text', data: { code: 'INVALID_CHECKLIST', field: 'checklist' } })
+      try { checklist = JSON.parse(answers) } catch { throw new HTTPError({ statusCode: 422, message: 'checklist must be JSON text', data: { code: 'INVALID_CHECKLIST', field: 'checklist' } }) }
+    }
   } else {
-    const body = await readStrictBody<{ note?: string | null }>(event, { note: 'nullable-string' })
+    const body = await readStrictBody<{ note?: string | null; checklist?: unknown }>(event, { note: 'nullable-string', checklist: 'unknown' })
     note = body.note
+    checklist = body.checklist
   }
-  return jsonResponse({ task: await closeTask(db, await viewer(), routeId(event, 'task_id'), { status, env, note, photos }) })
+  return jsonResponse({ task: await closeTask(db, await viewer(), routeId(event, 'task_id'), { status, env, note, photos, checklist, checklistPhotos }) })
 }

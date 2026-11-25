@@ -292,7 +292,10 @@ base nightly price. Property type, rooms, amenities from
 `shared/stay-listing.ts` and cancellation policies are public and appear in its
 `Accommodation` data. The arrival guide (check-in method, wifi, directions,
 house manual, checkout) is private to managers and assigned members. Web, iPhone
-and MCP edit the same facts.
+and MCP edit the same facts. Beside it, the turnover checklist is one leaf: the
+items a clean must leave, in order, each confirmed or counted (a count may follow
+the guests arriving next) and some with a photo and a reference photo. Done on
+that home's turnover asks for it, and only owners and admins close past it.
 
 A stay opens at `bookings/:bookingId`. A host-created stay records offline
 payments and is not blocked by closed nights or minimum stays. A channel stay
@@ -694,3 +697,12 @@ The importer invents no payment, sends no confirmation and collects nothing.
 Verification compares saved occupancy with connected Airbnb availability, names
 every mismatch, and keeps the handover open until they pass. The host pauses and
 reopens listings on Airbnb; the wizard does not.
+
+A Products block can use the Recently viewed source instead of selected products
+or a collection. The page owns its placement and heading, edited through the
+existing block settings and content-block operation. It shows the visitor's
+available cart items first, then recently viewed offerings, only after consent.
+Home pages place it below the hero unless their authored content places one;
+product pages include it at the bottom
+unless their authored content already places one. Product records, prices,
+publication and inventory remain the sources of the cards.

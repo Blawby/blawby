@@ -1,7 +1,6 @@
-import { parseCookie } from 'cookie-es'
 import type { DbClient } from '~/server/db'
 import { execute, queryFirst } from '~/server/db'
-import { ZARAZ_ANALYTICS_PURPOSE_ID, ZARAZ_CONSENT_COOKIE_NAME } from '~/utils/zaraz-consent'
+import { readAnalyticsConsent } from '~/utils/zaraz-consent'
 import { parseGaClientId, parseGaSessionId } from '~/utils/ga-cookies'
 import type { Ga4Projection } from '~/utils/ga4-projection'
 
@@ -74,19 +73,6 @@ export async function recordZarazPageviewReceipt(db: DbClient, input: { eventId:
     WHERE id = ? AND organization_id = ? AND session_id = ? AND kind = 'pageview' AND json_extract(payload_json, '$.ga4_delivery') IS NULL`,
   [JSON.stringify({ transport: 'zaraz', status: input.status } satisfies Ga4Delivery), input.eventId, input.organizationId, input.sessionId])
   return result.meta.changes === 1
-}
-
-/**
- * The visitor's own answer to the analytics purpose, from their Zaraz consent cookie. `absent`
- * means they have not answered (or the cookie is unreadable): that is not consent.
- */
-export function readAnalyticsConsent(cookieHeader: string): 'accepted' | 'rejected' | 'absent' {
-  const raw = parseCookie(cookieHeader)[ZARAZ_CONSENT_COOKIE_NAME]
-  if (!raw) return 'absent'
-  let purposes: unknown
-  try { purposes = JSON.parse(raw) } catch { return 'absent' }
-  if (typeof purposes !== 'object' || purposes === null) return 'absent'
-  return (purposes as Record<string, unknown>)[ZARAZ_ANALYTICS_PURPOSE_ID] === true ? 'accepted' : 'rejected'
 }
 
 /** The visitor's consent and GA identity, read from their own request. Only the consent and `_ga` cookies are looked at. */

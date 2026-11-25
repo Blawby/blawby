@@ -453,7 +453,8 @@ export async function loadPublicProductSessions(
 /**
  * Approved reviews of this product at the location the page is for: the ones
  * written about the product (a booking review names its product), and the
- * place's Google reviews, which are about the location and name no product.
+ * place's Google reviews for visits. Physical goods only show reviews that
+ * name the product; a studio visit is not a review of a bowl bought there.
  * A review of a different product at the same location is not shown. Google
  * reviews carry no title, so a title is optional. Newest written first.
  */
@@ -467,12 +468,12 @@ export async function loadPublicProductReviews(
      FROM reviews
      WHERE organization_id = ? AND status = 'approved'
        AND location_id IS ?
-       AND (product_id = ? OR (product_id IS NULL AND source = 'google_places'))
+       AND (product_id = ? OR (? != 'item' AND product_id IS NULL AND source = 'google_places'))
        AND author_name IS NOT NULL AND trim(author_name) <> ''
        AND content IS NOT NULL AND trim(content) <> ''
      ORDER BY COALESCE(original_review_date, created_at) DESC, id DESC
      LIMIT 50
-  `, [detail.organization.id, detail.location?.id ?? null, detail.product.id])
+  `, [detail.organization.id, detail.location?.id ?? null, detail.product.id, detail.product.kind])
   const protectedLocation = detail.organization.vertical === 'lodging' || (detail.location !== null && detail.location.stay_map_sharing !== null)
   return rows.map(row => projectPublicLocationReview(row, protectedLocation))
 }

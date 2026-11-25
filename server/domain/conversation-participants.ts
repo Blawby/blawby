@@ -6,6 +6,8 @@ import { publishAccessInvalidation, publishConversationEvent, publishDashboardIn
 import { conversationAccessDenied, conversationMemberSql, conversationProductSql, CURRENT_GUEST_SQL } from '~/server/domain/conversations'
 import { hashIdentifier } from '~/server/utils/hourly-rate-limit'
 import type { MemberAccessPrincipal } from '~/server/utils/member-access'
+import { rehomeTurnoversQuery } from '~/server/domain/tasks'
+import { changedTaskIds, publishChangedJobs, type EventsEnv } from '~/server/events'
 
 const OWNER_ROLE = "((',' || replace(m.role, ' ', '') || ',') LIKE '%,owner,%')"
 const GUEST_THREAD = "c.kind IN ('contact', 'booking')"
@@ -105,7 +107,7 @@ export function initialListingParticipants(organizationId: string, conversationI
   return insertListingParticipants(organizationId, { query: 'c.id = ?', params: [conversationId] })
 }
 
-export async function setListingAccess(db: DbClient, env: GuestInboxPublicationEnv, principal: MemberAccessPrincipal, input: { listingId: string; memberId: string; access: StoredListingAccess | null }) {
+export async function setListingAccess(db: DbClient, env: GuestInboxPublicationEnv & EventsEnv, principal: MemberAccessPrincipal, input: { listingId: string; memberId: string; access: StoredListingAccess | null }) {
   const { organizationId, userId } = principal
   const { listingId, memberId } = input
   if (input.access !== null && input.access !== 'messaging' && !staffAccessWritesEnabled(principal.env)) {
@@ -132,7 +134,7 @@ export async function setListingAccess(db: DbClient, env: GuestInboxPublicationE
   }
   const grant = [organizationId, input.listingId, input.memberId]
   const selector: BatchQuery = { query: `${listingOfConversation} = ?`, params: [input.listingId] }
-  await executeBatch(db, [guard, {
+  const results = await executeBatch(db, [guard, {
     query: "UPDATE conversation_participants SET role = NULL, host_listing_id = NULL WHERE organization_id = ? AND host_listing_id = ? AND user_id = ? AND role = 'member'",
     params: [organizationId, listingId, subject.user_id],
   }, input.access ? {
@@ -142,7 +144,10 @@ export async function setListingAccess(db: DbClient, env: GuestInboxPublicationE
   } : {
     query: 'DELETE FROM listing_message_members WHERE organization_id = ? AND listing_id = ? AND member_id = ?',
     params: grant,
-  }, ...reconcileGuestListingParticipants(organizationId, selector)], { operation: 'Change listing access' })
+  }, ...reconcileGuestListingParticipants(organizationId, selector),
+  // A home's cleaners changed: its open cleans that have not started go to whoever cleans it now (#2091).
+  rehomeTurnoversQuery(organizationId, listingId, new Date().toISOString())], { operation: 'Change listing access' })
+  await publishChangedJobs(env, organizationId, changedTaskIds(results))
   await publishAccessInvalidation(env, { organizationId })
   return { listing_id: listingId, member_id: memberId, access: input.access }
 }

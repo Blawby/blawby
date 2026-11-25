@@ -41,13 +41,14 @@ import TenantMediaTextBlock from '~/components/tenant/TenantMediaTextBlock.vue'
 import TenantButtonGroupBlock from '~/components/tenant/TenantButtonGroupBlock.vue'
 import TenantContactFormBlock from '~/components/tenant/TenantContactFormBlock.vue'
 
-type BlockPresentation = Component<{ block: TenantPageBlock, page: PublicTenantPage }>
+type BlockPresentation = Component<{ block?: TenantPageBlock, page?: PublicTenantPage }>
 
 const feedOrBlock = (component: unknown) => component as BlockPresentation
 
 const PRESENTATIONS: Readonly<Record<string, BlockPresentation>> = {
   // Blawby's own platform marketing site.
   'platform:hero': PlatformMarketingHero,
+  'platform:product_grid': TenantProductGridBlock,
   'platform:button_group': PlatformProductNavigation,
   'platform:feature_grid': PlatformFeatureCards,
   'platform:comparison': PlatformComparison,

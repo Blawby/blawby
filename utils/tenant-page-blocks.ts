@@ -609,11 +609,13 @@ export const TENANT_PAGE_BLOCK_REGISTRY: Record<TenantPageBlockType, TenantPageB
     page_ids: { kind: 'reference', label: 'Pages', required: true, min: 1, translatable: false, section: 'pages', reference: 'page' },
   }, { allowedPageTypes: ['custom', 'recipe', 'system'] }),
 
-  product_grid: blockDefinitionWithMetadata('product_grid', 'Products', 'i-lucide-package', 'Cards linking to products.', ['home', 'about', 'pricing', 'custom', 'services', 'menu', 'order', 'products'], {
+  product_grid: blockDefinitionWithMetadata('product_grid', 'Products', 'i-lucide-package', 'Cards linking to products or the visitor’s recently viewed products.', ALL_RECIPES, {
     title: text('Section title', { section: 'settings' }),
     description: prose('Description', { section: 'settings' }),
-    collection_id: { kind: 'reference', label: 'Collection', translatable: false, section: 'products', reference: 'collection' },
-    product_ids: { kind: 'reference', label: 'Products', translatable: false, section: 'products', reference: 'product' },
+    source: { kind: 'enum', label: 'Products to show', translatable: false, section: 'settings', default: 'manual',
+      options: [{ value: 'manual', label: 'Selected products or collection' }, { value: 'recently_viewed', label: 'Recently viewed and items left in the cart' }] },
+    collection_id: { kind: 'reference', label: 'Collection', translatable: false, section: 'products', reference: 'collection', availableWhen: { field: 'source', equals: ['manual'] } },
+    product_ids: { kind: 'reference', label: 'Products', translatable: false, section: 'products', reference: 'product', availableWhen: { field: 'source', equals: ['manual'] } },
   }, { allowedPageTypes: ['custom', 'recipe', 'system'] }),
 
   location_grid: blockDefinitionWithMetadata('location_grid', 'Locations', 'i-lucide-map-pin', 'Cards linking to locations.', ['home', 'about', 'contact', 'custom'], {

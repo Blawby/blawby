@@ -117,7 +117,7 @@ test('the inbox view model matches contracts/inbox', { timeout: 120_000 }, async
     name: 'inbox-contracts', compatibilityDate: '2024-11-01',
     manifest: { mainModule: 'index.mjs', modules: { 'index.mjs': { type: 'esm', contents: 'export class Hub { fetch() { return new Response(null, { status: 204 }) } } export default { fetch() { return new Response("ok") } }' } } },
     exports: { Hub: { type: 'durable-object', storage: 'sqlite' } },
-    env: { DB: { type: 'd1' }, ORGANIZATION_CACHE: { type: 'kv' }, MEDIA_BUCKET: { type: 'r2' }, GUEST_INBOX_HUBS: { type: 'durable-object', worker: 'inbox-contracts', exportName: 'Hub' } },
+    env: { DB: { type: 'd1' }, ORGANIZATION_CACHE: { type: 'kv' }, MEDIA_BUCKET: { type: 'r2' }, PRIVATE_MEDIA_BUCKET: { type: 'r2' }, GUEST_INBOX_HUBS: { type: 'durable-object', worker: 'inbox-contracts', exportName: 'Hub' } },
   } }] })
   try {
     const db = await runtime.getD1Database('DB')
@@ -192,7 +192,7 @@ test('the inbox view model matches contracts/inbox', { timeout: 120_000 }, async
       payload: { guest: { name: 'Jo Park', email: 'jo@example.test', phone: null, locale: 'en' }, subject: null, consent_at: null, ip_hash: null, source: null, route_context: null, suggested_summary: null, agent_metadata: null, answers: [] },
       created_at: quiet }, undefined, { words: 'Do you allow dogs at 74 D?' }))
 
-    const thread = await conversationPageFor(db, principal, threadId, { before: null, limit: 40 }, new Date(NOW))
+    const thread = await conversationPageFor(db, env, principal, threadId, { before: null, limit: 40 }, new Date(NOW))
     assert.notEqual(thread.conversation.kind, 'team')
     if (thread.conversation.kind === 'team') throw new Error('Expected the Airbnb stay conversation')
     // Every item type the clients draw is in the contract thread.
@@ -203,7 +203,7 @@ test('the inbox view model matches contracts/inbox', { timeout: 120_000 }, async
     assert.ok(!JSON.stringify(thread).includes('In winter, can we park on the street?'))
     assert.ok(!JSON.stringify(thread).includes('Enjoy your stay!'))
 
-    const opened = await conversationPageFor(db, principal, siteThreadId, { before: null, limit: 40 }, new Date(NOW))
+    const opened = await conversationPageFor(db, env, principal, siteThreadId, { before: null, limit: 40 }, new Date(NOW))
     assert.deepEqual(opened.entries.flatMap(item => item.type === 'message' ? [[item.side, item.body?.split('\n')[0]]] : []),
       [['guest', '74 D · Sky from Fri, Nov 20 to Mon, Nov 23 for 2 guests. Ana Ruiz, +1 303 555 0123.'], ['guest', 'We arrive late, around 9 PM.']])
     const current = await memberInbox(db, ORG, principal.userId, { limit: 100, offset: 0, mailbox: 'current', locationId: null, type: null, kind: null, q: null, unreadOnly: false })
@@ -218,7 +218,7 @@ test('the inbox view model matches contracts/inbox', { timeout: 120_000 }, async
     assert.deepEqual(thread.conversation.participants.filter(person => person.role === 'guest'), [])
     await check('thread', thread)
     await check('opening', opened)
-    await check('details', await getConversationDetails(db, (await resolveConversationAccess(db, OWNER, threadId)).conversation, OWNER, 'member', new Date(NOW)))
+    await check('details', await getConversationDetails(db, env, (await resolveConversationAccess(db, OWNER, threadId)).conversation, OWNER, 'member', new Date(NOW)))
     await check('suggestions', suggestions)
   } finally {
     globalThis.fetch = realFetch

@@ -299,8 +299,8 @@ export async function handleBookingsTools(ctx: McpExecutorContext): Promise<unkn
       })
     }
     // The agreement read back is the one this call sent; a later send in between is reported, not shown as this one.
-    const { agreement } = await readBookingAgreement(db, conversation, { userId: organization.userId, verifiedEmail: null, canManage: true }, actor)
-    if (!agreement?.url.endsWith(`/agreements/${encodeURIComponent(sent.messageId)}`)) throw new HTTPError({ statusCode: 409, message: 'Another document was sent for this booking before this one could be read back', data: { code: 'AGREEMENT_CHANGED', field: 'booking_id' } })
+    const { agreement } = await readBookingAgreement(env, conversation, { userId: organization.userId, verifiedEmail: null, canManage: true, guest: false }, actor)
+    if (agreement?.document_id !== sent.messageId) throw new HTTPError({ statusCode: 409, message: 'Another document was sent for this booking before this one could be read back', data: { code: 'AGREEMENT_CHANGED', field: 'booking_id' } })
     return { sent: true, agreement }
   }
   const statusActions: Record<string, 'confirm' | 'reject' | 'cancel'> = {
@@ -331,8 +331,8 @@ export async function handleBookingsTools(ctx: McpExecutorContext): Promise<unkn
       if (error instanceof HTTPError && error.statusCode === 404) return false
       throw error
     })
-    const read = await readBookingAgreement(db, { id: row.conversation_id, organization_id: organizationId, booking_id: id, kind: 'booking' },
-      { userId: organization.userId, verifiedEmail: null, canManage }, await agreementActor())
+    const read = await readBookingAgreement(env, { id: row.conversation_id, organization_id: organizationId, booking_id: id, kind: 'booking' },
+      { userId: organization.userId, verifiedEmail: null, canManage, guest: false }, await agreementActor())
     return { agreement: read.agreement, deposit: read.deposit, ...(read.available_signers ? { agreement_signers: read.available_signers } : {}) }
   }
   if (access && toolName === 'get_product_booking') return { booking_id: id, unit: 'nights', record: await getStay(db, access, id), ...await agreementFields() }

@@ -21,7 +21,7 @@ export const MEDIA_PLACEMENT_SLOTS = {
   review_request: ['gallery'],
   // The photos a message in a conversation carries, in the order they were sent;
   // `agreement` is the PDF a booking's agreement message stored or sent for signing.
-  message: ['attachments', 'agreement'],
+  message: ['attachments', 'agreement', 'checklist_references'],
   stay_photo_room: ['photo'],
   stay_home_accessibility: [],
   stay_room_accessibility: [],
@@ -54,13 +54,41 @@ export const INDEXED_MEDIA_PLACEMENT_SLOTS = [
   { ownerType: 'content_block', runtime: /^features\.\d+\.icon$/, sqlGlob: 'features.[0-9]*.icon' },
   { ownerType: 'content_block', runtime: /^people\.\d+\.image$/, sqlGlob: 'people.[0-9]*.image' },
   // A turnover checklist item's reference photo: how it should look. Staff only, never a listing picture.
-  { ownerType: 'product', runtime: /^turnover_checklist\.[A-Za-z0-9_-]{1,64}$/, sqlGlob: 'turnover_checklist.*' },
-] as const satisfies ReadonlyArray<{ ownerType: MediaPlacementOwnerType; runtime: RegExp; sqlGlob: string }>
+  { ownerType: 'product', runtime: /^turnover_checklist\.[A-Za-z0-9_-]{1,64}$/, sqlGlob: 'turnover_checklist.*', private: true },
+] as const satisfies ReadonlyArray<{ ownerType: MediaPlacementOwnerType; runtime: RegExp; sqlGlob: string; private?: true }>
+
+/**
+ * Who may read what a slot holds: every slot is public, readable by anyone with
+ * its URL, except these, which belong to a conversation or to a business's own
+ * records and are read only by the people allowed to see their owner
+ * (`server/utils/private-media.ts`). This list is the one answer to "is this
+ * file private?": where it is stored and how its URL is made follow from it.
+ *
+ * A listing's `agreement` stays public: guests read it before they book, as on
+ * Vrbo. Organization `compliance_document`s are shown on the public site.
+ */
+const PRIVATE_PLACEMENTS = new Set([
+  'message:attachments', 'message:agreement', 'message:checklist_references', 'product:agreement_template',
+])
+
+export interface MediaPlacementSlot { owner_type: string; slot: string }
+
+export function isPrivateMediaPlacement(placement: MediaPlacementSlot): boolean {
+  return PRIVATE_PLACEMENTS.has(`${placement.owner_type}:${placement.slot}`)
+    || INDEXED_MEDIA_PLACEMENT_SLOTS.some(pattern => 'private' in pattern && pattern.ownerType === placement.owner_type && pattern.runtime.test(placement.slot))
+}
+
+/** The same answer as SQL over a `media_placements` alias, for reads that filter on it. */
+export function privateMediaPlacementSql(alias: string): string {
+  const indexed = INDEXED_MEDIA_PLACEMENT_SLOTS.filter(pattern => 'private' in pattern)
+    .map(pattern => ` OR (${alias}.owner_type = '${pattern.ownerType}' AND ${alias}.slot GLOB '${pattern.sqlGlob}')`).join('')
+  return `((${alias}.owner_type || ':' || ${alias}.slot) IN (${[...PRIVATE_PLACEMENTS].map(key => `'${key}'`).join(', ')})${indexed})`
+}
 
 const ORDERED_PLACEMENTS = new Set([
   'business_location:gallery', 'product:gallery', 'content_document:gallery',
   'content_block:gallery', 'review:gallery', 'review_request:gallery',
-  'organization:compliance_document', 'message:attachments', 'stay_photo_room:photo',
+  'organization:compliance_document', 'message:attachments', 'message:checklist_references', 'stay_photo_room:photo',
 ])
 
 /**
@@ -106,8 +134,13 @@ export function isSupportedMediaPlacement(placement: { owner_type: string; slot:
     || INDEXED_MEDIA_PLACEMENT_SLOTS.some(pattern => pattern.ownerType === placement.owner_type && pattern.runtime.test(placement.slot))
 }
 
+/**
+ * A slot a library asset may be placed in. A private slot is written only by
+ * its owner's own operation, which stores the file privately for it: a library
+ * asset is public, and placing it there would leave a public file in a private slot.
+ */
 export function isEditableMediaPlacement(placement: { owner_type: string; slot: string }) {
-  return placement.slot !== 'social_card'
+  return placement.slot !== 'social_card' && !isPrivateMediaPlacement(placement)
     && isEditableMediaPlacementOwnerType(placement.owner_type)
     && isSupportedMediaPlacement(placement)
 }

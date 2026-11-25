@@ -2,7 +2,7 @@ import { PLATFORM_MESSAGE_AUTHOR_KIND, PLATFORM_MESSAGE_AUTHOR_KINDS_SQL } from 
 import { CHANNEX_PROPERTY_HOME } from '~/server/integrations/channex/listing-mappings'
 import { initialConversationParticipants, initialListingParticipants, reconcileGuestListingParticipants } from '~/server/domain/conversation-participants'
 import { HTTPError } from 'nitro'
-import { execute, executeBatch, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
+import { execute, executeBatch, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import { publishConversationEvent, publishStayInvalidation, type GuestInboxPublicationEnv } from '~/server/cloudflare/guest-inbox-events'
 import { ChannexError, type ChannexEnv } from '~/server/integrations/channex/client'
 import { landBookingRevision, pendingBookingRevisions } from '~/server/integrations/channex/booking-revisions'
@@ -10,9 +10,10 @@ import { getChannexThread, listChannexMessages, listChannexThreads, sendChannexM
 import { MIRRORED_EVENT, MessageDedupeConflictError, SCHEDULED_MESSAGE_EVENT, appendMessage, assertMessageWriteAccess, findMessageByDedupeKey, getMessage, parseMessagePayload, type ConversationGuard, type MessageRow } from '~/server/domain/conversations'
 import { getDeliveryById, getDeliveryByProviderMessageId, isDeliverySent, recordDeliveryOutcome } from './deliveries'
 import { resolveScheduledDeliveryFailure } from './repository'
-import { assertMessagePhotos, attachGuestPhotos, isMessagePhoto, listMessagePhotos, sortGuestFiles, type MessagePhoto } from './attachments'
+import { assertMessagePhotos, attachGuestPhotos, hasMessagePhotos, isMessagePhoto, sortGuestFiles, type MessagePhoto } from './attachments'
 import type { UploadResolvedMediaInput } from '~/server/utils/media-upload'
-import { getMediaAsset, readMediaPlacements } from '~/server/utils/media-asset-manager'
+import { getMediaAsset } from '~/server/utils/media-asset-manager'
+import { getPrivateR2Object } from '~/server/utils/cloudflare-r2'
 import { MAX_IMAGE_BYTES } from '~/server/utils/media-mime'
 import { downloadImageBuffer } from '~/server/utils/cloudflare-images'
 import { getGuestRequest, requestSummary } from '~/server/domain/requests'
@@ -257,7 +258,7 @@ async function mirrorMessage(db: DbClient, env: ChannelEnv, mapping: ChannelThre
  * photos already placed. A file that is not a photo is not kept.
  */
 async function mirrorMessagePhotos(db: DbClient, env: ChannelEnv, organizationId: string, entryId: string, links: string[]): Promise<void> {
-  if (!links.length || (await listMessagePhotos(db, [entryId])).has(entryId)) return
+  if (!links.length || await hasMessagePhotos(db, entryId)) return
   const files: MessagePhoto[] = []
   for (const link of links) {
     const response = await fetch(link)
@@ -455,7 +456,7 @@ export async function replyThroughChannex(db: DbClient, env: ChannexEnv & Upload
   }
   let photo: ReturnType<typeof assertMessagePhotos>[number] | undefined
   if (input.photoCount) {
-    const placed = (await readMediaPlacements(db, { organizationId: input.mapping.organization_id, ownerType: 'message', ownerIds: [entry.id], slot: 'attachments' })).get(entry.id) ?? []
+    const placed = await queryAll<{ asset_id: string }>(db, "SELECT mp.asset_id FROM media_placements mp JOIN media_assets ma ON ma.id = mp.asset_id AND ma.organization_id = mp.organization_id AND ma.status = 'active' WHERE mp.organization_id = ? AND mp.owner_type = 'message' AND mp.owner_id = ? AND mp.slot = 'attachments' AND mp.status = 'active'", [input.mapping.organization_id, entry.id])
     if (placed.length !== 1) fail(409, 'CHANNEL_REPLY_PHOTO_UNAVAILABLE', 'The saved reply needs its original active photo before it can be sent', 'photos')
     const asset = await getMediaAsset(db, placed[0]!.asset_id, input.mapping.organization_id)
     if (!asset || asset.status !== 'active' || asset.kind !== 'image' || !asset.file_name) {
@@ -463,8 +464,8 @@ export async function replyThroughChannex(db: DbClient, env: ChannexEnv & Upload
     }
     let bytes: Uint8Array<ArrayBuffer>
     if (asset.provider === 'cloudflare_r2' && asset.r2_key) {
-      if (!env.MEDIA_BUCKET) throw new Error('MEDIA_BUCKET binding not available')
-      const stored = await env.MEDIA_BUCKET.get(asset.r2_key)
+      // A message photo is private: its file is in the private bucket.
+      const stored = await getPrivateR2Object(env, asset.r2_key)
       if (!stored || stored.size !== asset.file_size || stored.size > MAX_IMAGE_BYTES) fail(409, 'CHANNEL_REPLY_PHOTO_UNAVAILABLE', 'The saved reply photo file is missing or invalid', 'photos')
       bytes = new Uint8Array(await stored.arrayBuffer())
     } else if (asset.provider === 'cloudflare_images' && asset.cloudflare_image_id) {

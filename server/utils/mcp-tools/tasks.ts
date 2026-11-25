@@ -95,7 +95,7 @@ export const TASK_TOOLS: McpToolDefinition[] = [
     inputSchema: { product_id: { ...text, minLength: 1 } }, required: ['product_id'],
     outputSchema: { type: 'object', properties: { checklist: homeChecklist }, required: ['checklist'] },
   }),
-  organizationTool({ name: 'set_home_turnover_checklist', domain: 'tasks', minimumRole: 'admin', description: `Replace a place to stay’s turnover checklist with items, in order (at most ${CHECKLIST_LIMITS.items}). Keep an item’s id from get_home_turnover_checklist to keep it; leave id out for a new item. reference_photo_id is an image asset id (upload one with save_media_attachment) or null for none; send the id read back to keep it. expected_revision is the revision get_home_turnover_checklist returned; a checklist changed since is refused CHECKLIST_CHANGED. Jobs read the new checklist from now on; submissions already made keep what they were made against. An empty list removes the checklist, and Done goes back to one tap.`,
+  organizationTool({ name: 'set_home_turnover_checklist', domain: 'tasks', minimumRole: 'admin', description: `Replace a place to stay’s turnover checklist with items, in order (at most ${CHECKLIST_LIMITS.items}). Keep an item’s id from get_home_turnover_checklist to keep it; leave id out for a new item. reference_photo_id is a private reference photo’s asset id (upload one with save_media_attachment and checklist_product_id) or null for none; send the id read back to keep it. expected_revision is the revision get_home_turnover_checklist returned; a checklist changed since is refused CHECKLIST_CHANGED. Jobs read the new checklist from now on; submissions already made keep what they were made against. An empty list removes the checklist, and Done goes back to one tap.`,
     inputSchema: { product_id: { ...text, minLength: 1 }, items: { type: 'array', maxItems: CHECKLIST_LIMITS.items, items: { type: 'object', properties: { ...homeItem, id: { ...text, description: 'The id read from the checklist; omit for a new item.' }, reference_photo_id: { type: ['string', 'null'], description: 'An image asset id, or null.' } },
       required: ['title', 'type', 'photo_required'], additionalProperties: false } }, expected_revision: { ...text, minLength: 1 } }, required: ['product_id', 'items', 'expected_revision'],
     outputSchema: { type: 'object', properties: { checklist: homeChecklist }, required: ['checklist'] },
@@ -158,11 +158,11 @@ export async function handleTaskTools(ctx: McpExecutorContext): Promise<unknown>
     case 'skip_task':
       return { task: await closeTask(db, await taskViewer(principal), requiredString(args, 'task_id'), { status: toolName === 'complete_task' ? 'done' : 'skipped', env }) }
     case 'get_home_turnover_checklist':
-      return { checklist: await readHomeChecklist(db, await stayAccessFor(principal), requiredString(args, 'product_id')) }
+      return { checklist: await readHomeChecklist(db, env, await stayAccessFor(principal), requiredString(args, 'product_id')) }
     case 'set_home_turnover_checklist':
-      return { checklist: await saveHomeChecklist(db, await stayAccessFor(principal), requiredString(args, 'product_id'), { items: args.items, expected_revision: args.expected_revision }) }
+      return { checklist: await saveHomeChecklist(db, env, await stayAccessFor(principal), requiredString(args, 'product_id'), { items: args.items, expected_revision: args.expected_revision }) }
     case 'copy_home_turnover_checklist':
-      return await copyHomeChecklist(db, await stayAccessFor(principal), requiredString(args, 'product_id'), { product_ids: args.to_product_ids })
+      return await copyHomeChecklist(db, env, await stayAccessFor(principal), requiredString(args, 'product_id'), { product_ids: args.to_product_ids })
     case 'get_home_team':
       return { team: await readHomeTeam(db, await stayAccessFor(principal), requiredString(args, 'product_id')) }
     case 'set_home_team_member': {

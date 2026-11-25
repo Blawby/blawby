@@ -1,11 +1,14 @@
 import { defineComponent, h, type PropType } from 'vue'
-import { ESection, EText, EImg } from '../vue-email'
+import { ESection, EText } from '../vue-email'
 import { light, layout, type } from '../tokens'
 import type { NotificationQuote } from '~/server/notifications/messages'
 
 /**
  * Someone's own words, as a bordered card: their initial and name, the words as
- * written, and any photos they sent.
+ * written, and how many photos they sent. The photos themselves stay in the
+ * signed-in conversation, as Airbnb's message email says "Image sent" and
+ * Slack's names the file: a conversation's photos are private, and a link that
+ * expires would die in an inbox.
  * Used where the message *is* the content — a guest's message, a business's
  * reply — so it leads and nothing is added around it.
  */
@@ -33,9 +36,9 @@ export default defineComponent({
           quote.body
             ? h(EText, { style: `margin:12px 0 0;${type.body};color:${light.text};white-space:pre-wrap` }, () => quote.body)
             : null,
-          ...quote.photos.map(photo =>
-            h(EImg, { src: photo.imageUrl, alt: photo.alt, width: '514', style: `display:block;width:100%;max-width:100%;height:auto;margin-top:12px;border-radius:8px;background:${light.bg}` }),
-          ),
+          quote.photos.length
+            ? h(EText, { style: `margin:12px 0 0;${type.body};color:${light.textMuted}` }, () => quote.photos.length === 1 ? 'Sent a photo' : `Sent ${quote.photos.length} photos`)
+            : null,
         ]),
       ])
     }

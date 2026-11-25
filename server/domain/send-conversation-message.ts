@@ -166,5 +166,5 @@ export async function sendConversationMessage(env: CloudflareEnv, input: Message
     if (error instanceof MessageStateConflictError) conversationAccessDenied()
     throw error
   }
-  if (!providerReply) return projectSentConversationMessage(db, { message, userId, role, conversation }, senderName)
+  if (!providerReply) return projectSentConversationMessage(db, env, { message, userId, role, conversation }, senderName)
 }

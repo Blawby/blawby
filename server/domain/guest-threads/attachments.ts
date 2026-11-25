@@ -1,15 +1,20 @@
-import { d1JsonStringSet, executeBatch, queryAll, type BatchQuery, type DbClient } from '~/server/db'
+import { d1JsonStringSet, executeBatch, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import { buildMediaPlacementInsertQuery, deleteMediaAsset } from '~/server/utils/media-asset-manager'
 import { MAX_IMAGE_BYTES, RESOLVED_MEDIA_IMAGE_TYPES, sniffMediaMimeType } from '~/server/utils/media-mime'
 import { uploadResolvedMediaToAssetStore, type UploadResolvedMediaInput } from '~/server/utils/media-upload'
+import { mediaLinks, type MediaLinkEnv as PhotoLinkEnv } from '~/server/utils/private-media'
 import type { GuestThreadEntryAttachmentViewModel } from './types'
 
 /*
   The photos a message carries. Each is an ordinary media asset, placed on the
   message it was sent with (`message` / `attachments`), so it has the
-  same storage, deletion and tenant scope as every other picture — and the media
-  library leaves it out, because it is the conversation's, not the website's.
+  same storage, deletion and tenant scope as every other picture. The slot is
+  private: each photo is stored as a private image, readers get links that
+  expire, and the media library leaves it out, because it is the
+  conversation's, not the website's.
 */
+
+const MESSAGE_PHOTOS = { owner_type: 'message', slot: 'attachments' } as const
 
 export const MAX_MESSAGE_PHOTOS = 10
 
@@ -91,7 +96,7 @@ export async function attachGuestPhotos(
   uploader: Uploader = { source: 'external', userId: null },
 ): Promise<void> {
   if (!photos.length) return
-  if ((await listMessagePhotos(db, [entryId])).has(entryId)) return
+  if (await hasMessagePhotos(db, entryId)) return
   const assetIds = await uploadMessagePhotos(db, env, organizationId, photos, uploader)
   try {
     await executeBatch(db, messagePhotoPlacements(organizationId, entryId, assetIds, new Date().toISOString()), { operation: 'guest message photos' })
@@ -136,6 +141,7 @@ export async function uploadMessagePhotos(
         filename: photo.filename,
         kind: 'image',
         fileSize: photo.bytes.byteLength,
+        placement: MESSAGE_PHOTOS,
       })
       assetIds.push(uploaded.assetId)
     }
@@ -185,7 +191,10 @@ export async function discardMessagePhotos(
 export interface MessagePhotoRow {
   owner_id: string
   id: string
-  public_url: string
+  kind: string
+  provider: string
+  cloudflare_image_id: string | null
+  public_url: string | null
   thumbnail_url: string | null
   alt_text: string | null
   width: number | null
@@ -194,12 +203,12 @@ export interface MessagePhotoRow {
 
 export function messagePhotoRowsSql(scope: string, from = '', columns = '', order = 'mp.owner_id, mp.sort_order') {
   return `
-    SELECT mp.owner_id, ma.id, ma.public_url, ma.thumbnail_url, ma.alt_text, ma.width, ma.height${columns}
+    SELECT mp.owner_id, ma.id, ma.kind, ma.provider, ma.cloudflare_image_id, ma.public_url, ma.thumbnail_url, ma.alt_text, ma.width, ma.height${columns}
       FROM media_placements mp
       JOIN media_assets ma ON ma.id = mp.asset_id AND ma.organization_id = mp.organization_id
       ${from}
      WHERE ${scope} AND mp.slot = 'attachments' AND mp.status = 'active'
-       AND ma.status = 'active' AND ma.public_url IS NOT NULL
+       AND ma.status = 'active'
      ORDER BY ${order}
   `
 }
@@ -208,19 +217,32 @@ export function messagePhotosQuery(messageIds: string[]): BatchQuery {
   return { query: messagePhotoRowsSql("mp.owner_type = 'message' AND mp.owner_id IN (SELECT value FROM json_each(?))"), params: [d1JsonStringSet(messageIds)] }
 }
 
-export function groupMessagePhotos(rows: MessagePhotoRow[]): Map<string, GuestThreadEntryAttachmentViewModel[]> {
+
+/** A photo's links for a reader the caller already let into its conversation. */
+export async function messagePhotoLinks(env: PhotoLinkEnv, row: MessagePhotoRow) {
+  return await mediaLinks(env, row, MESSAGE_PHOTOS)
+}
+
+export async function groupMessagePhotos(env: PhotoLinkEnv, rows: MessagePhotoRow[]): Promise<Map<string, GuestThreadEntryAttachmentViewModel[]>> {
   const photos = new Map<string, GuestThreadEntryAttachmentViewModel[]>()
-  for (const row of rows) {
+  const linked = await Promise.all(rows.map(row => messagePhotoLinks(env, row)))
+  rows.forEach((row, index) => {
+    const links = linked[index]!
     const list = photos.get(row.owner_id) ?? []
-    list.push({ id: row.id, url: row.public_url, thumbnailUrl: row.thumbnail_url ?? row.public_url, alt: row.alt_text, width: row.width, height: row.height })
+    list.push({ id: row.id, url: links.url, thumbnailUrl: links.thumbnail_url ?? links.url, alt: row.alt_text, width: row.width, height: row.height })
     photos.set(row.owner_id, list)
-  }
+  })
   return photos
 }
 
-/** Each message's photos, in the order they were sent. */
-export async function listMessagePhotos(db: DbClient, messageIds: string[]) {
-  if (!messageIds.length) return groupMessagePhotos([])
+/** Each message's photos, in the order they were sent, for a reader of their conversation. */
+export async function listMessagePhotos(db: DbClient, env: PhotoLinkEnv, messageIds: string[]) {
+  if (!messageIds.length) return new Map<string, GuestThreadEntryAttachmentViewModel[]>()
   const { query, params } = messagePhotosQuery(messageIds)
-  return groupMessagePhotos(await queryAll<MessagePhotoRow>(db, query, params))
+  return await groupMessagePhotos(env, await queryAll<MessagePhotoRow>(db, query, params))
+}
+
+/** Whether a message already carries its photos: a redelivery stores nothing twice. */
+export async function hasMessagePhotos(db: DbClient, messageId: string): Promise<boolean> {
+  return Boolean(await queryFirst(db, "SELECT 1 FROM media_placements WHERE owner_type = 'message' AND owner_id = ? AND slot = 'attachments' AND status = 'active' LIMIT 1", [messageId]))
 }

@@ -125,7 +125,7 @@ export const cloudflareEnv = (event: H3Event): CloudflareEnv => {
   const rawRuntimeEnv = event.req.runtime?.cloudflare?.env as Record<string, unknown> | undefined
   const runtimeEnv = (() => {
     const env = rawRuntimeEnv
-    const requiredBindings = ['DB', 'MEDIA_BUCKET', 'ORGANIZATION_CACHE', 'AI'] as const
+    const requiredBindings = ['DB', 'MEDIA_BUCKET', 'PRIVATE_MEDIA_BUCKET', 'ORGANIZATION_CACHE', 'AI'] as const
     const missing = requiredBindings.filter((key) => !env?.[key])
 
     if (missing.length > 0) {

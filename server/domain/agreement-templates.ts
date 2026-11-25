@@ -8,7 +8,7 @@ import type { CloudflareEnv } from '~/server/utils/auth'
 import { formatBookingPolicySummary, parseBookingPolicy } from '~/server/utils/booking-policy-summary'
 import { readR2Object } from '~/server/utils/cloudflare-r2'
 import { buildMediaPlacementReplacementQueries } from '~/server/utils/media-asset-manager'
-import { uploadPrivateDocument } from '~/server/utils/media-upload'
+import { uploadResolvedMediaToAssetStore } from '~/server/utils/media-upload'
 import { agreementLabel, type AgreementField } from '~/shared/agreements'
 import { AGREEMENT_TEMPLATE_FIELDS, MAX_AGREEMENT_TEMPLATE_LENGTH, agreementTemplateFieldLabel, agreementTemplateFields, fillAgreementTemplate, type AgreementTemplateField } from '~/shared/agreement-templates'
 import { isCurrencyCode } from '~/shared/currencies'
@@ -36,7 +36,7 @@ const templateQuery = `SELECT ma.r2_key FROM media_placements mp JOIN media_asse
   WHERE mp.organization_id = ? AND mp.owner_type = 'product' AND mp.owner_id = ? AND mp.slot = 'agreement_template' AND mp.status = 'active'`
 
 async function templateText(env: CloudflareEnv, r2Key: string): Promise<string> {
-  const bytes = await readR2Object(env, r2Key)
+  const bytes = await readR2Object(env, r2Key, 'private')
   if (!bytes) throw new Error('The agreement template file is missing from storage')
   return new TextDecoder().decode(bytes)
 }
@@ -59,9 +59,10 @@ export async function saveAgreementTemplate(env: CloudflareEnv, db: DbClient, in
   if (input.text.length > MAX_AGREEMENT_TEMPLATE_LENGTH) fail(422, 'VALIDATION_ERROR', `The template is longer than ${MAX_AGREEMENT_TEMPLATE_LENGTH.toLocaleString('en-US')} characters`, 'text')
   const { unknown } = agreementTemplateFields(input.text)
   if (unknown) fail(422, 'UNKNOWN_TEMPLATE_FIELD', `{{${unknown}}} is not a booking field. Use one of: ${AGREEMENT_TEMPLATE_FIELDS.join(', ')}`, 'text')
-  await uploadPrivateDocument({
-    db, env, organizationId: input.organizationId, userId: input.userId, contentType: 'text/markdown',
-    buffer: new TextEncoder().encode(input.text) as Uint8Array<ArrayBuffer>, filename: `${agreementLabel(input.kind)}.md`,
+  const buffer = new TextEncoder().encode(input.text) as Uint8Array<ArrayBuffer>
+  await uploadResolvedMediaToAssetStore({
+    db, env, organizationId: input.organizationId, userId: input.userId, source: 'uploaded', kind: 'file', contentType: 'text/markdown',
+    buffer, filename: `${agreementLabel(input.kind)}.md`, placement: TEMPLATE_PLACEMENT(input.productId),
     // A listing has one agreement: the template replaces an uploaded PDF in the same batch.
     queries: assetId => [
       ...buildMediaPlacementReplacementQueries({ organizationId: input.organizationId, placement: TEMPLATE_PLACEMENT(input.productId), media: [{ asset_id: assetId }] }),

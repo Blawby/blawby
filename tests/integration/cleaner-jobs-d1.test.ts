@@ -24,8 +24,9 @@ import { localDateTimeToInstant } from '../../utils/timezone.ts'
 import { createAuth, type CloudflareEnv } from '../../server/utils/auth.ts'
 import completeTaskRoute from '../../server/api/organizations/[organization_id]/tasks/[task_id]/complete.post.ts'
 import readTaskRoute from '../../server/api/organizations/[organization_id]/tasks/[task_id]/read.post.ts'
+import privateMediaRoute from '../../server/api/media/[asset_id].get.ts'
 import { applySchema } from './support/schema.ts'
-import { copyHomeChecklist, readHomeChecklist, saveHomeChecklist } from '../../server/domain/home-checklists.ts'
+import { copyHomeChecklist, readHomeChecklist, saveHomeChecklist, storeReferencePhoto } from '../../server/domain/home-checklists.ts'
 import { setHomeCleaning } from '../../server/domain/home-cleaning.ts'
 import { setListingAccess } from '../../server/domain/conversation-participants.ts'
 import { checklistRevision } from '../../shared/turnover-checklist.ts'
@@ -48,7 +49,7 @@ const runOrganizationJobs = async (queue: ReturnType<typeof captureEvents>, env:
   return (await sendDueOutbox(db, env, organizationId, when.toISOString())).next
 }
 const readTeamThread = async (db: DbClient, viewer: MemberAccessPrincipal, id: string) => {
-  const { conversation } = await conversationPageFor(db, viewer, id)
+  const { conversation } = await conversationPageFor(db, viewer.env, viewer, id)
   assert.equal(conversation.kind, 'team')
   return conversation
 }
@@ -69,7 +70,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
       }
     } export default { fetch() { return new Response("ok") } }` } } },
     exports: { Hub: { type: 'durable-object', storage: 'sqlite' } },
-    env: { DB: { type: 'd1' }, ORGANIZATION_CACHE: { type: 'kv' }, MEDIA_BUCKET: { type: 'r2' }, GUEST_INBOX_HUBS: { type: 'durable-object', worker: 'cleaner-jobs-proof', exportName: 'Hub' } },
+    env: { DB: { type: 'd1' }, ORGANIZATION_CACHE: { type: 'kv' }, MEDIA_BUCKET: { type: 'r2' }, PRIVATE_MEDIA_BUCKET: { type: 'r2' }, GUEST_INBOX_HUBS: { type: 'durable-object', worker: 'cleaner-jobs-proof', exportName: 'Hub' } },
   } }] })
   try {
     const db = await runtime.getD1Database('DB')
@@ -122,7 +123,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     assert.deepEqual([thread.name, thread.booking_id, thread.participants.map(person => person.id).sort(), await isUnread(db, cleaner, thread.id)], [null, dee.id, ['admin', 'cleaner', 'owner'], true])
     const [job] = await automatic(thread.id)
     assert.equal(job!.key, jobKey(turnover))
-    const messages = (await conversationPageFor(db, cleaner, thread.id)).entries.filter(entry => entry.type === 'message').reverse()
+    const messages = (await conversationPageFor(db, env, cleaner, thread.id)).entries.filter(entry => entry.type === 'message').reverse()
     assert.deepEqual([messages[0]!.automatic, messages[0]!.author_user_id], [true, null])
     // The hosts read along, and it is unread for them too until they do.
     assert.equal(await isUnread(db, owner, thread.id), true)
@@ -179,6 +180,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     const token = signed.headers.get('set-auth-token')
     assert.ok(token)
     const app = new H3()
+    app.get('/api/media/:asset_id', privateMediaRoute)
     const taskRoute = '/api/organizations/:organization_id/tasks/:task_id'
     app.post(`${taskRoute}/read`, readTaskRoute)
     app.post(`${taskRoute}/complete`, completeTaskRoute)
@@ -201,7 +203,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     const closed = await native('complete', { note: null })
     assert.equal(closed.status, 'done')
     assert.deepEqual(closed.outcome, { note: null, photos: [], closed_at: (await taskRow(`turnover:${dee.id}`))!.closed_at, closed_by: 'You' })
-    const cookMessages = (await conversationPageFor(db, cook, cookThreads[0]!.id)).entries.filter(entry => entry.type === 'message').reverse()
+    const cookMessages = (await conversationPageFor(db, env, cook, cookThreads[0]!.id)).entries.filter(entry => entry.type === 'message').reverse()
     assert.deepEqual([cookMessages[0]!.author_user_id, cookMessages[0]!.automatic, cookMessages[0]!.body, cookMessages[0]!.deliveries], ['cook', false, 'Done', []])
     assert.equal((await taskRow(`turnover:${dee.id}`))!.status, 'done')
     // The cook's own message reads the conversation through for them and is unread for the hosts; the cleaner, no longer seated with it, never sees it.
@@ -222,8 +224,10 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     const reported = await native('complete', outcome)
     assert.equal(reported.note, '“Fresh towels are by the door.”')
     assert.equal(reported.outcome?.photos.length, 1)
-    assert.deepEqual((await getTask(db, cookViewer, turnover.id)).outcome, reported.outcome)
-    const report = (await conversationPageFor(db, cook, cookThreads[0]!.id)).entries.find(entry => entry.type === 'message' && entry.body === reported.outcome?.note)
+    // The same outcome read again: each read signs its own expiring photo links, so the photos compare by id.
+    const outcomeIds = (outcome?: { photos: Array<{ id: string }> } | null) => outcome && { ...outcome, photos: outcome.photos.map(photo => photo.id) }
+    assert.deepEqual(outcomeIds((await getTask(db, cookViewer, turnover.id)).outcome), outcomeIds(reported.outcome))
+    const report = (await conversationPageFor(db, env, cook, cookThreads[0]!.id)).entries.find(entry => entry.type === 'message' && entry.body === reported.outcome?.note)
     assert(report?.type === 'message')
     assert.equal(report.photos[0]?.id, reported.outcome?.photos[0]?.id)
 
@@ -261,7 +265,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     await appendMessage(db, { id: 'ac-report', conversationId: deeConversation, authorKind: 'guest', authorUserId: null, body: 'The AC is blowing warm air.' },
       messagePhotoPlacements(ORG, 'ac-report', [acPhoto!], new Date().toISOString()))
     // The owner's conversation offers to make a maintenance job of it, at the place it is about; only Dee's own words are hers to report.
-    const deePage = await conversationPageFor(db, owner, deeConversation)
+    const deePage = await conversationPageFor(db, env, owner, deeConversation)
     assert.deepEqual(deePage.maintenance, { product_id: cabin.id, location_id: 'cabin-site', guest: 'Dee' })
     assert.deepEqual(deePage.entries.flatMap(entry => entry.type === 'message' && entry.author_kind === 'guest' ? [entry.id] : []), ['ac-report'])
     // Repair goes to the maintenance member, an owner or an admin, at the cabin or its location.
@@ -283,7 +287,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     const [repairThread, ...otherRepairThreads] = await teamThreads(fixer)
     assert.deepEqual([otherRepairThreads.length, repairThread!.booking_id, repairThread!.participants.map(person => person.id).sort()], [0, null, ['admin', 'fixer', 'owner']])
     assert.equal((await db.prepare('SELECT location_id FROM conversations WHERE id = ?').bind(repairThread!.id).first<string>('location_id')), 'cabin-site')
-    const repairPage = await conversationPageFor(db, fixer, repairThread!.id)
+    const repairPage = await conversationPageFor(db, env, fixer, repairThread!.id)
     const post = repairPage.entries.find(entry => entry.type === 'message' && entry.job)
     assert(post?.type === 'message')
     assert.equal(post.body, `Maintenance at Cabin: AC not cooling.\nDue ${ac.sheet.date}\nDee wrote: “The AC is blowing warm air.”`)
@@ -302,7 +306,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     // Fran finishes with a note and a photo: her own message in the job's conversation, read back as the task's outcome.
     const fixed = await closeTask(db, fixerViewer, ac.id, { status: 'done', env, note: 'Replaced the capacitor; cooling again.', photos: [{ bytes: pixels, filename: 'fixed.avif' }] })
     assert.equal(fixed.status, 'done')
-    const finished = (await conversationPageFor(db, owner, repairThread!.id)).entries.find(entry => entry.type === 'message' && entry.body === 'Replaced the capacitor; cooling again.')
+    const finished = (await conversationPageFor(db, env, owner, repairThread!.id)).entries.find(entry => entry.type === 'message' && entry.body === 'Replaced the capacitor; cooling again.')
     assert(finished?.type === 'message')
     assert.deepEqual([finished.author_user_id, finished.photos.length], ['fixer', 1])
     assert.deepEqual((await getTask(db, ownerViewer, ac.id)).outcome?.photos.map(photo => photo.id), finished.photos.map(photo => photo.id))
@@ -333,8 +337,15 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     assert.equal(await db.prepare('SELECT assigned_member_id FROM tasks WHERE id = ?').bind(leak.id).first<string>('assigned_member_id'), 'm-owner')
 
     // A home's turnover checklist (#2091): Done names what is missing, counts follow the party arriving next, and the submission is one message.
-    const reference = (await uploadMessagePhotos(db, env, ORG, [{ bytes: pixels, filename: 'bed.avif' }], { source: 'uploaded', userId: 'owner' }))[0]!
-    const saved = await saveHomeChecklist(db, manager, cabin.id, { items: [
+    // A reference photo is uploaded for the checklist and stored privately: its link is signed, and it is never a library asset.
+    const reference = (await storeReferencePhoto(db, env, { organizationId: ORG, userId: 'owner', productId: cabin.id, idempotencyKey: 'bed-reference', sourceFileId: 'bed-file', file: async () => ({ buffer: pixels, contentType: 'image/avif', filename: 'bed.avif' }) })).asset_id
+    assert.equal((await db.prepare('SELECT public_url FROM media_assets WHERE id = ?').bind(reference).first('public_url')), null)
+    const replayedReference = await storeReferencePhoto(db, env, { organizationId: ORG, userId: 'owner', productId: cabin.id, idempotencyKey: 'bed-reference', sourceFileId: 'bed-file',
+      file: async () => { throw new Error('The original attachment URL has expired') } })
+    assert.equal(replayedReference.asset_id, reference)
+    await assert.rejects(storeReferencePhoto(db, env, { organizationId: ORG, userId: 'owner', productId: 'not-a-home',
+      file: async () => { throw new Error('Invalid home must be refused before resolving its file') } }), { status: 404 })
+    const saved = await saveHomeChecklist(db, env, manager, cabin.id, { items: [
       { title: 'Bed made', type: 'confirm', photo_required: true, reference_photo_id: reference },
       { title: 'TV remote', type: 'confirm', photo_required: false, reference_photo_id: null },
       { title: 'Bath towels', type: 'count', minimum: 1, per_guest: true, baseline: 2, photo_required: false, reference_photo_id: null },
@@ -343,15 +354,17 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     assert.equal(saved.items[0]!.reference_photo?.id, reference)
     const [bed, remote, towels, paper] = saved.items.map(item => item.id) as [string, string, string, string]
     // A save made against an older read is refused; a copy gives another home the same items and reference photo.
-    await assert.rejects(saveHomeChecklist(db, manager, cabin.id, { items: [], expected_revision: checklistRevision([]) }), { status: 409, data: { code: 'CHECKLIST_CHANGED', field: 'expected_revision' } })
+    await assert.rejects(saveHomeChecklist(db, env, manager, cabin.id, { items: [], expected_revision: checklistRevision([]) }), { status: 409, data: { code: 'CHECKLIST_CHANGED', field: 'expected_revision' } })
     await db.prepare(`INSERT INTO business_locations (id, organization_id, slug, title, status, timezone, created_at, updated_at)
       VALUES ('loft-site', ?, 'loft', 'Loft', 'active', ?, '2026-10-15T00:00:00.000Z', '2026-10-15T00:00:00.000Z')`).bind(ORG, ZONE).run()
     const loft = await createProduct(db, { env, organizationId: ORG, actor: { actorId: 'owner' }, product: {
       kind: 'stay', name: 'Loft', variants: [{ name: 'Loft', prices: [{ unit_amount: 12_000, currency: 'USD' }] }],
       stay: { location_id: 'loft-site', check_in_time: '15:00', check_out_time: '10:00', max_guests: 2, min_nights: 1, assigned_member_id: 'm-owner' },
     } })
-    assert.deepEqual((await copyHomeChecklist(db, manager, cabin.id, { product_ids: [loft.id] })).product_ids, [loft.id])
-    assert.deepEqual((await readHomeChecklist(db, manager, loft.id)).items, saved.items)
+    assert.deepEqual((await copyHomeChecklist(db, env, manager, cabin.id, { product_ids: [loft.id] })).product_ids, [loft.id])
+    // The same items and reference photo; each read makes its own expiring links.
+    const withoutLinks = (items: typeof saved.items) => items.map(({ reference_photo, ...item }) => ({ ...item, reference_photo: reference_photo?.id ?? null }))
+    assert.deepEqual(withoutLinks((await readHomeChecklist(db, env, manager, loft.id)).items), withoutLinks(saved.items))
     const ann = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'ann', check_in_date: day(10), check_out_date: day(12), adults: 2, guest_name: 'Ann', guest_email: 'ann@example.test', total_minor: 30_000 })
     const bo = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'bo', check_in_date: day(13), check_out_date: day(14), adults: 3, children: 1, guest_name: 'Bo', guest_email: 'bo@example.test', total_minor: 15_000 })
     const annTurnover = (await taskRow(`turnover:${ann.id}`))!
@@ -389,12 +402,27 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     assert.equal(accepted.status, 200, await accepted.clone().text())
     assert.equal((await taskRow(`turnover:${ann.id}`))!.status, 'done')
     const annThread = (await teamThreads(cook)).find(item => item.booking_id === ann.id)!
-    const submitted = (await conversationPageFor(db, cook, annThread.id)).entries.filter(entry => entry.type === 'message' && !entry.automatic)
+    const submitted = (await conversationPageFor(db, env, cook, annThread.id)).entries.filter(entry => entry.type === 'message' && !entry.automatic)
     assert.equal(submitted.length, 1, 'one message carries the whole checklist')
     const submittedCard = submitted[0]!.type === 'message' ? submitted[0]!.checklist! : null
     assert.deepEqual(submittedCard && [submittedCard.summary, submittedCard.items[0]!.id, submittedCard.items[0]!.shortage, submittedCard.items.find(item => item.id === towels)!.required], ['3 of 4 done · 1 short', paper, 1, 4])
     assert.match((await cyCard(at(day(9), '09:00')))!.line ?? '', /Ready · shortage flagged/)
     assert.equal(submittedCard!.items.find(item => item.id === bed)!.photo?.id, submitted[0]!.type === 'message' ? submitted[0]!.photos[0]!.id : null)
+    // A submission keeps its own reference after the editor removes the home's reference.
+    for (const homeId of [cabin.id, loft.id]) {
+      const editedChecklist = await readHomeChecklist(db, env, manager, homeId)
+      await saveHomeChecklist(db, env, manager, homeId, { expected_revision: editedChecklist.revision,
+        items: editedChecklist.items.map(({ reference_photo: _photo, ...item }) => ({ ...item, reference_photo_id: null })) })
+    }
+    const retainedCard = (await conversationPageFor(db, env, cook, annThread.id)).entries.find(entry => entry.type === 'message' && entry.checklist)
+    const retainedPhoto = retainedCard?.type === 'message' ? retainedCard.checklist!.items.find(item => item.id === bed)!.reference_photo : null
+    assert.equal(retainedPhoto?.id, reference)
+    const retainedResponse = await app.request(Object.assign(new Request(retainedPhoto!.url), { runtime: { name: 'cloudflare', cloudflare: { env } } }))
+    assert.equal(retainedResponse.status, 200)
+    assert.deepEqual(new Uint8Array(await retainedResponse.arrayBuffer()), pixels)
+    const unsignedReference = new URL(retainedPhoto!.url)
+    unsignedReference.search = ''
+    assert.equal((await app.request(Object.assign(new Request(unsignedReference), { runtime: { name: 'cloudflare', cloudflare: { env } } }))).status, 404)
     // An owner closes a job past the checklist, and its message says so.
     const reopened = await reopenTask(db, ownerViewer, annTurnover.id, { version: (await taskRow(`turnover:${ann.id}`))!.version })
     await closeTask(db, ownerViewer, annTurnover.id, { status: 'done', env })

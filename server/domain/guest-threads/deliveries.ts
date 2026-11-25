@@ -1,6 +1,7 @@
 import { d1JsonStringSet, execute, executeBatch, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import type { WebhookEventPayload } from 'resend'
 import { groupMessagePhotos, messagePhotosQuery, type MessagePhotoRow } from './attachments'
+import type { MediaLinkEnv } from '~/server/utils/private-media'
 import type { ReplyEmailEnv } from '~/server/utils/submission-messages'
 import { MessageStateConflictError, type ConversationGuard } from '~/server/domain/conversations'
 import { buildReplyToAddress } from '~/server/utils/reply-address'
@@ -459,7 +460,7 @@ export async function listThreadDeliveries(db: DbClient, threadId: string): Prom
 }
 
 /** Enrich a page of messages in one D1 call after the page reveals its IDs. */
-export async function readConversationEnrichment(db: DbClient, messageIds: string[], authorIds: string[], receipts: BatchQuery | null = null) {
+export async function readConversationEnrichment(db: DbClient, env: MediaLinkEnv, messageIds: string[], authorIds: string[], receipts: BatchQuery | null = null) {
   const photoQuery = messageIds.length ? messagePhotosQuery(messageIds) : null
   const authorQuery = authorIds.length ? {
     query: 'SELECT id, name FROM user WHERE id IN (SELECT value FROM json_each(?))',
@@ -470,7 +471,7 @@ export async function readConversationEnrichment(db: DbClient, messageIds: strin
   const photos = photoQuery ? results.shift()!.results as MessagePhotoRow[] : []
   const actors = authorQuery ? results.shift()!.results as { id: string; name: string }[] : []
   const deliveries = receipts ? results.shift()!.results as HistoryDelivery[] : []
-  return { photos: groupMessagePhotos(photos), actors, deliveriesByMessage: groupMessageDeliveries(deliveries) }
+  return { photos: await groupMessagePhotos(env, photos), actors, deliveriesByMessage: groupMessageDeliveries(deliveries) }
 }
 
 export function groupMessageDeliveries(deliveries: HistoryDelivery[]) {

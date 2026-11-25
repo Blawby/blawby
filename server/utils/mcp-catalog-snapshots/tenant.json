@@ -1,7 +1,7 @@
 {
   "surface": "tenant",
-  "fingerprint": "sha256:4bfe7388090ccc8bb02e4f95ec2a87b2aecf339fc45be118cbe17d238f025e39",
-  "documentationFingerprint": "sha256:1984cb9425596a63996ec022700a506158b154adf35a9a06af92529369861d2f",
+  "fingerprint": "sha256:ab719d93530b74924c70e9dac8ea6283b9a7a9346fc44291e71c1137a7105ea9",
+  "documentationFingerprint": "sha256:429049c809527b91a8286d28dcef495ee12e22d928ae51ce185e78abb8355480",
   "tools": [
     {
       "name": "add_organization_language",
@@ -8043,8 +8043,7 @@
                         "enum": [
                           "image",
                           "gallery",
-                          "agreement",
-                          "agreement_template"
+                          "agreement"
                         ],
                         "type": "string"
                       },
@@ -93430,8 +93429,7 @@
                         "enum": [
                           "image",
                           "gallery",
-                          "agreement",
-                          "agreement_template"
+                          "agreement"
                         ],
                         "type": "string"
                       },
@@ -94877,8 +94875,7 @@
                         "enum": [
                           "image",
                           "gallery",
-                          "agreement",
-                          "agreement_template"
+                          "agreement"
                         ],
                         "type": "string"
                       },
@@ -102654,7 +102651,7 @@
     {
       "name": "save_media_attachment",
       "title": "Save media attachment",
-      "description": "Save an attached image, video with poster, PDF or Markdown file. Uses the host’s file reference. An optional placement puts it on the requested website owner in this operation: a PDF placed on a product’s agreement slot is what every guest signs when booking it. Repeat the same idempotency key for a retry.",
+      "description": "Save an attached image, video with poster, PDF or Markdown file. Uses the host’s file reference. An optional placement puts it on the requested website owner in this operation: a PDF placed on a product’s agreement slot is what every guest signs when booking it. checklist_product_id instead stores an image privately as a reference photo for that place to stay’s turnover checklist (never the library); pass its asset_id as reference_photo_id to set_home_turnover_checklist. Repeat the same idempotency key for a retry.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -102668,6 +102665,11 @@
               "team",
               "other"
             ],
+            "type": "string"
+          },
+          "checklist_product_id": {
+            "description": "A place to stay whose turnover checklist this image is a private reference photo for.",
+            "minLength": 1,
             "type": "string"
           },
           "description": {
@@ -102785,8 +102787,7 @@
                         "enum": [
                           "image",
                           "gallery",
-                          "agreement",
-                          "agreement_template"
+                          "agreement"
                         ],
                         "type": "string"
                       },
@@ -103131,8 +103132,7 @@
                             "enum": [
                               "image",
                               "gallery",
-                              "agreement",
-                              "agreement_template"
+                              "agreement"
                             ],
                             "type": "string"
                           },
@@ -103359,7 +103359,11 @@
             ]
           },
           "public_url": {
-            "type": "string"
+            "description": "Null for a private reference photo, which has no public URL.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "status": {
             "enum": [
@@ -103372,6 +103376,10 @@
               "string",
               "null"
             ]
+          },
+          "url": {
+            "description": "The link to show it by; a private photo’s link expires.",
+            "type": "string"
           }
         },
         "required": [
@@ -105372,7 +105380,7 @@
     {
       "name": "set_home_turnover_checklist",
       "title": "Set home turnover checklist",
-      "description": "Replace a place to stay’s turnover checklist with items, in order (at most 30). Keep an item’s id from get_home_turnover_checklist to keep it; leave id out for a new item. reference_photo_id is an image asset id (upload one with save_media_attachment) or null for none; send the id read back to keep it. expected_revision is the revision get_home_turnover_checklist returned; a checklist changed since is refused CHECKLIST_CHANGED. Jobs read the new checklist from now on; submissions already made keep what they were made against. An empty list removes the checklist, and Done goes back to one tap.",
+      "description": "Replace a place to stay’s turnover checklist with items, in order (at most 30). Keep an item’s id from get_home_turnover_checklist to keep it; leave id out for a new item. reference_photo_id is a private reference photo’s asset id (upload one with save_media_attachment and checklist_product_id) or null for none; send the id read back to keep it. expected_revision is the revision get_home_turnover_checklist returned; a checklist changed since is refused CHECKLIST_CHANGED. Jobs read the new checklist from now on; submissions already made keep what they were made against. An empty list removes the checklist, and Done goes back to one tap.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -105814,8 +105822,7 @@
                       {
                         "enum": [
                           "image",
-                          "agreement",
-                          "agreement_template"
+                          "agreement"
                         ],
                         "type": "string"
                       },
@@ -106292,8 +106299,7 @@
                         "enum": [
                           "image",
                           "gallery",
-                          "agreement",
-                          "agreement_template"
+                          "agreement"
                         ],
                         "type": "string"
                       },
@@ -134721,14 +134727,14 @@
         "text": "Create a bookable offering from: <description> Use get_workspace_context, list_locations and list_products to resolve the business, existing offerings and explicit location or online scope. Ask for missing price, duration, capacity, actual start times, confirmation and payment choices. Use create_product with booking setup and one idempotency key. Preserve the supplied facts and attach supplied media to the returned product ID. Use get_product to read booking_readiness and list_product_booking_sessions with a concrete date range to verify actual availability. Use save_media_attachment for supplied files or attach_media for existing assets. Open the returned public URL before reporting completion."
       },
       "toolContracts": {
-        "attach_media": "sha256:f56d81eab3d319657229ee60987366cca3a0fb61da5e5615e7ad6882faf62019",
+        "attach_media": "sha256:30fe5981d4d55f9583137bbd0a9f076e9e38f70ea930c263be38cdfdd3a69c03",
         "create_product": "sha256:cfbc5125c6cbfa8e9fff28b4174427e8c3fff2c94f5729382188ae78800e59c5",
         "get_product": "sha256:c8270bc0e91bc60249c60c0b9c8fb0c6051130a5b0e00ab51b83b228adee6af7",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_locations": "sha256:7dd88e7fc4bd7ec81ea85799fc2bfd56d6e492a30ddab39669e4286937b9efdd",
         "list_product_booking_sessions": "sha256:3649a6bc69afde8d124ed5c8452177c30a70dad2c9301cc7d3f10c9522536376",
         "list_products": "sha256:76e112cfe8092528c778c4d066d079837db14504dab1eec99eefd21b499e7970",
-        "save_media_attachment": "sha256:cd5b174a7f71cf084b67a86edac4004ce52df186a65cc487aa07b1d1ce8a8869"
+        "save_media_attachment": "sha256:5552901092ddb50f5e4f4f63b498c2b022beb19185315a3d8b0c561851b4f028"
       }
     },
     {
@@ -134767,14 +134773,14 @@
         "text": "Use get_workspace_context, list_site_pages and get_site_page to read the selected business's homepage, and list_media_assets for its media. Open its public preview and recommend the most useful improvements in plain language. Check if hero media, brand logo, favicon, and bookable offerings (such as places to stay or menu items via product_grid) are present, and ask the user for any missing brand assets. Apply requested copy changes with update_site_page; use set_media for one image or attach_media, remove_media and reorder_media for a gallery. Read back the page and public result."
       },
       "toolContracts": {
-        "attach_media": "sha256:f56d81eab3d319657229ee60987366cca3a0fb61da5e5615e7ad6882faf62019",
+        "attach_media": "sha256:30fe5981d4d55f9583137bbd0a9f076e9e38f70ea930c263be38cdfdd3a69c03",
         "get_site_page": "sha256:78687eb713625ca0df8bd1c7a0f99b93e9aad860c41779e3704cd6eaeb0cc5a2",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_media_assets": "sha256:97b5782d44d8cf6d41886665ca3b9eb4c48d0f6bedd95989ec2f671c4a651ee7",
         "list_site_pages": "sha256:5a49aa342807192ee45d329880f2f459d1914154e9a04a43562c0ea3587879cc",
-        "remove_media": "sha256:075e4fc97902ceb8fe3fa4af87737f3f84024da51e2e995f8b6ccfa236358d1e",
-        "reorder_media": "sha256:49c1fb024a9480bc5acdd47392bbeebf16f4ec23aaf45d9d62a20da3000df6c8",
-        "set_media": "sha256:d563eff7c6fdbc133abddb6703226351f0e461c48eb52c76117fc16f4d68c243",
+        "remove_media": "sha256:d2dd16e415892bd8900fabcf5f0d352af5fdfd03113b144c30fa379f38f14eca",
+        "reorder_media": "sha256:f468a025c26e49399929741f6e86101eadca8d620c09acdfd32f2fd3374e3942",
+        "set_media": "sha256:c8ee4190c63e157b19c87d4ec8e5d1c87791d4b21c217b961e83a739c0456a4a",
         "update_site_page": "sha256:ad3bed9848189c97eb291b07c38a707d5ed06f2eaa7e6e97ce7635b0af30b8f2"
       }
     },
@@ -134787,14 +134793,14 @@
         "text": "Inspect the supplied photos and use get_workspace_context plus the relevant get_site_page, get_location, get_product or get_post read to resolve the intended owner and placement. Ask only about an ambiguous destination. Use save_media_attachment with a stable idempotency_key and the intended placement for each attachment; retries reuse that key. For an existing asset use set_media or attach_media. Read back the owner and open the public result before reporting placement."
       },
       "toolContracts": {
-        "attach_media": "sha256:f56d81eab3d319657229ee60987366cca3a0fb61da5e5615e7ad6882faf62019",
+        "attach_media": "sha256:30fe5981d4d55f9583137bbd0a9f076e9e38f70ea930c263be38cdfdd3a69c03",
         "get_location": "sha256:eeb473e44df629a24ceb82a2db6873a6b1f108dd852c2fa923f605a637439f34",
         "get_post": "sha256:fd95e9d97a5f0624dda58886752832eee80a1fef08c9c7a64d8c2af4ff3481d1",
         "get_product": "sha256:c8270bc0e91bc60249c60c0b9c8fb0c6051130a5b0e00ab51b83b228adee6af7",
         "get_site_page": "sha256:78687eb713625ca0df8bd1c7a0f99b93e9aad860c41779e3704cd6eaeb0cc5a2",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
-        "save_media_attachment": "sha256:cd5b174a7f71cf084b67a86edac4004ce52df186a65cc487aa07b1d1ce8a8869",
-        "set_media": "sha256:d563eff7c6fdbc133abddb6703226351f0e461c48eb52c76117fc16f4d68c243"
+        "save_media_attachment": "sha256:5552901092ddb50f5e4f4f63b498c2b022beb19185315a3d8b0c561851b4f028",
+        "set_media": "sha256:c8ee4190c63e157b19c87d4ec8e5d1c87791d4b21c217b961e83a739c0456a4a"
       }
     },
     {
@@ -134851,13 +134857,13 @@
         "text": "Use get_workspace_context, list_site_pages, get_site_page, list_media_assets and list_products to read the actual public pages, media and catalog. Recommend specific improvements in plain language: high-impact hero image or video, logo and favicon, brand colors, offerings showcase on the homepage, and host story with portrait on the about page. Apply the requested copy with update_site_page or update_product, and media with set_media or attach_media. Read back the changed record and verify the public result."
       },
       "toolContracts": {
-        "attach_media": "sha256:f56d81eab3d319657229ee60987366cca3a0fb61da5e5615e7ad6882faf62019",
+        "attach_media": "sha256:30fe5981d4d55f9583137bbd0a9f076e9e38f70ea930c263be38cdfdd3a69c03",
         "get_site_page": "sha256:78687eb713625ca0df8bd1c7a0f99b93e9aad860c41779e3704cd6eaeb0cc5a2",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_media_assets": "sha256:97b5782d44d8cf6d41886665ca3b9eb4c48d0f6bedd95989ec2f671c4a651ee7",
         "list_products": "sha256:76e112cfe8092528c778c4d066d079837db14504dab1eec99eefd21b499e7970",
         "list_site_pages": "sha256:5a49aa342807192ee45d329880f2f459d1914154e9a04a43562c0ea3587879cc",
-        "set_media": "sha256:d563eff7c6fdbc133abddb6703226351f0e461c48eb52c76117fc16f4d68c243",
+        "set_media": "sha256:c8ee4190c63e157b19c87d4ec8e5d1c87791d4b21c217b961e83a739c0456a4a",
         "update_product": "sha256:f6594777a4dd8f128e1e31385348c6a0db725e1a9517d7ad4a8bfebc674fcfae",
         "update_site_page": "sha256:ad3bed9848189c97eb291b07c38a707d5ed06f2eaa7e6e97ce7635b0af30b8f2"
       }

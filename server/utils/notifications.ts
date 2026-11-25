@@ -1721,7 +1721,7 @@ export async function notifyGuestThreadReply(
   }
   const support = isAirbnbSupportMessage(entry)
   if (entry.author_kind !== 'guest' && !support) throw new Error(`Message ${entry.id} is neither a guest's nor Airbnb Support's; nobody is alerted to it`)
-  const { guestName, body, photos, preview, history } = await alertedMessage(db, thread, entry, business)
+  const { guestName, body, photos, preview, history } = await alertedMessage(db, env, thread, entry, business)
   const ownerMessage = {
     ...messageReceived({
       sender: support ? { kind: 'support' } : { kind: 'person', name: guestName, email: opts.guestEmail ?? null },
@@ -1758,14 +1758,14 @@ const ALERT_HISTORY = 3
 
 /**
  * The message an alert is about, read from the conversation itself: its words,
- * its photos as served from the media store (public URLs a mail client and Meta
- * can fetch), what a list says when it has no words, and the last messages
- * before it, named as the inbox names their authors.
+ * its photos as links that expire (WhatsApp and push fetch them as they send; the
+ * email says how many were sent), what a list says when it has no words, and the
+ * last messages before it, named as the inbox names their authors.
  */
-async function alertedMessage(db: DbClient, thread: GuestRequest, entry: MessageRow, business: string) {
+async function alertedMessage(db: DbClient, env: NotificationEnv, thread: GuestRequest, entry: MessageRow, business: string) {
   // The conversation reader depends on this module through the inbox, so it is loaded when an alert needs it.
   const { guestMessageAlertWindow } = await import('~/server/domain/guest-threads/detail')
-  const { messages, channelGuestName } = await guestMessageAlertWindow(db, entry, thread, business, ALERT_HISTORY)
+  const { messages, channelGuestName } = await guestMessageAlertWindow(db, env, entry, thread, business, ALERT_HISTORY)
   const alerted = messages.at(-1)!
   const guestFullName = isAirbnbSupportMessage(entry) ? 'Airbnb Support' : thread.payload.guest.name ?? channelGuestName ?? participantLabel(thread)
   const guest = isAirbnbSupportMessage(entry) ? guestFullName : channelGuestName ?? guestFullName
@@ -1778,7 +1778,7 @@ async function alertedMessage(db: DbClient, thread: GuestRequest, entry: Message
     || (item.attachments.length ? messagePreview(null, item.attachments.length) : fileCount(item.payload) === 1 ? 'Sent an attachment' : `Sent ${fileCount(item.payload)} attachments`)
   return {
     guestName: guestFullName,
-    // A file with no words is still what the guest sent; photos show themselves.
+    // A file with no words is still what the guest sent; the quote says how many photos came.
     body: alerted.body?.trim() || (alerted.attachments.length ? '' : said(alerted)),
     photos: alerted.attachments.map(photo => ({ imageUrl: photo.url, alt: photo.alt ?? `Photo from ${guest}` })),
     preview: said(alerted),
@@ -1858,7 +1858,7 @@ export async function notifyAirbnbInquiry(env: NotificationEnv, db: DbClient, in
     channelHome(db, thread),
     inquiryRecord(db, thread, input.inquiry),
     buildOwnerThreadInboxUrl(env, db, { organizationId: thread.organization_id, threadId: thread.id }),
-    listMessagePhotos(db, [asked.id]).then(found => found.get(asked.id) ?? []),
+    listMessagePhotos(db, env, [asked.id]).then(found => found.get(asked.id) ?? []),
   ])
   const message = inquiryReceivedMessage({
     guestName: input.inquiry.guestName, message: asked.body.trim(), record, replyUrl,
@@ -2150,7 +2150,7 @@ async function notifyTaskPeople(env: NotificationEnv, db: DbClient, input: { org
     memberIds: members.filter(member => recipientIds.has(member.userId)).map(member => member.id),
   })).filter(recipient => recipientIds.has(recipient.userId))
   const results = await Promise.allSettled([...recipientIds].map(async (userId) => {
-    const task = await describeTaskForAlert(db, input.organizationId, input.taskId, userId)
+    const task = await describeTaskForAlert(db, env, input.organizationId, input.taskId, userId)
     const taskUrl = await dashboardPathUrl(env, db, input.organizationId, task.page)
     const message = { ...taskAlertMessage({ kind: input.kind, actorName: actor?.name ?? null, task, organizationName: organization.name, taskUrl }), organizationLogoUrl }
     const recipient = recipients.find(item => item.userId === userId)

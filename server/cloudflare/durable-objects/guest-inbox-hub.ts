@@ -94,7 +94,7 @@ async function writtenMessageTail(env: GuestInboxHubEnv, event: DashboardInvalid
   if (event.type !== 'MESSAGE_CREATE' || !event.message) return undefined
   const written = event.message
   try {
-    const tail = await loadConversationPage(env.DB, { conversationId: event.conversation_id, ...viewer }, { before: written.sequence + 1, limit: 3 })
+    const tail = await loadConversationPage(env.DB, env, { conversationId: event.conversation_id, ...viewer }, { before: written.sequence + 1, limit: 3 })
     return tail.entries.some(entry => entry.type !== 'day' && entry.id === written.id) ? tail : undefined
   } catch (error) {
     if (error instanceof HTTPError && error.status === 404) return undefined

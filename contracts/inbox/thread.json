@@ -79,8 +79,8 @@
         {
           "height": 3,
           "id": "00000000-0000-4000-8000-000000000006",
-          "thumbnail_url": "https://media.example.test/organizations/org-contract/media/00000000-0000-4000-8000-000000000006.avif",
-          "url": "https://media.example.test/organizations/org-contract/media/00000000-0000-4000-8000-000000000006.avif",
+          "thumbnail_url": "https://proof.example/api/media/00000000-0000-4000-8000-000000000006?exp=1793991600&sig=90ee5a4f7e9980d7f1f3063f0b5bc7e7440b8457b3c58fd411f2410873abcb52",
+          "url": "https://proof.example/api/media/00000000-0000-4000-8000-000000000006?exp=1793991600&sig=90ee5a4f7e9980d7f1f3063f0b5bc7e7440b8457b3c58fd411f2410873abcb52",
           "width": 4
         }
       ],

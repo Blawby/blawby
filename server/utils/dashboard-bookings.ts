@@ -143,12 +143,12 @@ export async function dashboardBookingDetails(event: H3Event, record?: { orgSlug
   const plan = prepareDashboardBookingRead(membership, bookingId)
   const rows = preloaded ?? await executeBatch(db, [membership, ...plan.queries], { operation: 'Read the staff reservation' })
   const { access, organization, booking, session } = await dashboardBookingContext(event, 'read', undefined, record, rows)
-  const viewer = { userId: session.user.id, verifiedEmail: session.user.emailVerified ? session.user.email : null, canManage: Boolean(access.manage || booking.operates || booking.assigned) }
-  const agreementOf = () => bookingAgreementFromRows(rows.slice(plan.agreementOffset), viewer, { userId: session.user.id, name: session.user.name })
+  const viewer = { userId: session.user.id, verifiedEmail: session.user.emailVerified ? session.user.email : null, canManage: Boolean(access.manage || booking.operates || booking.assigned), guest: false }
+  const agreementOf = () => bookingAgreementFromRows(env, rows.slice(plan.agreementOffset), viewer, { userId: session.user.id, name: session.user.name })
   if (booking.unit === 'slot') {
     const facts = rows.slice(2, plan.stayOffset)
     const canReadPayments = await roleAllows({ ...organization, permissions: { payments: ['read'] } })
-    return { booking: { ...await plan.timed.read(db, env, facts, canReadPayments), ...agreementOf() }, manage: access.manage }
+    return { booking: { ...await plan.timed.read(db, env, facts, canReadPayments), ...await agreementOf() }, manage: access.manage }
   }
   if (!access.manage) {
     const [stayRows, houseRows, media] = await executeBatch(db, [
@@ -188,7 +188,7 @@ export async function dashboardBookingDetails(event: H3Event, record?: { orgSlug
   const pending_changes = stay.channel === 'airbnb' && channelOwned && changes!.results.length
     ? pendingStayChangesFromRows(changes!.results, bookingId, sourceLocaleFromRows(organization.id, locale!.results).locale)
     : []
-  return { booking: { ...nightBooking(stay), available_actions, pending_changes, ...agreementOf() }, manage: true, home: { ...home, image_url: home.photo_urls[0] ?? null }, can_message_guest: canMessageGuest }
+  return { booking: { ...nightBooking(stay), available_actions, pending_changes, ...await agreementOf() }, manage: true, home: { ...home, image_url: home.photo_urls[0] ?? null }, can_message_guest: canMessageGuest }
 }
 
 interface BookingListQuery { unit?: unknown; from?: unknown; to?: unknown; product_id?: unknown; include_cancelled?: unknown }

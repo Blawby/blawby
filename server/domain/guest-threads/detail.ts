@@ -5,6 +5,7 @@ import { channelSenderName, MIRRORED_EVENT, OPENING_EVENT, SCHEDULED_MESSAGE_EVE
 import { readConversationHistory } from '~/server/domain/conversation-history-data'
 import type { GuestRequest } from '~/server/domain/requests'
 import { readConversationEnrichment } from './deliveries'
+import type { MediaLinkEnv } from '~/server/utils/private-media'
 
 const channelGuestNameSql = (conversationId: string) => `SELECT trim(json_extract(m.payload_json, '$.meta.name')) FROM messages m
   WHERE m.conversation_id = ${conversationId} AND m.author_kind = 'guest' AND m.event_name = '${MIRRORED_EVENT}'
@@ -12,12 +13,12 @@ const channelGuestNameSql = (conversationId: string) => `SELECT trim(json_extrac
   ORDER BY m.sequence DESC LIMIT 1`
 
 /** The alert projects only its message and the prior messages it can quote. */
-export async function guestMessageAlertWindow(db: DbClient, entry: MessageRow, guest: GuestRequest, business: string, historyLimit: number) {
+export async function guestMessageAlertWindow(db: DbClient, env: MediaLinkEnv, entry: MessageRow, guest: GuestRequest, business: string, historyLimit: number) {
   const filter = `(m.author_kind NOT IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) OR m.event_name IN ('${OPENING_EVENT}', '${SCHEDULED_MESSAGE_EVENT}', '${MIRRORED_EVENT}'))
     AND (${messageHasContentSql('m')} OR json_array_length(m.payload_json, '$.unshownFiles') > 0)`
   const [history, anchor, sender] = await Promise.all([
-    readConversationHistory(db, entry.conversation_id, filter, { before: entry.sequence, limit: historyLimit }),
-    readConversationEnrichment(db, [entry.id], entry.author_user_id ? [entry.author_user_id] : []),
+    readConversationHistory(db, env, entry.conversation_id, filter, { before: entry.sequence, limit: historyLimit }),
+    readConversationEnrichment(db, env, [entry.id], entry.author_user_id ? [entry.author_user_id] : []),
     entry.channel === 'airbnb' ? queryFirst<{ name: string | null }>(db, `SELECT (${channelGuestNameSql('?')}) AS name`, [guest.id]) : null,
   ])
   const names = new Map([...history.actors, ...anchor.actors.map(actor => [actor.id, actor.name] as const)])

@@ -12,6 +12,7 @@ import {
   LOGO_SLOTS,
   parseLogoPresentation,
   MAX_ORDERED_MEDIA_ASSETS,
+  privateMediaPlacementSql,
   type LogoPresentation,
   type MediaCategory,
   type MediaPlacementOwnerType,
@@ -435,8 +436,8 @@ export function mediaPlacementsQuery(input: {
        -- A turnover checklist's reference photos are read only by the checklist (server/domain/turnover-checklists.ts).
        ${input.slot ? 'AND mp.slot = ?' : "AND mp.slot NOT GLOB 'turnover_checklist.*'"}
        AND (mp.status = 'active' ${input.includePendingSocialCard ? "OR (mp.slot = 'social_card' AND mp.status = 'pending')" : ''}) AND ma.status = 'active'
-       -- A private document (a booking's PDF, a listing's template) is read only through its owner's route, never as media.
-       AND ma.public_url IS NOT NULL
+       -- A private slot's file (a conversation's photo, a booking's PDF, a listing's template) is read by its owner's own read, with a link that expires, never as public media.
+       AND NOT ${privateMediaPlacementSql('mp')}
      ORDER BY mp.owner_id, mp.slot, mp.sort_order
   `,
     params: [...(typeof input.organizationId === 'string' ? [input.organizationId] : []), ...(typeof input.ownerType === 'string' ? [input.ownerType] : []), ...(owners.params ?? []), ...(input.slot ? [input.slot] : [])],
@@ -587,9 +588,9 @@ export function buildMediaAssetInsertQuery(data: CreateInput, now = new Date().t
   }
 }
 
-export async function createMediaAsset(db: DbClient, data: CreateInput, creation?: { dedupeKey: string; requestHash: string }, writeGuard?: BatchQuery): Promise<void> {
+export async function createMediaAsset(db: DbClient, data: CreateInput, creation?: { dedupeKey: string; requestHash: string }, writeGuard?: BatchQuery, queries: BatchQuery[] = []): Promise<void> {
   const query = buildMediaAssetInsertQuery(data)
-  await executeBatch(db, [...(writeGuard ? [writeGuard] : []), query, organizationEventQuery({
+  await executeBatch(db, [...(writeGuard ? [writeGuard] : []), query, ...queries, organizationEventQuery({
     organizationId: data.organization_id,
     locationId: null,
     actorId: data.created_by_user_id ?? null,
@@ -621,15 +622,8 @@ export function listMediaAssetsQuery(
 ): BatchQuery {
   const conditions = [`ma.organization_id = ${typeof organizationId === 'string' ? '?' : organizationId.sql}`,  `ma.status = 'active'`, `ma.generation_key IS NULL`]
   const params: SqlBindValue[] = typeof organizationId === 'string' ? [organizationId] : []
-  // A photo sent in a conversation is the conversation's, not the website's.
-  if (opts.ownerType !== 'message') {
-    conditions.push(`NOT EXISTS (SELECT 1 FROM media_placements sent WHERE sent.asset_id = ma.id AND sent.organization_id = ma.organization_id AND sent.owner_type = 'message')`)
-  }
-  // A booking's private document belongs to that booking, never the media library.
-  conditions.push(`(ma.r2_key IS NULL OR ma.r2_key NOT LIKE 'private/%')`)
-  // A turnover checklist's reference photo is the cleaning team's, never the website's.
-  conditions.push(`NOT EXISTS (SELECT 1 FROM media_placements staff WHERE staff.asset_id = ma.id AND staff.organization_id = ma.organization_id
-    AND staff.owner_type = 'product' AND staff.slot GLOB 'turnover_checklist.*')`)
+  // A private slot's file (a conversation's photo, a booking's document) is its owner's, never the media library's.
+  conditions.push(`NOT EXISTS (SELECT 1 FROM media_placements held WHERE held.asset_id = ma.id AND held.organization_id = ma.organization_id AND ${privateMediaPlacementSql('held')})`)
   if (opts.kind) { conditions.push(`ma.kind = ?`); params.push(opts.kind) }
   if (opts.search) { conditions.push(`ma.file_name LIKE ? ESCAPE '\\'`); params.push(`%${opts.search.replace(/[\\%_]/g, '\\$&')}%`) }
   if (opts.ownerType && opts.ownerId) {
@@ -814,8 +808,9 @@ export async function deleteMediaAsset(db: DbClient, env: MediaProviderEnv, id: 
     created_by_user_id: string | null
     source: string
     status: string
+    public_url: string | null
   }>(db, `
-    SELECT id, provider, cloudflare_image_id, r2_key, organization_id, created_by_user_id, source, status
+    SELECT id, provider, cloudflare_image_id, r2_key, organization_id, created_by_user_id, source, status, public_url
     FROM media_assets
     WHERE id = ? AND organization_id = ?
   `, [id, organizationId]) ?? null
@@ -838,7 +833,8 @@ export async function deleteMediaAsset(db: DbClient, env: MediaProviderEnv, id: 
   const deletions: Array<{ label: string; run: () => Promise<void> }> = []
   if (pendingAsset.provider === 'cloudflare_r2' && pendingAsset.r2_key && !references.r2ReferencedElsewhere) {
     const r2Key = pendingAsset.r2_key
-    deletions.push({ label: `R2 object ${r2Key}`, run: () => deleteFromR2(env, r2Key) })
+    const visibility = pendingAsset.public_url === null ? 'private' : 'public'
+    deletions.push({ label: `R2 object ${r2Key}`, run: () => deleteFromR2(env, r2Key, visibility) })
   }
   if (pendingAsset.cloudflare_image_id && !references.cloudflareImageReferencedElsewhere) {
     const imageId = pendingAsset.cloudflare_image_id

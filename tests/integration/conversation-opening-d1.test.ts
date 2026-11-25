@@ -66,7 +66,7 @@ test('a table booking opens with its own message and the guest note, written onc
     const sentence = openingSentence({ kind: 'booking', vertical: 'restaurant', productKind: 'table', productTitle: 'Krabi tables', guestName: 'Filip Heurckmans', guestPhone: '+32475699444', answers: [], partySize: 4, partySizeIsMinimum: false,
       startsAt: '2026-11-04T07:00:00.000Z', timezone: 'Asia/Bangkok', placeTitle: 'Kikuzuki Krabi' })
     assert.match(sentence, /^Table for 4 on Wed, Nov 4 at 2:00 PM at Kikuzuki Krabi\. Filip Heurckmans, \+32 /)
-    const messages = async (id: string) => (await conversationPageFor(db, principal, id, { before: null, limit: 40 }, new Date('2026-11-05T00:00:00.000Z'))).entries
+    const messages = async (id: string) => (await conversationPageFor(db, env, principal, id, { before: null, limit: 40 }, new Date('2026-11-05T00:00:00.000Z'))).entries
       .flatMap(item => item.type === 'message' ? [[item.side, item.body]] : [])
 
     // Created: the booking's own message, then the guest's note, and nothing twice on a replay of the same batch.
@@ -103,7 +103,7 @@ test('a table booking opens with its own message and the guest note, written onc
     const invite = await createConversationGuestInvite(db, { organizationId: ORG, userId: booker.id }, companionInvite)
     const publication = { GUEST_INBOX_HUBS: { idFromName: () => 'hub', get: () => ({ fetch: () => Promise.resolve(new Response(null, { status: 204 })) }) } } as unknown as Parameters<typeof acceptConversationGuestInvite>[1]
     await acceptConversationGuestInvite(db, publication, { token: invite.token, user: traveler })
-    const page = (userId: string, limit = 40) => loadConversationPage(db, { conversationId: 'shared', userId }, { before: null, limit })
+    const page = (userId: string, limit = 40) => loadConversationPage(db, env, { conversationId: 'shared', userId }, { before: null, limit })
     const list = (q?: string) => listConversations(db, null, { userId: traveler.id, buyerAudience: true, q })
     const privateWords = 'Private card receipt'
     const payment = await appendMessage(db, { conversationId: 'shared', authorKind: PLATFORM_MESSAGE_AUTHOR_KIND, authorUserId: null, eventName: 'payment.payment_captured', body: privateWords })
@@ -135,7 +135,7 @@ test('a table booking opens with its own message and the guest note, written onc
     assert.deepEqual(shown.map(entry => [entry.id, entry.author]), [[travelerMessage.id, 'You']])
     assert.equal(first.page.before, travelerMessage.sequence)
     assert.equal(first.page.newest, travelerMessage.sequence)
-    const previous = await loadConversationPage(db, { conversationId: 'shared', userId: traveler.id }, { before: first.page.before, limit: 1 })
+    const previous = await loadConversationPage(db, env, { conversationId: 'shared', userId: traveler.id }, { before: first.page.before, limit: 1 })
     assert.deepEqual(previous.entries.filter(entry => entry.type === 'message').map(entry => entry.id), [publicMessage.id])
     assert.equal(previous.page.before, null)
     assert.equal(await guestUnread(db, traveler.id), 0)

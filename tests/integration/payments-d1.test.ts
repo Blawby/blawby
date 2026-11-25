@@ -633,7 +633,7 @@ test('buyer Activity groups exact owned visits and immutable orders without manu
   assert.equal(retainedPayment.conversation_id,null)
   assert.equal(retainedPayment.payments![0]!.payment.id,'visit-payment')
   assert.equal(await db.prepare("SELECT buyer_user_id FROM payments WHERE id='visit-payment'").first('buyer_user_id'),'verified')
-  await assert.rejects(conversationPageFor(db,'verified',opening.id), {statusCode:404})
+  await assert.rejects(conversationPageFor(db,env,'verified',opening.id), {statusCode:404})
   assert.deepEqual(await listConversations(db,null,{userId:'verified',buyerAudience:true}),[])
  }finally{await runtime.dispose()}
 })
@@ -654,7 +654,7 @@ test('buyer conversations hide merchant facts and preserve public unread receipt
   // A member archived it for themselves; the guest's own view does not change.
   await archiveConversation(db,{organizationId:ORG,conversationId:'buyer-conversation',userId:'other',archived:true})
   const secrets=['private-ip-hash','private-diagnostic','private-charge','private-dispute','Internal staff note','Merchant dispute diagnostic']
-  const thread=await conversationPageFor(db,'verified','buyer-conversation')
+  const thread=await conversationPageFor(db,env,'verified','buyer-conversation')
   assert.deepEqual(thread.entries.filter(entry=>entry.type!=='day').map(entry=>entry.id),[question,publicReply.id,capture.id])
   assert(thread.entries.every(entry=>entry.type!=='message'||((entry.author_user_id===null||(entry.side==='guest'&&entry.author_user_id==='verified'))&&entry.deliveries.length===0)))
   assert.equal(thread.capabilities.can_manage_participants,false)
@@ -673,7 +673,7 @@ test('buyer conversations hide merchant facts and preserve public unread receipt
   const readInbox=await listConversations(db,null,{userId:'verified',buyerAudience:true})
   assert.deepEqual(readInbox.map(row=>[row.id,row.unread]),[['buyer-conversation',false]])
   assert.deepEqual(await listConversations(db,null,{userId:'verified',buyerAudience:true,unreadOnly:true}),[])
-  assert.deepEqual((await conversationPageFor(db,'verified','buyer-conversation')).entries,thread.entries)
+  assert.deepEqual((await conversationPageFor(db,env,'verified','buyer-conversation')).entries,thread.entries)
   const input={threadId:'buyer-conversation',userId:'verified',body:'My web reply',photos:[],idempotencyKey:'buyer-reply-key'}
   const send = async ({threadId,userId,...reply}: typeof input) => {
     const {conversation,role} = await resolveConversationAccess(db,userId,threadId)
@@ -686,7 +686,7 @@ test('buyer conversations hide merchant facts and preserve public unread receipt
   assert(message)
   assert.equal(message.author_user_id,'verified')
   assert.equal(message.channel,'web')
-  const ownReplyView=await conversationPageFor(db,'verified','buyer-conversation')
+  const ownReplyView=await conversationPageFor(db,env,'verified','buyer-conversation')
   assert.equal(ownReplyView.entries.find(entry=>entry.type==='message'&&entry.id===message.id)?.author_user_id,'verified')
   assert(ownReplyView.entries.every(entry=>entry.type!=='message'||entry.author_user_id===null||(entry.side==='guest'&&entry.author_user_id==='verified')))
   // The conversation's projection: its inbox order and its reply tasks.
@@ -710,13 +710,13 @@ test('buyer conversations hide merchant facts and preserve public unread receipt
   ])
   await assert.rejects(()=>send({...input,userId:'other'}),error=>error instanceof HTTPError&&error.statusCode===409)
   assert.deepEqual((await db.prepare("SELECT * FROM messages WHERE conversation_id='buyer-conversation' ORDER BY sequence").all()).results,ledger)
-  const previousActorView=await conversationPageFor(db,'other','buyer-conversation')
+  const previousActorView=await conversationPageFor(db,env,'other','buyer-conversation')
   assert(previousActorView.entries.every(entry=>entry.type!=='message'||entry.author_user_id===null))
   await assert.rejects(()=>send(input),error=>error instanceof HTTPError&&error.statusCode===404)
   await db.prepare('UPDATE messages SET author_user_id=NULL WHERE id=?').bind(message.id).run()
   const retained=(await db.prepare("SELECT * FROM messages WHERE conversation_id='buyer-conversation' ORDER BY sequence").all()).results
   await assert.rejects(()=>send({...input,userId:'other'}),error=>error instanceof HTTPError&&error.statusCode===409)
-  const historicalNullView=await conversationPageFor(db,'other','buyer-conversation')
+  const historicalNullView=await conversationPageFor(db,env,'other','buyer-conversation')
   assert(historicalNullView.entries.every(entry=>entry.type!=='message'||entry.author_user_id===null))
   await assert.rejects(()=>send(input),error=>error instanceof HTTPError&&error.statusCode===404)
   assert.deepEqual((await db.prepare("SELECT * FROM messages WHERE conversation_id='buyer-conversation' ORDER BY sequence").all()).results,retained)

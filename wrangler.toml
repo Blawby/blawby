@@ -171,6 +171,12 @@ binding = "MEDIA_BUCKET"
 bucket_name = "blawby-media"
 remote = false
 
+[[r2_buckets]]
+# A private slot's files (shared/media-placement-contract.ts): no public domain; read only through /api/media.
+binding = "PRIVATE_MEDIA_BUCKET"
+bucket_name = "blawby-media-private"
+remote = false
+
 [[kv_namespaces]]
 binding = "ORGANIZATION_CACHE"
 id = "7fadf142e35745d6bec16b260eaab2f2"
@@ -255,6 +261,12 @@ queue = "blawby-airbnb-sync-local"
 [[env.dev.r2_buckets]]
 binding = "MEDIA_BUCKET"
 bucket_name = "blawby-media"
+remote = false
+
+[[env.dev.r2_buckets]]
+# A private slot's files (shared/media-placement-contract.ts): no public domain; read only through /api/media.
+binding = "PRIVATE_MEDIA_BUCKET"
+bucket_name = "blawby-media-private"
 remote = false
 
 [[env.dev.kv_namespaces]]
@@ -379,6 +391,12 @@ binding = "MEDIA_BUCKET"
 bucket_name = "blawby-media-staging"
 remote = false
 
+[[env.staging.r2_buckets]]
+# A private slot's files (shared/media-placement-contract.ts): no public domain; read only through /api/media.
+binding = "PRIVATE_MEDIA_BUCKET"
+bucket_name = "blawby-media-private-staging"
+remote = false
+
 [[env.staging.kv_namespaces]]
 binding = "ORGANIZATION_CACHE"
 id = "9e829557fd2b46dba4148f2ed27a5c0b"
@@ -480,6 +498,12 @@ max_concurrency = 1
 [[env.e2e.r2_buckets]]
 binding = "MEDIA_BUCKET"
 bucket_name = "blawby-media"
+remote = false
+
+[[env.e2e.r2_buckets]]
+# A private slot's files (shared/media-placement-contract.ts): no public domain; read only through /api/media.
+binding = "PRIVATE_MEDIA_BUCKET"
+bucket_name = "blawby-media-private"
 remote = false
 
 [[env.e2e.kv_namespaces]]

@@ -159,6 +159,7 @@ function organizationDeletionCleanupPlugin(env: CloudflareEnv): BetterAuthPlugin
 // derive the type actually produced by this file's own createAuth() instead.
 
 export interface CloudflareEnv {
+  IOS_MINIMUM_VERSION?: string
   STAFF_ACCESS_WRITES?: string
   DB: D1Database
   IMAGES: ImagesBinding

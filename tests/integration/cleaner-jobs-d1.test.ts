@@ -24,6 +24,7 @@ import { localDateTimeToInstant } from '../../utils/timezone.ts'
 import { createAuth, type CloudflareEnv } from '../../server/utils/auth.ts'
 import completeTaskRoute from '../../server/api/organizations/[organization_id]/tasks/[task_id]/complete.post.ts'
 import readTaskRoute from '../../server/api/organizations/[organization_id]/tasks/[task_id]/read.post.ts'
+import privateMediaRoute from '../../server/api/media/[asset_id].get.ts'
 import { applySchema } from './support/schema.ts'
 import { copyHomeChecklist, readHomeChecklist, saveHomeChecklist, storeReferencePhoto } from '../../server/domain/home-checklists.ts'
 import { setHomeCleaning } from '../../server/domain/home-cleaning.ts'
@@ -179,6 +180,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     const token = signed.headers.get('set-auth-token')
     assert.ok(token)
     const app = new H3()
+    app.get('/api/media/:asset_id', privateMediaRoute)
     const taskRoute = '/api/organizations/:organization_id/tasks/:task_id'
     app.post(`${taskRoute}/read`, readTaskRoute)
     app.post(`${taskRoute}/complete`, completeTaskRoute)
@@ -407,12 +409,20 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     assert.match((await cyCard(at(day(9), '09:00')))!.line ?? '', /Ready · shortage flagged/)
     assert.equal(submittedCard!.items.find(item => item.id === bed)!.photo?.id, submitted[0]!.type === 'message' ? submitted[0]!.photos[0]!.id : null)
     // A submission keeps its own reference after the editor removes the home's reference.
-    const editedChecklist = await readHomeChecklist(db, env, manager, cabin.id)
-    await saveHomeChecklist(db, env, manager, cabin.id, { expected_revision: editedChecklist.revision,
-      items: editedChecklist.items.map(({ reference_photo: _photo, ...item }) => ({ ...item, reference_photo_id: null })) })
+    for (const homeId of [cabin.id, loft.id]) {
+      const editedChecklist = await readHomeChecklist(db, env, manager, homeId)
+      await saveHomeChecklist(db, env, manager, homeId, { expected_revision: editedChecklist.revision,
+        items: editedChecklist.items.map(({ reference_photo: _photo, ...item }) => ({ ...item, reference_photo_id: null })) })
+    }
     const retainedCard = (await conversationPageFor(db, env, cook, annThread.id)).entries.find(entry => entry.type === 'message' && entry.checklist)
     const retainedPhoto = retainedCard?.type === 'message' ? retainedCard.checklist!.items.find(item => item.id === bed)!.reference_photo : null
     assert.equal(retainedPhoto?.id, reference)
+    const retainedResponse = await app.request(Object.assign(new Request(retainedPhoto!.url), { runtime: { name: 'cloudflare', cloudflare: { env } } }))
+    assert.equal(retainedResponse.status, 200)
+    assert.deepEqual(new Uint8Array(await retainedResponse.arrayBuffer()), pixels)
+    const unsignedReference = new URL(retainedPhoto!.url)
+    unsignedReference.search = ''
+    assert.equal((await app.request(Object.assign(new Request(unsignedReference), { runtime: { name: 'cloudflare', cloudflare: { env } } }))).status, 404)
     // An owner closes a job past the checklist, and its message says so.
     const reopened = await reopenTask(db, ownerViewer, annTurnover.id, { version: (await taskRow(`turnover:${ann.id}`))!.version })
     await closeTask(db, ownerViewer, annTurnover.id, { status: 'done', env })

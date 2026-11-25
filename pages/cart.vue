@@ -8,8 +8,8 @@
         <p class="text-muted">{{ t('shop.cart_empty') }}</p>
         <NuxtLink :to="localePath('/products')" class="text-sm font-semibold text-default underline">{{ t('shop.continue_shopping') }}</NuxtLink>
       </div>
-      <div v-else-if="quote" class="mt-8 grid gap-10 lg:grid-cols-12">
-        <form class="space-y-8 lg:col-span-7" @submit.prevent="checkout">
+      <div v-else-if="quote" class="mt-8 grid min-w-0 gap-10 lg:grid-cols-12">
+        <form class="min-w-0 space-y-8 lg:col-span-7" @submit.prevent="checkout">
           <section class="space-y-3">
             <h2 class="text-lg font-semibold text-default">{{ t('shop.delivery') }}</h2>
             <div class="grid grid-cols-2 gap-3">
@@ -60,19 +60,19 @@
         </form>
 
         <!-- On a phone the order and its total come before the form and its button. -->
-        <aside class="order-first h-fit space-y-4 rounded-2xl bg-elevated p-6 lg:order-last lg:col-span-5">
-          <div v-for="line in (deliveryQuote ?? quote).lines" :key="line.product_variant_id" class="flex gap-4">
-            <img v-if="line.image_url" :src="line.image_url" alt="" class="size-16 rounded-xl object-cover">
-            <div class="min-w-0 flex-1">
-              <p class="font-medium text-default">{{ line.title }}</p>
-              <p v-if="line.variant_title" class="text-sm text-muted">{{ line.variant_title }}</p>
+        <aside class="order-first min-w-0 h-fit space-y-4 rounded-2xl bg-elevated p-4 sm:p-6 lg:order-last lg:col-span-5">
+          <div v-for="line in (deliveryQuote ?? quote).lines" :key="line.product_variant_id" class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2">
+            <img v-if="line.image_url" :src="line.image_url" alt="" class="size-14 shrink-0 rounded-xl object-cover">
+            <div class="min-w-0 col-start-2">
+              <p class="break-words font-medium text-default">{{ line.title }}</p>
+              <p v-if="line.variant_title" class="break-words text-sm text-muted">{{ line.variant_title }}</p>
               <p class="text-sm text-muted">{{ lineStock(line) }}</p>
-              <div class="mt-2 flex items-center gap-3">
-                <UInputNumber :model-value="line.quantity" :min="1" :max="99" size="sm" class="w-28" :disabled="submitting" :aria-label="t('shop.quantity')" @update:model-value="value => cart.set(line.product_variant_id, value ?? 1)" />
-                <button type="button" class="text-sm text-muted underline" :disabled="submitting" @click="cart.set(line.product_variant_id, 0)">{{ t('shop.remove') }}</button>
-              </div>
+              <p class="mt-1 font-medium text-default">{{ money(line.amount) }}</p>
             </div>
-            <span class="font-medium text-default">{{ money(line.amount) }}</span>
+            <div class="col-span-2 flex flex-wrap items-center gap-3">
+              <UInputNumber :model-value="line.quantity" :min="1" :max="99" :focus-on-change="false" class="w-40 shrink-0" :disabled="submitting" :aria-label="t('shop.quantity')" @update:model-value="value => cart.set(line.product_variant_id, value ?? 1)" />
+              <button type="button" class="min-h-11 text-sm text-muted underline" :disabled="submitting" @click="cart.set(line.product_variant_id, 0)">{{ t('shop.remove') }}</button>
+            </div>
           </div>
           <div class="space-y-2 border-t border-default pt-4 text-sm">
             <div class="flex justify-between"><span>{{ t('shop.subtotal') }}</span><span>{{ money(summary.subtotal) }}</span></div>

@@ -48,6 +48,20 @@ export async function seedExperience(createTenant: CreateTenant): Promise<SeedTe
         'No experience is needed. Wear clothes that can meet a little clay, and bring a friend: the class is as much about the afternoon as the bowl.',
       ].join('\n\n'),
     })
+    const { product: item } = await tool<{ product: { id: string; slug: string; name: string; kind: string } }>('create_product', {
+      kind: 'item', name: 'Handmade Ceramic Bowl', description: 'Handmade bowls from our pottery studio, available in two sizes.', active: true,
+      options: [{ name: 'Size', values: ['Standard', 'Large'] }], processing_days: 3,
+      variants: [
+        { name: 'Standard', option_values: ['Standard'], media_asset_id: classImage.id, prices: [{ unit_amount: 1800000, currency: 'THB' }] },
+        { name: 'Large', option_values: ['Large'], media_asset_id: studioImage.id, prices: [{ unit_amount: 8000000, currency: 'THB' }] },
+      ],
+      idempotency_key: 'seed-ceramic-bowl',
+    })
+    await tool('set_media', { placement: { owner_type: 'product', owner_id: item.id, slot: 'image' }, asset_id: classImage.id })
+    for (const asset of [studioImage]) await tool('attach_media', { placement: { owner_type: 'product', owner_id: item.id, slot: 'gallery' }, asset_id: asset.id })
+    await tool('set_product_location', { product_id: item.id, location_id: aoNang.id, active: true, published: true })
+    await tool('set_product_publication', { product_id: item.id, published: true })
+    recordProduct(tenant, 'ceramic-bowl', item)
     return tenant
   } finally { await owner.dispose() }
 }

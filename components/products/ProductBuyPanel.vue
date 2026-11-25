@@ -19,7 +19,7 @@
     <p v-if="stockLine" class="text-sm text-muted">{{ stockLine }}</p>
     <div class="space-y-2">
       <label class="block text-sm text-muted" :for="quantityId">{{ t('shop.quantity') }}</label>
-      <UInputNumber :id="quantityId" v-model="quantity" :min="1" :max="Math.max(maxQuantity, 1)" class="w-36" />
+      <UInputNumber :id="quantityId" v-model="quantity" :min="1" :max="Math.max(maxQuantity, 1)" :focus-on-change="false" class="w-40 shrink-0" />
     </div>
     <div class="space-y-3">
       <TenantButton block variant="outline" :disabled="!variant || soldOut || maxQuantity === 0" @click="addToCart">{{ soldOut ? t('shop.sold_out') : t('shop.add_to_cart') }}</TenantButton>

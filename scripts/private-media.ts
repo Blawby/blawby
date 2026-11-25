@@ -28,7 +28,7 @@ import { startRemoteProxySession, unstable_readConfig } from 'wrangler'
 import { executeBatch, queryAll, type DbClient } from '../server/db/index.ts'
 import { storePlacedMediaPrivately, uploadResolvedMediaToAssetStore } from '../server/utils/media-upload.ts'
 import { readR2Object, uploadToR2 } from '../server/utils/cloudflare-r2.ts'
-import { deleteImage, downloadImageBuffer } from '../server/utils/cloudflare-images.ts'
+import { deleteImage, downloadImageBuffer, getUploadedImage } from '../server/utils/cloudflare-images.ts'
 import { privateMediaPlacementSql } from '../shared/media-placement-contract.ts'
 
 const { values } = parseArgs({
@@ -53,7 +53,6 @@ const session = await startRemoteProxySession({
   ...(production ? { PRODUCTION_DB: { type: 'd1', database_id: production.databaseId } } : {}),
   MEDIA_BUCKET: { type: 'r2', bucket_name: target.publicBucket },
   PRIVATE_MEDIA_BUCKET: { type: 'r2', bucket_name: target.privateBucket },
-  IMAGES: { type: 'images' },
 })
 const runtime = new Miniflare({
   workers: [{
@@ -67,7 +66,6 @@ const runtime = new Miniflare({
         ...(production ? { PRODUCTION_DB: { type: 'd1', id: production.databaseId, dev: { remote: true } } } : {}),
         MEDIA_BUCKET: { type: 'r2', name: target.publicBucket, dev: { remote: true } },
         PRIVATE_MEDIA_BUCKET: { type: 'r2', name: target.privateBucket, dev: { remote: true } },
-        IMAGES: { type: 'images', dev: { remote: true } },
       },
     },
   }],
@@ -83,7 +81,6 @@ const PRIVATE_SLOT_ASSETS = `SELECT DISTINCT ma.kind, ma.id, ma.organization_id,
 try {
   const bound = await runtime.getBindings<Record<string, unknown>>()
   const db = bound.DB as DbClient
-  const images = bound.IMAGES as ImagesBinding
   const publicBucket = bound.MEDIA_BUCKET as R2Bucket
   const privateBucket = bound.PRIVATE_MEDIA_BUCKET as R2Bucket
   const env = {
@@ -147,13 +144,13 @@ try {
       const found: (Candidate & { reason: string })[] = []
       for (const asset of await queryAll<Candidate & { public_url: string | null }>(db, PRIVATE_SLOT_ASSETS)) {
         if (asset.provider === 'cloudflare_images' && asset.cloudflare_image_id) {
-          const details = await images.hosted.image(asset.cloudflare_image_id).details()
+          const details = await getUploadedImage(storageEnv, asset.cloudflare_image_id)
           // Staging's copy still names the public image production replaced and deleted.
           if (!details && production) found.push({ ...asset, reason: 'image production replaced' })
           else if (!details) throw new Error(`Media asset ${asset.id} names Cloudflare image ${asset.cloudflare_image_id}, which is gone`)
           else if (!details.requireSignedURLs) found.push({ ...asset, reason: 'public image' })
           else if (!production && typeof details.meta?.replaced_image_id === 'string'
-            && await images.hosted.image(details.meta.replaced_image_id).details()) found.push({ ...asset, reason: 'public original awaiting deletion' })
+            && await getUploadedImage(storageEnv, details.meta.replaced_image_id)) found.push({ ...asset, reason: 'public original awaiting deletion' })
         } else if (asset.provider === 'cloudflare_r2' && asset.r2_key) {
           if (await publicBucket.head(asset.r2_key)) found.push({ ...asset, reason: 'file in the public bucket' })
         } else {
@@ -170,7 +167,7 @@ try {
       // Files first: on staging they move whether or not production has stored its images yet.
       for (const asset of [...before].sort((a, b) => Number(a.provider === 'cloudflare_images') - Number(b.provider === 'cloudflare_images'))) {
         if (asset.reason === 'public original awaiting deletion' && asset.cloudflare_image_id) {
-          const details = await images.hosted.image(asset.cloudflare_image_id).details()
+          const details = await getUploadedImage(storageEnv, asset.cloudflare_image_id)
           const original = details?.meta?.replaced_image_id
           if (typeof original !== 'string') throw new Error(`Private image ${asset.id} lost its public source identity`)
           await deleteImage(storageEnv, original)
@@ -179,7 +176,7 @@ try {
         if (production && asset.provider === 'cloudflare_images') {
           // Staging's row is a copy of production's: it takes the private image production stored for the same asset.
           const [stored] = await queryAll<{ cloudflare_image_id: string | null }>(bound.PRODUCTION_DB as DbClient, 'SELECT cloudflare_image_id FROM media_assets WHERE id = ? AND organization_id = ?', [asset.id, asset.organization_id])
-          const details = stored?.cloudflare_image_id ? await images.hosted.image(stored.cloudflare_image_id).details() : null
+          const details = stored?.cloudflare_image_id ? await getUploadedImage(storageEnv, stored.cloudflare_image_id) : null
           if (!stored?.cloudflare_image_id || !details?.requireSignedURLs) throw new Error(`Production has not stored media asset ${asset.id} privately yet; run --production first`)
           await executeBatch(db, [{ query: 'UPDATE media_assets SET cloudflare_image_id = ?, public_url = NULL, thumbnail_url = NULL, updated_at = ? WHERE id = ? AND organization_id = ? AND cloudflare_image_id = ?',
             params: [stored.cloudflare_image_id, new Date().toISOString(), asset.id, asset.organization_id, asset.cloudflare_image_id] }], { operation: 'Adopt production private image' })

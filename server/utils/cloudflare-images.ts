@@ -80,11 +80,8 @@ async function sha256Hex(buffer: ArrayBuffer | Uint8Array<ArrayBuffer>): Promise
  * URL tokens"), so it gets Cloudflare's own id and carries its asset id in its
  * metadata instead.
  *
- * The custom id gave a public upload two things, and the metadata gives a
- * private one the same two: a lost upload response is recovered by finding the
- * image that was stored and checking its content hash, and a retried upload for
- * the same asset (an idempotency-keyed MCP upload derives the same asset id)
- * reuses the image the first attempt stored instead of storing a second one.
+ * Private uploads use the provider's generated ID. A failed upload fails;
+ * successful MCP retries use the saved media asset and creation event.
  */
 export async function uploadImageBuffer(env: CloudflareImagesEnv, buffer: ArrayBuffer | Uint8Array<ArrayBuffer>, filename: string, contentType?: string, image?: { id: string }): Promise<{ imageId: string; publicUrl: string; thumbnailUrl: string }>
 export async function uploadImageBuffer(env: CloudflareImagesEnv, buffer: ArrayBuffer | Uint8Array<ArrayBuffer>, filename: string, contentType: string, image: { privateAssetId: string; replacedImageId?: string }): Promise<{ imageId: string; publicUrl: null; thumbnailUrl: null }>
@@ -98,10 +95,6 @@ export async function uploadImageBuffer(
   assertCloudflareImagesConfigured(env)
   const contentHash = await sha256Hex(buffer)
   const privateAssetId = 'privateAssetId' in image ? image.privateAssetId : null
-  if (privateAssetId) {
-    const stored = await findPrivateImage(env, privateAssetId, contentHash)
-    if (stored) return { imageId: stored, publicUrl: null, thumbnailUrl: null }
-  }
   const form = new FormData()
   form.append('file', new Blob([buffer], { type: contentType }), filename)
   if ('id' in image) form.append('id', image.id)
@@ -120,9 +113,10 @@ export async function uploadImageBuffer(
     if (!returned || ('id' in image && returned !== image.id)) throw new Error(`CF Images upload did not return image ${'id' in image ? image.id : `for asset ${privateAssetId}`}`)
     imageId = returned
   } catch (error) {
+    if ('privateAssetId' in image) throw error
     let uploaded: string | null
     try {
-      uploaded = privateAssetId ? await findPrivateImage(env, privateAssetId, contentHash) : await publicImageMatching(env, (image as { id: string }).id, contentHash)
+      uploaded = await publicImageMatching(env, image.id, contentHash)
     } catch (readError) {
       throw new AggregateError([error, readError], `The upload result for ${privateAssetId ? `asset ${privateAssetId}` : `image ${(image as { id: string }).id}`} could not be read`, { cause: readError })
     }
@@ -140,17 +134,6 @@ export async function uploadImageBuffer(
 async function publicImageMatching(env: CloudflareImagesEnv, imageId: string, contentHash: string): Promise<string | null> {
   const uploaded = await getUploadedImage(env, imageId)
   return uploaded && !uploaded.draft && uploaded.meta?.content_sha256 === contentHash ? imageId : null
-}
-
-/** The private image stored for an asset, found by the asset id its metadata carries. */
-async function findPrivateImage(env: CloudflareImagesEnv, assetId: string, contentHash: string): Promise<string | null> {
-  if (!env.IMAGES) throw new Error('The Cloudflare Images binding is required to store a private image')
-  const { images } = await env.IMAGES.hosted.list({ filter: { metadata: { asset_id: assetId } }, limit: 2 })
-  if (images.length > 1) throw new Error(`Cloudflare Images holds more than one image for asset ${assetId}`)
-  const found = images[0]
-  if (!found) return null
-  if (found.draft || found.meta?.content_sha256 !== contentHash) throw new Error(`Cloudflare image ${found.id} for asset ${assetId} does not hold these bytes`)
-  return found.id
 }
 
 /**
@@ -208,7 +191,7 @@ export async function deleteImage(env: CloudflareImagesEnv, imageId: string): Pr
  * The stored filename of an image, from Cloudflare rather than from anything a
  * client sent. Null when the image is gone.
  */
-async function getUploadedImage(env: CloudflareImagesEnv, imageId: string) {
+export async function getUploadedImage(env: CloudflareImagesEnv, imageId: string) {
   assertCloudflareImagesConfigured(env)
   const res = await fetch(`${apiBase(env)}/v1/${imageId}`, {
     headers: authHeader(env),
@@ -216,7 +199,7 @@ async function getUploadedImage(env: CloudflareImagesEnv, imageId: string) {
   if (res.status === 404) return null
   if (!res.ok) throw new Error(`CF Images lookup error ${res.status}: ${await res.text()}`)
   // The details response carries the metadata an upload sent as `meta`.
-  const data = await res.json() as { result?: { id?:string; filename?:string; meta?:Record<string,unknown>; draft?:boolean } }
+  const data = await res.json() as { result?: { id?:string; filename?:string; meta?:Record<string,unknown>; draft?:boolean; requireSignedURLs?: boolean } }
   if (data.result?.id !== imageId || typeof data.result.filename !== 'string') throw new Error(`CF Images lookup did not return image ${imageId}`)
   return data.result
 }

@@ -59,7 +59,15 @@ test('physical product media, variant SEO and mobile cart quantities work throug
     })
     expect(layout.overflow).toBeLessThanOrEqual(1)
     expect(layout.textWidth).toBeGreaterThanOrEqual(32)
-    if (width < 1024) expect(Math.abs(layout.left - layout.right)).toBeLessThanOrEqual(1)
+    if (width < 1024) {
+      expect(Math.abs(layout.left - layout.right)).toBeLessThanOrEqual(1)
+      const cartLink = await page.locator('header').getByRole('link', { name: 'Cart (2)', exact: true }).boundingBox()
+      const menu = await page.getByLabel('Toggle navigation', { exact: true }).boundingBox()
+      const booking = await page.locator('header').getByRole('link', { name: 'Book a class', exact: true }).boundingBox()
+      expect(booking!.x + booking!.width).toBeLessThanOrEqual(cartLink!.x)
+      expect(menu!.x - (cartLink!.x + cartLink!.width)).toBeGreaterThanOrEqual(0)
+      expect(menu!.x - (cartLink!.x + cartLink!.width)).toBeLessThanOrEqual(12)
+    }
   }
   await page.getByRole('button', { name: 'Decrement', exact: true }).click()
   await expect(cartQuantity).toHaveValue('1')
@@ -71,5 +79,6 @@ test('physical product media, variant SEO and mobile cart quantities work throug
   await page.setViewportSize({ width: 390, height: 844 })
   await page.evaluate(() => window.scrollTo(0, 0))
   await page.screenshot({ path: test.info().outputPath('mobile-cart.png') })
+  await page.locator('header').screenshot({ path: test.info().outputPath('mobile-header.png') })
   expect(errors).toEqual([])
 })

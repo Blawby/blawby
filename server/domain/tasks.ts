@@ -1449,9 +1449,14 @@ export async function updateTask(db: DbClient, viewer: TaskViewer, taskId: strin
   if (JSON.stringify(after) === JSON.stringify(before)) fail(422, 'INVALID_TASK_FIELD', 'Provide at least one change', 'task')
   const reassigned = after.assigned_member_id !== before.assigned_member_id
   const results = await executeBatch(db, [{
-    query: `UPDATE tasks SET assigned_member_id = ?, starts_at = ?, due_at = ?, notes = ?, title = ?, version = version + 1, updated_at = ?
+    // A clean handed to someone by hand is theirs, not offered, and confirmed only once they accept it (#2091).
+    query: `UPDATE tasks SET assigned_member_id = ?, starts_at = ?, due_at = ?, notes = ?, title = ?,
+        claim_role = CASE WHEN ? = 1 AND kind = 'turnover' THEN NULL ELSE claim_role END,
+        accepted_member_id = CASE WHEN ? = 1 AND kind = 'turnover' THEN NULL ELSE accepted_member_id END,
+        accepted_at = CASE WHEN ? = 1 AND kind = 'turnover' THEN NULL ELSE accepted_at END,
+        version = version + 1, updated_at = ?
       WHERE organization_id = ? AND id = ? AND version = ? AND status = 'open'`,
-    params: [after.assigned_member_id, startsAt, dueAt, notes, title, new Date().toISOString(), viewer.principal.organizationId, taskId, current.version],
+    params: [after.assigned_member_id, startsAt, dueAt, notes, title, reassigned ? 1 : 0, reassigned ? 1 : 0, reassigned ? 1 : 0, new Date().toISOString(), viewer.principal.organizationId, taskId, current.version],
   }, taskEventQuery(viewer, current, reassigned ? 'task.assigned' : 'task.updated', { before, after })], { operation: 'Update task' })
   if (results[0]?.meta.changes !== 1) fail(409, 'TASK_VERSION_CONFLICT', 'This task changed since you opened it; reload it and try again', 'version')
   return afterWrite(db, viewer, taskId, reassigned && assigned ? assigned : undefined)

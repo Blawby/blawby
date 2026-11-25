@@ -470,7 +470,13 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
       const conversations = (await teamThreads(viewer.principal)).filter(item => item.booking_id === eve.id)
       const pages = await Promise.all(conversations.map(item => conversationPageFor(db, viewer.principal, item.id)))
       const actions = pages.flatMap(page => Object.entries(page.job_actions ?? {}).filter(([, id]) => id === eveClean.id))
-      assert.equal(actions.length, 1, 'the assignee has exactly one actionable post')
+      assert.equal(actions.length, 1, actions.length === 1 ? 'the assignee has exactly one actionable post' : JSON.stringify({
+        viewer: viewer.memberId, task: await taskRow(`turnover:${eve.id}`),
+        conversations: await Promise.all(conversations.map(async conversation => ({
+          id: conversation.id, participants: conversation.participants.map(person => person.id), posts: await automatic(conversation.id),
+          actions: pages.find(page => page.conversation.id === conversation.id)?.job_actions,
+        }))),
+      }))
       const page = pages.find(item => item.job_actions?.[actions[0]![0]] === eveClean.id)!
       const lifecycle = (await automatic(page.conversation.id)).filter(message => message.key.startsWith(jobKey(eveClean))
         || jobEndKeys(eveClean.id).some(end => message.key === end || message.key.startsWith(`${end}:`)))

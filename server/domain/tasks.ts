@@ -11,7 +11,7 @@ import { creationDedupeKey, creationRecordOf, creationRecordQuery, creationReque
 import { publishBusinessInvalidation, publishConversationEvent } from '~/server/cloudflare/guest-inbox-events'
 import { conversationMemberSql, messageQueries, participantGuard } from '~/server/domain/conversations'
 import { firstName } from '~/server/domain/guest-threads/presentation'
-import { discardMessagePhotos, groupMessagePhotos, messagePhotoPlacements, messagePhotoRowsSql, MessagePhotoRejection, uploadMessagePhotos, type MessagePhoto, type MessagePhotoRow } from '~/server/domain/guest-threads/attachments'
+import { discardMessagePhotos, groupMessagePhotos, MAX_MESSAGE_PHOTOS, messagePhotoPlacements, messagePhotoRowsSql, MessagePhotoRejection, uploadMessagePhotos, type MessagePhoto, type MessagePhotoRow } from '~/server/domain/guest-threads/attachments'
 import { bookingEditorPath, guestConversationPath } from '~/server/utils/dashboard-links'
 import { ownerPicture } from '~/server/notifications/hero'
 import { groupMediaPlacements, mediaPlacementsQuery } from '~/server/utils/media-asset-manager'
@@ -21,6 +21,8 @@ import { BOOKING_RECORDS_SQL, bookingDay } from '~/server/domain/requests'
 import { resolveBookingPresentation } from '~/utils/booking-presentation'
 import { getVerticalCopy } from '~/utils/vertical-copy'
 import { guestGroup } from '~/shared/dashboard-today'
+import { checkedSubmission, checklistColumnsSql, checklistOf, resolveTaskChecklist, submissionBody, WITHOUT_CHECKLIST, type ChecklistColumns } from '~/server/domain/turnover-checklists'
+import type { ChecklistSubmission, HomeTurnoverChecklist, TaskChecklist } from '~/shared/turnover-checklist'
 
 /*
   A turnover or failed scheduled message follows changes to its subject.
@@ -387,7 +389,7 @@ export function taskScopeSql(alias: string, who: () => ViewerTerms): string {
 }
 
 /** `taskScopeSql` for a resolved viewer: every term is bound, in the order the SQL reads it. */
-function scopeSql(viewer: TaskViewer, alias = 't'): { sql: string; params: unknown[] } {
+export function scopeSql(viewer: TaskViewer, alias = 't'): { sql: string; params: unknown[] } {
   const params: unknown[] = []
   const { organizationId, userId } = viewer.principal
   const bind = (value: unknown) => { params.push(value); return '?' }
@@ -451,6 +453,8 @@ export interface TaskView {
   /** The owner's instructions. */
   notes: string | null
   outcome: { note: string | null; photos: TaskPhoto[]; closed_at: string; closed_by: string | null } | null
+  /** A turnover at a home with a checklist: what Done asks for, counts resolved against the next arrival now. */
+  checklist: TaskChecklist | null
   /** The dashboard page of the task's subject, when it has one. */
   path: string | null
   product_id: string | null
@@ -484,7 +488,7 @@ interface Context {
   people: Map<string, { name: string; userId: string }>
   users: Map<string, string>
   /** An offering by id; a task's offering without a name is a broken record. */
-  product: (id: string) => { name: string; kind: ProductKind; imageUrl: string | null } | null
+  product: (id: string) => { name: string; kind: ProductKind; imageUrl: string | null; checklist: HomeTurnoverChecklist['items'] } | null
   locations: Map<string, string>
   stay: (id: string) => StayFacts | null
   arrival: (stay: StayFacts) => StayFacts | null
@@ -544,7 +548,7 @@ function taskContextQueries(organizationId: string, listed: { sql: string; param
     query(`SELECT ${STAY_FACTS} FROM ${stays} WHERE s.organization_id = ${org} AND s.product_session_id IS NULL AND s.id IN ${stayIds}`),
     query(`SELECT id, json_extract(payload_json, '$.guest.name') AS guest_name, json_extract(payload_json, '$.participant.title') AS participant
       FROM conversations WHERE organization_id = ${org} AND kind = 'booking' AND booking_id IN ${bookingIds}`),
-    query(`SELECT p.id, p.kind, CASE WHEN p.kind = 'stay' THEN c.internal_name ELSE p.name END AS name
+    query(`SELECT p.id, p.kind, CASE WHEN p.kind = 'stay' THEN c.internal_name ELSE p.name END AS name, ${checklistColumnsSql('c')}
       FROM products p LEFT JOIN product_stay_configs c ON c.organization_id = p.organization_id AND c.product_id = p.id
       WHERE p.organization_id = ${org} AND p.id IN (${productIds})`),
     { query: `WITH listed AS (${listed.sql}), scope(organization_id) AS (SELECT ?) ${pictures.query}`, params: [...listed.params, organizationId, ...pictures.params!] },
@@ -569,7 +573,7 @@ function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ r
       Array<{ slug: string; vertical: string }>, Array<{ id: string; userId: string; name: string }>, Array<{ id: string; title: string }>,
       DeliveryTaskMessage[],
       Array<{ id: string; booking_id: string | null }>, BookedRow[], StayRow[], Array<{ id: string; guest_name: string | null; participant: string | null }>,
-      Array<{ id: string; name: string | null; kind: ProductKind }>, unknown[],
+      Array<{ id: string; name: string | null; kind: ProductKind } & { [K in keyof ChecklistColumns]: ChecklistColumns[K] | null }>, unknown[],
       Array<{ task_id: string; message_id: string; body: string | null } & (MessagePhotoRow | { owner_id: null })>,
       Array<{ id: string; conversation_id: string; guest_name: string | null; participant: string | null; body: string | null }>,
       Array<{ id: string; number: number; conversation_id: string | null; guest_name: string | null; delivery_method: string; items: string; first_product_id: string | null; country: string | null }>,
@@ -600,7 +604,8 @@ function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ r
       const product = offerings.get(id)
       if (!product) return null
       if (!product.name?.trim()) throw new Error(`Product ${product.id} has no name for this task`)
-      return { name: product.name, kind: product.kind, imageUrl: ownerPicture('product', placements.get(id) ?? [], [])?.imageUrl ?? null }
+      return { name: product.name, kind: product.kind, imageUrl: ownerPicture('product', placements.get(id) ?? [], [])?.imageUrl ?? null,
+        checklist: product.turnover_checklist === null ? [] : checklistOf({ turnover_checklist: product.turnover_checklist, turnover_references: product.turnover_references! }, product.id) }
     },
     locations: new Map(locations.map(location => [location.id, location.title])),
     stay,
@@ -655,6 +660,7 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
   let face: TaskView['face'] = product ? 'photo' : 'compact'
   let image: string | null = product?.imageUrl ?? null
   let avatar: TaskView['avatar'] = null
+  let checklist: TaskChecklist | null = null
   switch (row.kind) {
     case 'turnover': {
       const stay = context.stay(row.subject_id!)
@@ -666,6 +672,8 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
       const checkout = row.starts_at === null ? null : time(row.starts_at)
       checkoutSide = { label: 'Checkout', time: checkout ?? 'Time not set', guest: who(stay.guest_name) }
       const next = context.arrival(stay)
+      // The home's checklist, its counts for the party arriving next as the bookings stand now.
+      checklist = resolveTaskChecklist(product.checklist, next ? { guests: next.adults + next.children, check_in_date: next.check_in_date } : null)
       if (next) {
         const localTime = row.due_at === null ? 'Time not set' : time(row.due_at)
         const party = next.adults + next.children
@@ -884,7 +892,7 @@ function present(row: TaskRow, viewer: TaskViewer, context: Context, now: Date):
     person: row.status === 'open' ? assignee : closer, assignee, action, sheet: { ...sheet, checkout: checkoutSide, checkin: checkinSide },
     ...(available ? { claim: { label: 'Claim', path: taskUpdatePath(row.organization_id, row.id), version: row.version } } : {}),
     starts_at: row.starts_at, due_at: row.due_at, timezone: zone, notes: available ? null : row.notes,
-    outcome,
+    outcome, checklist: row.status === 'open' ? checklist : null,
     path, product_id: row.product_id, location_id: row.location_id, booking_id, ...(product_session_id ? { product_session_id } : {}), conversation_id, can,
     dismiss: can.skip ? { label: PERSON_WORK.has(row.kind) ? 'Skip' : 'Dismiss' } : null,
   }
@@ -1360,8 +1368,13 @@ export async function updateTask(db: DbClient, viewer: TaskViewer, taskId: strin
   return afterWrite(db, viewer, taskId, reassigned && assigned ? assigned : undefined)
 }
 
-/** Done or skipped, in one tap. What the person found they say in the job's conversation. */
-export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string, input: { status: 'done' | 'skipped'; env: CloudflareEnv; note?: unknown; photos?: MessagePhoto[] }): Promise<TaskView> {
+/**
+ * Done or skipped, in one tap. What the person found they say in the job's conversation.
+ * A turnover at a home with a checklist is done with `checklist` answers and a photo per item
+ * (`checklistPhotos`, by item id), checked against what the job requires now; done without
+ * them, the closing message says the checklist was not done.
+ */
+export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string, input: { status: 'done' | 'skipped'; env: CloudflareEnv; note?: unknown; photos?: MessagePhoto[]; checklist?: unknown; checklistPhotos?: Map<string, MessagePhoto> }): Promise<TaskView> {
   await assertRoleAllows({ ...viewer.principal, permissions: { task: ['complete'] } })
   const current = await readTaskRow(db, viewer, taskId)
   const context = await loadContext(db, viewer, [current])
@@ -1372,8 +1385,15 @@ export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string
   const now = new Date().toISOString()
   const organizationId = viewer.principal.organizationId
   const note = text(input.note, 'note', 5000)
-  const photos = input.photos ?? []
-  const authored = note !== null || photos.length > 0
+  const itemPhotos = input.checklistPhotos ?? new Map<string, MessagePhoto>()
+  if ((input.checklist !== undefined || itemPhotos.size) && (input.status !== 'done' || !view.checklist)) fail(422, 'CHECKLIST_NOT_EXPECTED', 'Only Done on a turnover with a checklist takes checklist answers', 'checklist')
+  // The answers as this job requires them now; a refusal names every missing answer and photo.
+  const checked = input.checklist === undefined || !view.checklist ? null : checkedSubmission(current.id, view.checklist, input.checklist, new Set(itemPhotos.keys()))
+  const skippedChecklist = input.status === 'done' && view.checklist !== null && checked === null
+  // An item's photo comes first in the message, in the checklist's order, then the note's own photos.
+  const itemOrder = checked ? checked.items.filter(item => itemPhotos.has(item.id)).map(item => item.id) : []
+  const photos = [...itemOrder.map(id => itemPhotos.get(id)!), ...input.photos ?? []]
+  const authored = note !== null || photos.length > 0 || checked !== null || skippedChecklist
   // A job closes in its conversation too: "Done" is the person's own message there, and nobody is alerted.
   // The conversation that carries this job is the one its automatic post went to, and the closer must still sit in it.
   const privatePrep = current.subject_type === 'product_session'
@@ -1392,16 +1412,19 @@ export async function closeTask(db: DbClient, viewer: TaskViewer, taskId: string
          WHERE later.conversation_id = c.id AND later.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND later.sequence > m.sequence))
      ORDER BY m.created_at DESC, m.id DESC LIMIT 1`, [viewer.principal.userId, organizationId, view.booking_id, privatePrep ? 1 : 0, current.assigned_member_id,
     jobKey(current), `${jobKey(current)}:after:`, privatePrep ? 1 : 0, d1JsonStringSet(jobEndKeys(current.id))]) : null
-  if (authored && !thread) fail(422, 'TASK_OUTCOME_REQUIRES_CONVERSATION', 'Notes and photos need the job’s team conversation', photos.length ? 'photos' : 'note')
-  const assetIds = await uploadMessagePhotos(db, input.env, organizationId, photos, { source: 'uploaded', userId: viewer.principal.userId }).catch((error: unknown) => {
+  if ((note !== null || photos.length > 0 || checked !== null) && !thread) fail(422, 'TASK_OUTCOME_REQUIRES_CONVERSATION', 'Notes, photos and a checklist need the job’s team conversation', checked ? 'checklist' : photos.length ? 'photos' : 'note')
+  const assetIds = await uploadMessagePhotos(db, input.env, organizationId, photos, { source: 'uploaded', userId: viewer.principal.userId }, MAX_MESSAGE_PHOTOS + itemOrder.length).catch((error: unknown) => {
     if (error instanceof MessagePhotoRejection) fail(422, 'INVALID_PHOTO', error.message, 'photos')
     throw error
   })
+  // The submission names each item's photo by the asset it became.
+  const submission: ChecklistSubmission | null = checked ? { ...checked, note, items: checked.items.map(item => ({ ...item, photo_id: itemOrder.includes(item.id) ? assetIds[itemOrder.indexOf(item.id)]! : null })) } : null
+  const body = submission ? submissionBody(submission) : skippedChecklist ? [WITHOUT_CHECKLIST, note].filter(Boolean).join('\n') : authored ? note : input.status === 'done' ? 'Done' : 'Skipped'
   // The person's own message in the job's conversation, written by the one message writer.
   const message = thread ? messageQueries({
     conversationId: thread.id, authorKind: 'member', authorUserId: viewer.principal.userId,
-    body: authored ? note : input.status === 'done' ? 'Done' : 'Skipped', dedupeKey: `task-closed:${taskId}:${current.version + 1}`,
-    ...(authored ? { payload: { task_outcome: true } } : {}),
+    body, dedupeKey: `task-closed:${taskId}:${current.version + 1}`,
+    ...(authored ? { payload: { task_outcome: true, ...(submission ? { checklist: submission } : {}), ...(skippedChecklist ? { checklist_skipped: true } : {}) } } : {}),
     guard: participantGuard('c', viewer.principal.userId, 'member'),
   }) : null
   try {

@@ -1,3 +1,4 @@
+import type { ChecklistSubmissionView } from '~/shared/turnover-checklist'
 import type { GuestThreadDeliveryChannel, GuestThreadDeliveryStatus, InboxPhoto, InboxThreadKind } from '~/server/domain/guest-threads/types'
 
 export const PLATFORM_MESSAGE_AUTHOR_KIND = 'blawby'
@@ -48,6 +49,8 @@ export interface ConversationMessage {
   /** Blawby's post of a job: the card the job's Done is on. */
   job: boolean
   job_status?: 'open' | 'done' | 'skipped' | 'cancelled' | null
+  /** A turnover checklist submitted with Done: each item as required and answered, flagged first, its photo one of `photos`. */
+  checklist?: ChecklistSubmissionView
   sent_at: string
   time: string | null
   body: string | null

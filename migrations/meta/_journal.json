@@ -36,6 +36,13 @@
       "when": 1795500692562,
       "tag": "0004_airbnb_listing_moves_and_prices",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1795579085576,
+      "tag": "0005_turnover_checklist",
+      "breakpoints": true
     }
   ]
 }

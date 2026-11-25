@@ -6,6 +6,7 @@ import type { ConversationEntry, ConversationMessage } from '~/shared/messages-c
 import type { GuestThreadEntryAttachmentViewModel } from './guest-threads/types'
 import { transcriptDays } from './guest-threads/presentation'
 import type { TaskStatus } from './tasks'
+import { PLATFORM_MESSAGE_AUTHOR_KINDS_SQL } from '~/shared/messages-contract'
 
 export function groupConversationEntries(entries: Exclude<ConversationEntry, { type: 'day' }>[], timeZone: string, now: Date): ConversationEntry[] {
   const dates = transcriptDays(timeZone, now)
@@ -89,7 +90,7 @@ export function conversationHistorySql(
       CASE WHEN m.enrich THEN (SELECT json_group_array(json_object('owner_id', p.owner_id, 'id', p.id, 'public_url', p.public_url,
         'thumbnail_url', p.thumbnail_url, 'alt_text', p.alt_text, 'width', p.width, 'height', p.height)) FROM (${photos}) p) END AS photo_rows,
       ${receipts} AS delivery_rows,
-      CASE WHEN m.author_kind = 'krabiclaw' AND instr(json_extract(m.payload_json, '$.key'), 'job:') = 1
+      CASE WHEN m.author_kind IN (${PLATFORM_MESSAGE_AUTHOR_KINDS_SQL}) AND instr(json_extract(m.payload_json, '$.key'), 'job:') = 1
         THEN (SELECT t.status FROM tasks t WHERE t.organization_id = m.organization_id
           AND t.id = substr(json_extract(m.payload_json, '$.key'), 5, instr(substr(json_extract(m.payload_json, '$.key'), 5) || ':', ':') - 1))
         END AS job_status

@@ -277,6 +277,8 @@ export interface StayHome {
   directions: string | null
   house_manual: string | null
   checkout_instructions: StayCheckoutInstruction[]
+  /** How many items the home's turnover checklist has (server/domain/turnover-checklists.ts reads them). */
+  turnover_checklist_items: number
   /** The member (member.id) who looks after the home; that member sees its stays. */
   assigned_member_id: string | null
   /**
@@ -465,7 +467,7 @@ function stayHomeMemberScope(alias: string, member: string, role: string, assign
     OR ${listingGrantSql(`${alias}.organization_id`, `${alias}.product_id`, member, 'calendar', role)})`
 }
 
-function visibleHomes(access: StayAccess, alias = 'c'): { sql: string; params: string[] } {
+export function visibleHomes(access: StayAccess, alias = 'c'): { sql: string; params: string[] } {
   return access.manage ? access.listingId
     ? { sql: `${alias}.product_id = ?`, params: [access.listingId] }
     : { sql: '1 = 1', params: [] } : {
@@ -475,7 +477,7 @@ function visibleHomes(access: StayAccess, alias = 'c'): { sql: string; params: s
   }
 }
 
-function requireManager(access: StayAccess): asserts access is StayAccess & { manage: true } {
+export function requireManager(access: StayAccess): asserts access is StayAccess & { manage: true } {
   if (!access.manage || access.operationalOnly) fail(403, 'STAY_ROLE_REQUIRED', 'Only workspace owners and admins can perform this operation')
 }
 
@@ -546,7 +548,7 @@ function stayHomeQueries(organization: BatchQuery, product: string | BatchQuery 
            c.listing_type, c.total_floors, c.listing_floor, c.year_built, c.property_size, c.property_size_unit, c.bedrooms, c.beds, c.bathrooms, c.amenities,
            b.cancellation_policy, b.long_term_cancellation_policy, c.check_in_method, c.check_in_instructions, c.wifi_network, c.wifi_password,
            p.tax_code, b.advance_notice_minutes, b.party_size_min, b.party_size_max, b.minimum_guest_age, b.accessibility_contact_required,
-           c.directions, c.house_manual, c.checkout_instructions, b.assigned_member_id, b.questions,
+           c.directions, c.house_manual, c.checkout_instructions, json_array_length(c.turnover_checklist) AS turnover_checklist_items, b.assigned_member_id, b.questions,
            EXISTS(SELECT 1 FROM member_scheduling ms WHERE ms.organization_id = c.organization_id
              AND ms.member_id = b.assigned_member_id AND ${PUBLISHED_PROFILE_SQL}) AS host_profile_published,
            COALESCE((SELECT pp.published FROM product_publications pp WHERE pp.organization_id = c.organization_id AND pp.product_id = c.product_id), 0) AS published,
@@ -617,6 +619,7 @@ function stayHomesFrom(rows: Array<Record<string, unknown>>, prices: Array<Price
       wifi_network: nullableText(row.wifi_network), wifi_password: nullableText(row.wifi_password),
       directions: nullableText(row.directions), house_manual: nullableText(row.house_manual),
       checkout_instructions: JSON.parse(String(row.checkout_instructions)) as StayCheckoutInstruction[],
+      turnover_checklist_items: Number(row.turnover_checklist_items),
       host_profile_published: Number(row.host_profile_published) === 1,
       assigned_member_id: row.assigned_member_id === null ? null : String(row.assigned_member_id),
       ...(() => { const questions = parseStoredFormQuestions(String(row.questions)); return { questions, questions_revision: formQuestionsRevision(questions) } })(),

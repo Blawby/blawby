@@ -25,6 +25,7 @@ import { createAuth, type CloudflareEnv } from '../../server/utils/auth.ts'
 import completeTaskRoute from '../../server/api/organizations/[organization_id]/tasks/[task_id]/complete.post.ts'
 import readTaskRoute from '../../server/api/organizations/[organization_id]/tasks/[task_id]/read.post.ts'
 import { applySchema } from './support/schema.ts'
+import { saveHomeChecklist } from '../../server/domain/home-checklists.ts'
 
 // A cleaner's job is a team conversation: the job is posted there when it is
 // theirs, reminders follow in it, a reassignment or cancellation is told
@@ -327,6 +328,53 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     await db.prepare("DELETE FROM member WHERE id = 'm-fixer'").run()
     await reconcileResponsibilities(env, db, { organizationId: ORG })
     assert.equal(await db.prepare('SELECT assigned_member_id FROM tasks WHERE id = ?').bind(leak.id).first<string>('assigned_member_id'), 'm-owner')
+
+    // A home's turnover checklist (#2091): Done names what is missing, counts follow the party arriving next, and the submission is one message.
+    const reference = (await uploadMessagePhotos(db, env, ORG, [{ bytes: pixels, filename: 'bed.avif' }], { source: 'uploaded', userId: 'owner' }))[0]!
+    const saved = await saveHomeChecklist(db, manager, cabin.id, { items: [
+      { title: 'Bed made', type: 'confirm', photo_required: true, reference_photo_id: reference },
+      { title: 'TV remote', type: 'confirm', photo_required: false, reference_photo_id: null },
+      { title: 'Bath towels', type: 'count', minimum: 1, per_guest: true, baseline: 2, photo_required: false, reference_photo_id: null },
+      { title: 'Spare toilet paper', type: 'count', minimum: 2, per_guest: false, photo_required: false, reference_photo_id: null },
+    ] })
+    assert.equal(saved.items[0]!.reference_photo?.id, reference)
+    const [bed, remote, towels, paper] = saved.items.map(item => item.id) as [string, string, string, string]
+    const ann = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'ann', check_in_date: day(10), check_out_date: day(12), adults: 2, guest_name: 'Ann', guest_email: 'ann@example.test', total_minor: 30_000 })
+    const bo = await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'bo', check_in_date: day(13), check_out_date: day(14), adults: 3, children: 1, guest_name: 'Bo', guest_email: 'bo@example.test', total_minor: 15_000 })
+    const annTurnover = (await taskRow(`turnover:${ann.id}`))!
+    const required = async () => (await getTask(db, cookViewer, annTurnover.id)).checklist!
+    assert.deepEqual([(await required()).arrival, (await required()).items.find(item => item.id === towels)!.required], [{ guests: 4, check_in_date: day(13) }, 4])
+    // The arrival is read as it stands: cancelled, the baseline applies.
+    await cancelStay(db, env, manager, bo.id, { version: bo.version, reason: 'Plans changed', financial_writes_allowed: false })
+    assert.deepEqual([(await required()).arrival_label, (await required()).items.find(item => item.id === towels)!.required], ['No arrival booked yet', 2])
+    await createStay(db, env, manager, { product_id: cabin.id, idempotency_key: 'cy', check_in_date: day(13), check_out_date: day(14), adults: 4, guest_name: 'Cy', guest_email: 'cy@example.test', total_minor: 15_000 })
+    await runOrganizationJobs(queue, env, db, ORG, at(day(5), '10:20'))
+    const submit = async (body: FormData) => app.request(Object.assign(new Request(`https://proof.example/api/organizations/${ORG}/tasks/${annTurnover.id}/complete`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}` }, body,
+    }), { runtime: { name: 'cloudflare', cloudflare: { env } } }))
+    const answers = (withBedPhoto: boolean) => {
+      const form = new FormData()
+      form.set('checklist', JSON.stringify({ items: [{ id: bed, confirmed: true }, { id: remote, confirmed: true }, { id: towels, counted: 4 }, { id: paper, counted: 1 }] }))
+      if (withBedPhoto) form.append(`photo:${bed}`, new File([pixels], 'bed.avif', { type: 'image/avif' }))
+      return form
+    }
+    const refused = await submit(answers(false))
+    assert.equal(refused.status, 422)
+    assert.deepEqual((await refused.json() as { data: unknown }).data, { code: 'CHECKLIST_INCOMPLETE', field: 'checklist', missing: [{ id: bed, title: 'Bed made', missing: 'photo' }] })
+    assert.equal((await taskRow(`turnover:${ann.id}`))!.status, 'open')
+    const accepted = await submit(answers(true))
+    assert.equal(accepted.status, 200, await accepted.clone().text())
+    assert.equal((await taskRow(`turnover:${ann.id}`))!.status, 'done')
+    const annThread = (await teamThreads(cook)).find(item => item.booking_id === ann.id)!
+    const submitted = (await conversationPageFor(db, cook, annThread.id)).entries.filter(entry => entry.type === 'message' && !entry.automatic)
+    assert.equal(submitted.length, 1, 'one message carries the whole checklist')
+    const submittedCard = submitted[0]!.type === 'message' ? submitted[0]!.checklist! : null
+    assert.deepEqual(submittedCard && [submittedCard.summary, submittedCard.items[0]!.id, submittedCard.items[0]!.shortage, submittedCard.items.find(item => item.id === towels)!.required], ['3 of 4 done · 1 short', paper, 1, 4])
+    assert.equal(submittedCard!.items.find(item => item.id === bed)!.photo?.id, submitted[0]!.type === 'message' ? submitted[0]!.photos[0]!.id : null)
+    // An owner closes a job past the checklist, and its message says so.
+    const reopened = await reopenTask(db, ownerViewer, annTurnover.id, { version: (await taskRow(`turnover:${ann.id}`))!.version })
+    await closeTask(db, ownerViewer, annTurnover.id, { status: 'done', env })
+    assert.equal(await db.prepare('SELECT body FROM messages WHERE dedupe_key = ?').bind(`task-closed:${annTurnover.id}:${reopened.version + 1}`).first<string>('body'), 'Done without the checklist')
   } finally {
     await runtime.dispose()
   }

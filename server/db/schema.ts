@@ -1304,6 +1304,11 @@ export const product_stay_configs = sqliteTable("product_stay_configs", {
 	house_manual: text(),
 	// [{ task, details }] in the order guests read them; each task once.
 	checkout_instructions: text().default("[]").notNull(),
+	// What a turnover must leave, in the order the cleaner checks it (#2091):
+	// [{ id, title, instructions, type, minimum, per_guest, baseline, photo_required }],
+	// checked by server/domain/turnover-checklists.ts. An item's reference photo
+	// is the product's `turnover_checklist.<id>` media placement. Staff only.
+	turnover_checklist: text().default("[]").notNull(),
 	created_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
 	updated_at: text().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`).notNull(),
 	created_by: text().notNull(),

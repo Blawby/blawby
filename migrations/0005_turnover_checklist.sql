@@ -1,0 +1,1 @@
+ALTER TABLE `product_stay_configs` ADD `turnover_checklist` text DEFAULT '[]' NOT NULL;

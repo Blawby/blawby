@@ -21,6 +21,7 @@ import { conversationHistorySql, conversationMessage, groupConversationEntries, 
 import { readConversationEnrichment, threadDeliveriesQuery } from './guest-threads/deliveries'
 import { bookingDay, parseGuestRequest, participantLabel } from './requests'
 import { jobBookingIdSql, jobPostMatchSql, taskScopeSql } from './tasks'
+import { submissionView } from './turnover-checklists'
 
 type TranscriptViewer = { conversationId: string; userId: string; organizationId?: string }
 type MessageContext = Pick<ConversationHistory, 'photos' | 'deliveriesByMessage'>
@@ -184,6 +185,12 @@ function presentEntries(
     projected.job = isPlatformMessageAuthor(message.author_kind) && typeof payload.key === 'string' && payload.key.startsWith('job:')
     if (projected.job) {
       projected.job_status = message.job_status ?? null
+    }
+    // A turnover checklist submitted with Done is the closer's message with its answers.
+    if (payload.checklist !== undefined) {
+      const checklist = submissionView(payload.checklist, history.photos.get(message.id) ?? [])
+      if (!checklist) throw new HTTPError({ statusCode: 500, message: `Message ${message.id} carries a checklist that cannot be read`, data: { code: 'INVALID_CHECKLIST_SUBMISSION', entry_id: message.id } })
+      projected.checklist = checklist
     }
     if (side === 'business') {
       if (newestBusiness && newestBusiness.receipt !== 'Not delivered') newestBusiness.receipt = null

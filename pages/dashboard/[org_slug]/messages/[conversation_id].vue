@@ -20,6 +20,7 @@
     <UAlert v-if="doneError" color="error" variant="soft" title="Done could not be saved" :description="getErrorMessage(doneError, 'The request failed')" class="mx-4 mb-2" />
     <OrderPanel v-if="!personalScope && conversation?.order_id" :key="conversation.order_id" :conversation-id="threadId" class="mx-4 mb-3" @fulfilled="refresh()" />
     <ConversationThread :key="threadId" :thread-id="threadId" :history="history" :personal-scope="personalScope" :reservation-to="reservationTo" :closing="closing" @done="done" />
+    <TurnoverChecklistSheet v-if="checklist" v-model:open="checklistOpen" :checklist="checklist.checklist" :path="checklist.path" :manager="checklist.manager" @done="refresh()" />
     <ConversationSheet v-if="data" v-model:open="sheetOpen" v-model:manage-guests="manageGuests" :can-manage-guests="canManageGuests" :booking-party="bookingParty" :page="data" :history="history" :on-left="left" :booking-to="reservationTo" @moved="moved" @participants-changed="refresh()" />
   </DashboardIndexPanel>
 </template>
@@ -29,6 +30,8 @@ import ConversationThread from '~/lib/components/workspace/messages/Conversation
 import ConversationSheet from '~/lib/components/workspace/messages/ConversationSheet.vue'
 import InboxAvatar from '~/lib/components/workspace/messages/InboxAvatar.vue'
 import OrderPanel from '~/components/dashboard/OrderPanel.vue'
+import TurnoverChecklistSheet from '~/lib/components/workspace/messages/TurnoverChecklistSheet.vue'
+import { isTaskChecklist, type TaskChecklist } from '~/shared/turnover-checklist'
 import { manageReservationGuestsKey, removeInboxConversationKey } from '~/lib/components/workspace/messages/guest-thread-client'
 import { accountReservationPath, guestConversationPath } from '~/shared/messages-contract'
 import { getErrorMessage } from '~/utils/errors'
@@ -81,15 +84,25 @@ const reservationOpened = ref(false)
 watch(level.child, child => { if (child !== null) reservationOpened.value = true }, { immediate: true })
 
 // A job is done in one tap; its conversation then shows "Done" as the person's own message.
+// A turnover at a home with a checklist opens the checklist instead, read as the job stands now.
 const closing = ref(false)
 const doneError = ref<unknown>(null)
+const checklist = ref<{ checklist: TaskChecklist; path: string; manager: boolean } | null>(null)
+const checklistOpen = ref(false)
 async function done(messageId: string) {
   const taskId = data.value?.job_actions?.[messageId]
   if (!taskId || !conversation.value || closing.value) return
   closing.value = true
   doneError.value = null
+  const path = `/api/organizations/${encodeURIComponent(conversation.value.organization_id)}/tasks/${encodeURIComponent(taskId)}`
   try {
-    await applicationFetch(`/api/organizations/${encodeURIComponent(conversation.value.organization_id)}/tasks/${encodeURIComponent(taskId)}/complete`, { method: 'POST', body: {}, validate: (value: unknown): value is { task: { id: string } } => isRecord(value) && isRecord(value.task) && value.task.id === taskId })
+    const { task } = await applicationFetch(path, { validate: (value: unknown): value is { task: { id: string; checklist: TaskChecklist | null; can: { edit: boolean } } } => isRecord(value) && isRecord(value.task) && value.task.id === taskId && (value.task.checklist === null || isTaskChecklist(value.task.checklist)) && isRecord(value.task.can) && typeof value.task.can.edit === 'boolean' })
+    if (task.checklist) {
+      checklist.value = { checklist: task.checklist, path: `${path}/complete`, manager: task.can.edit }
+      checklistOpen.value = true
+      return
+    }
+    await applicationFetch(`${path}/complete`, { method: 'POST', body: {}, validate: (value: unknown): value is { task: { id: string } } => isRecord(value) && isRecord(value.task) && value.task.id === taskId })
     await refresh()
   } catch (cause) {
     doneError.value = cause

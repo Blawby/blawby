@@ -1,3 +1,4 @@
+import { isChecklistSubmissionView } from '~/shared/turnover-checklist'
 import type { ComputedRef, InjectionKey } from 'vue'
 import { isRecord } from '~/utils/api-clients'
 import { isMessageIdentity, type MessageIdentity } from '~/shared/dashboard-invalidations'
@@ -90,6 +91,7 @@ export function isConversationEntry(value: unknown): value is ConversationEntry 
     && isNullableText(value.receipt) && typeof value.retryable === 'boolean' && isCount(value.unshown_files)
     && isNullableText(value.author_user_id) && typeof value.automatic === 'boolean'
     && (value.job_status === undefined || value.job_status === null || isText(value.job_status))
+    && (value.checklist === undefined || isChecklistSubmissionView(value.checklist))
     && Array.isArray(value.deliveries) && value.deliveries.every(delivery => isRecord(delivery)
       && isText(delivery.id) && isText(delivery.channel) && isText(delivery.status)
       && isNullableText(delivery.error) && isText(delivery.updated_at))

@@ -1,5 +1,10 @@
 import { memberAccessPrincipal } from '~/server/utils/member-access'
-import { closeTask, createTask, listTaskAssignees, listTasks, parseTaskListQuery, taskViewer, updateTask, TASK_KINDS } from '~/server/domain/tasks'
+import { closeTask, createTask, getTask, listTaskAssignees, listTasks, parseTaskListQuery, taskViewer, updateTask, TASK_KINDS } from '~/server/domain/tasks'
+import { copyHomeChecklist, readHomeChecklist, saveHomeChecklist } from '~/server/domain/home-checklists'
+import { listTurnoverSubmissions, photoImage, readTurnoverSubmission } from '~/server/domain/turnover-submissions'
+import { stayAccessFor } from '~/server/domain/stays'
+import { renderStructuredResponse } from '~/server/utils/mcp-render'
+import { CHECKLIST_LIMITS } from '~/shared/turnover-checklist'
 import { listOpportunities } from '~/server/domain/opportunities'
 import { organizationTool, type McpToolDefinition } from './shared'
 import { NOT_HANDLED, optionalString, requiredString, type McpExecutorContext } from './execution'
@@ -7,6 +12,32 @@ import { NOT_HANDLED, optionalString, requiredString, type McpExecutorContext } 
 const text = { type: 'string' }, nullableText = { type: ['string', 'null'] }
 const instant = { type: 'string', format: 'date-time', description: 'An instant with Z or a numeric offset.' }
 const person = { type: 'object', properties: { type: { type: 'string', enum: ['member'] }, id: text, name: text, initial: text, you: { type: 'boolean' } }, required: ['type', 'id', 'name', 'initial', 'you'] }
+const photo = { type: 'object', properties: { id: text, url: text, thumbnail_url: text }, required: ['id', 'url', 'thumbnail_url'] }
+const nullablePhoto = { anyOf: [photo, { type: 'null' }] }
+const arrival = { anyOf: [{ type: 'object', properties: { guests: { type: 'integer' }, check_in_date: text }, required: ['guests', 'check_in_date'] }, { type: 'null' }], description: 'The next confirmed arrival at the home after this turnover, as bookings stand now; null when none is booked.' }
+const taskChecklist = { anyOf: [{ type: 'object', properties: {
+  arrival, arrival_label: { ...text, description: '"4 guests arriving Fri, Nov 28" or "No arrival booked yet".' },
+  items: { type: 'array', items: { type: 'object', properties: { id: text, title: text, instructions: nullableText, type: { type: 'string', enum: ['confirm', 'count'] },
+    required: { type: ['integer', 'null'], description: 'For a count: the number this job requires for the arrival; null for a confirm.' }, photo_required: { type: 'boolean' }, reference_photo: nullablePhoto },
+  required: ['id', 'title', 'instructions', 'type', 'required', 'photo_required', 'reference_photo'] } },
+}, required: ['arrival', 'arrival_label', 'items'] }, { type: 'null' }], description: 'An open turnover at a home with a checklist: what Done asks for. Null otherwise.' }
+const homeItem = { id: text, title: { ...text, minLength: 1, maxLength: CHECKLIST_LIMITS.title }, instructions: { type: ['string', 'null'], maxLength: CHECKLIST_LIMITS.instructions },
+  type: { type: 'string', enum: ['confirm', 'count'], description: 'confirm: done or not. count: the cleaner enters a number.' },
+  minimum: { type: ['integer', 'null'], minimum: 0, maximum: CHECKLIST_LIMITS.count, description: 'For a count: the number required, or the number per arriving guest when per_guest. Null for a confirm.' },
+  per_guest: { type: 'boolean', description: 'For a count: minimum is per arriving guest (adults and children of the next confirmed stay).' },
+  baseline: { type: ['integer', 'null'], minimum: 0, maximum: CHECKLIST_LIMITS.count, description: 'For a per_guest count: what is required when no arrival is booked. Null otherwise.' },
+  photo_required: { type: 'boolean', description: 'Done is refused until the cleaner attaches a photo of this item.' } }
+const homeChecklist = { type: 'object', properties: { product_id: text, items: { type: 'array', items: { type: 'object', properties: { ...homeItem, reference_photo: nullablePhoto },
+  required: ['id', 'title', 'instructions', 'type', 'minimum', 'per_guest', 'baseline', 'photo_required', 'reference_photo'] } } }, required: ['product_id', 'items'] }
+const submittedItem = { type: 'object', properties: { id: text, title: text, instructions: nullableText, type: { type: 'string', enum: ['confirm', 'count'] }, photo_required: { type: 'boolean' },
+  required: { type: ['integer', 'null'] }, counted: { type: ['integer', 'null'] }, confirmed: { type: ['boolean', 'null'] },
+  shortage: { type: ['integer', 'null'], description: 'How many short of required, for a count.' }, flagged: { type: 'boolean', description: 'Short on a count, or a confirm answered no.' },
+  photo_id: nullableText, photo: nullablePhoto, reference_photo: nullablePhoto },
+required: ['id', 'title', 'type', 'required', 'counted', 'confirmed', 'shortage', 'flagged', 'photo', 'reference_photo'] }
+const submission = { type: 'object', properties: { task_id: text, message_id: text, conversation_id: text, product_id: text, home: text, submitted_at: text, submitted_by: nullableText,
+  without_checklist: { type: 'boolean', description: 'Done was tapped past the checklist: by an owner or admin, or from an app version that cannot show it.' },
+  checklist: { anyOf: [{ type: 'object', properties: { task_id: text, arrival, arrival_label: text, summary: text, note: nullableText, items: { type: 'array', items: submittedItem } }, required: ['task_id', 'arrival', 'arrival_label', 'summary', 'note', 'items'] }, { type: 'null' }] } },
+required: ['task_id', 'message_id', 'conversation_id', 'product_id', 'home', 'submitted_at', 'submitted_by', 'without_checklist', 'checklist'] }
 const task = { type: 'object', properties: {
   id: text, kind: { type: 'string', enum: [...TASK_KINDS] }, status: { type: 'string', enum: ['open', 'done', 'skipped', 'cancelled'] }, version: { type: 'integer' },
   image_url: nullableText,
@@ -17,6 +48,7 @@ const task = { type: 'object', properties: {
   action: { type: ['object', 'null'] }, path: nullableText,
   product_id: nullableText, location_id: nullableText, booking_id: nullableText, product_session_id: text, conversation_id: nullableText,
   can: { type: 'object', properties: { complete: { type: 'boolean' }, skip: { type: 'boolean' }, reopen: { type: 'boolean' }, assign: { type: 'boolean' }, edit: { type: 'boolean' } }, required: ['complete', 'skip', 'reopen', 'assign', 'edit'] },
+  checklist: taskChecklist,
 }, required: ['id', 'kind', 'status', 'version', 'image_url', 'status_line', 'title', 'place', 'when', 'detail', 'error', 'person', 'assignee', 'sheet', 'starts_at', 'due_at', 'timezone', 'notes', 'action', 'path', 'product_id', 'location_id', 'booking_id', 'conversation_id', 'can'] }
 const taskResult = { type: 'object', properties: { task }, required: ['task'] }
 const opportunity = { type: 'object', properties: { id: text, status_line: text, title: text, detail: text, icon: text, path: text, product_id: nullableText, location_id: nullableText,
@@ -48,6 +80,31 @@ export const TASK_TOOLS: McpToolDefinition[] = [
     inputSchema: { task_id: { ...text, minLength: 1 } }, required: ['task_id'],
     outputSchema: taskResult,
   }),
+  organizationTool({ name: 'get_home_turnover_checklist', domain: 'tasks', minimumRole: 'member', description: 'Read a place to stay’s turnover checklist: what a clean must leave, in order. Each item is confirmed or counted by the cleaner, counts can follow the guests arriving next, and some need a photo; each may have a staff-only reference photo of how it should look.',
+    inputSchema: { product_id: { ...text, minLength: 1 } }, required: ['product_id'],
+    outputSchema: { type: 'object', properties: { checklist: homeChecklist }, required: ['checklist'] },
+  }),
+  organizationTool({ name: 'set_home_turnover_checklist', domain: 'tasks', minimumRole: 'admin', description: `Replace a place to stay’s turnover checklist with items, in order (at most ${CHECKLIST_LIMITS.items}). Keep an item’s id from get_home_turnover_checklist to keep it; leave id out for a new item. reference_photo_id is an image asset id (upload one with save_media_attachment) or null for none; send the id read back to keep it. Jobs read the new checklist from now on; submissions already made keep what they were made against. An empty list removes the checklist, and Done goes back to one tap.`,
+    inputSchema: { product_id: { ...text, minLength: 1 }, items: { type: 'array', maxItems: CHECKLIST_LIMITS.items, items: { type: 'object', properties: { ...homeItem, id: { ...text, description: 'The id read from the checklist; omit for a new item.' }, reference_photo_id: { type: ['string', 'null'], description: 'An image asset id, or null.' } },
+      required: ['title', 'type', 'photo_required'], additionalProperties: false } } }, required: ['product_id', 'items'],
+    outputSchema: { type: 'object', properties: { checklist: homeChecklist }, required: ['checklist'] },
+  }),
+  organizationTool({ name: 'copy_home_turnover_checklist', domain: 'tasks', minimumRole: 'admin', description: 'Copy one place to stay’s turnover checklist, reference photos included, to other places to stay. Each target’s checklist is replaced by this one.',
+    inputSchema: { product_id: { ...text, minLength: 1, description: 'The home to copy from.' }, to_product_ids: { type: 'array', minItems: 1, items: { ...text, minLength: 1 }, description: 'The homes to copy to.' } }, required: ['product_id', 'to_product_ids'],
+    outputSchema: { type: 'object', properties: { product_ids: { type: 'array', items: text }, checklist: homeChecklist }, required: ['product_ids', 'checklist'] },
+  }),
+  organizationTool({ name: 'get_turnover_requirements', domain: 'tasks', minimumRole: 'member', description: 'Read what an open turnover job’s Done requires at a home with a checklist: each item, counts resolved for the next confirmed arrival as bookings stand now, and which need a photo. checklist is null for a home without one.',
+    inputSchema: { task_id: { ...text, minLength: 1 } }, required: ['task_id'],
+    outputSchema: { type: 'object', properties: { task_id: text, checklist: taskChecklist }, required: ['task_id', 'checklist'] },
+  }),
+  organizationTool({ name: 'list_turnover_submissions', domain: 'tasks', minimumRole: 'member', description: 'List the turnover checklists submitted with Done on days from to to (each home’s own days, at most 93), optionally at some homes: each item as required, counted or confirmed, its shortage, and photo links. Use it to total shortages, for example what to restock. Jobs done past the checklist are listed with without_checklist true.',
+    inputSchema: { from: { ...text, pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, to: { ...text, pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, product_ids: { type: 'array', minItems: 1, items: { ...text, minLength: 1 } } }, required: ['from', 'to'],
+    outputSchema: { type: 'object', properties: { submissions: { type: 'array', items: submission } }, required: ['submissions'] },
+  }),
+  organizationTool({ name: 'get_turnover_submission_photos', domain: 'tasks', minimumRole: 'member', description: 'Look at a done turnover’s checklist photos: returns each item’s photo and its reference photo as images, flagged items first, with the submission. Blawby does not judge the photos; comparing them is yours to do. item_ids narrows it to some items.',
+    inputSchema: { task_id: { ...text, minLength: 1 }, item_ids: { type: 'array', minItems: 1, items: { ...text, minLength: 1 } } }, required: ['task_id'],
+    outputSchema: { type: 'object', properties: { submission, images: { type: 'array', description: 'The images that follow, in order.', items: { type: 'object', properties: { item_id: text, title: text, kind: { type: 'string', enum: ['photo', 'reference'] } }, required: ['item_id', 'title', 'kind'] } } }, required: ['submission', 'images'] },
+  }),
   organizationTool({ name: 'list_opportunities', domain: 'tasks', minimumRole: 'admin', description: 'List what Today suggests: setup the business has not finished (connecting payments, adding a first offering, a price for each experience without one); and a welcome for each booked guest or client who has not heard from the business since booking. Each one goes away when that setup is done or the business messages the guest.',
     inputSchema: { location_id: { ...text, minLength: 1 } },
     outputSchema: { type: 'object', properties: { opportunities: { type: 'array', items: opportunity } }, required: ['opportunities'] },
@@ -77,6 +134,30 @@ export async function handleTaskTools(ctx: McpExecutorContext): Promise<unknown>
     case 'complete_task':
     case 'skip_task':
       return { task: await closeTask(db, await taskViewer(principal), requiredString(args, 'task_id'), { status: toolName === 'complete_task' ? 'done' : 'skipped', env }) }
+    case 'get_home_turnover_checklist':
+      return { checklist: await readHomeChecklist(db, await stayAccessFor(principal), requiredString(args, 'product_id')) }
+    case 'set_home_turnover_checklist':
+      return { checklist: await saveHomeChecklist(db, await stayAccessFor(principal), requiredString(args, 'product_id'), { items: args.items }) }
+    case 'copy_home_turnover_checklist':
+      return await copyHomeChecklist(db, await stayAccessFor(principal), requiredString(args, 'product_id'), { product_ids: args.to_product_ids })
+    case 'get_turnover_requirements': {
+      const view = await getTask(db, await taskViewer(principal), requiredString(args, 'task_id'))
+      return { task_id: view.id, checklist: view.checklist }
+    }
+    case 'list_turnover_submissions':
+      return await listTurnoverSubmissions(db, await taskViewer(principal), { from: args.from, to: args.to, product_ids: args.product_ids })
+    case 'get_turnover_submission_photos': {
+      const submission = await readTurnoverSubmission(db, await taskViewer(principal), requiredString(args, 'task_id'))
+      const wanted = Array.isArray(args.item_ids) ? new Set(args.item_ids as string[]) : null
+      const shown = (submission.checklist?.items ?? []).filter(item => !wanted || wanted.has(item.id)).flatMap(item => [
+        ...(item.photo ? [{ item_id: item.id, title: item.title, kind: 'photo' as const, photo: item.photo }] : []),
+        ...(item.reference_photo ? [{ item_id: item.id, title: item.title, kind: 'reference' as const, photo: item.reference_photo }] : []),
+      ])
+      const images = await Promise.all(shown.map(entry => photoImage(entry.photo)))
+      const structured = { submission, images: shown.map(({ photo: _photo, ...entry }) => entry) }
+      const caption = shown.map((entry, index) => `Image ${index + 1}: ${entry.title}, ${entry.kind === 'photo' ? 'the cleaner’s photo' : 'the reference photo'}`).join('\n')
+      return renderStructuredResponse(structured, `${JSON.stringify(structured)}\n\n${caption || 'This submission has no photos.'}`, undefined, false, images)
+    }
     case 'list_opportunities': return await listOpportunities(db, principal, { locationId: optionalString(args, 'location_id') ?? undefined })
     default: return NOT_HANDLED
   }

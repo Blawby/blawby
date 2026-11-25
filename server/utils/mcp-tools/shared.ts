@@ -939,6 +939,13 @@ export const EXPECTED_TOOL_ANNOTATIONS = {
   complete_task: { ...D, openWorldHint: true },
   skip_task: D,
   list_opportunities: R,
+  get_home_turnover_checklist: R,
+  // Replaces the home's checklist and its reference photos.
+  set_home_turnover_checklist: { ...D, idempotentHint: true },
+  copy_home_turnover_checklist: { ...D, idempotentHint: true },
+  get_turnover_requirements: R,
+  list_turnover_submissions: R,
+  get_turnover_submission_photos: R,
   get_inventory: R,
   // Each replaces what is there: a stock count, a zone's rate list, a location's pickup.
   set_inventory: D,

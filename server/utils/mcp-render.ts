@@ -4,6 +4,8 @@ export interface McpStructuredResponse {
   modelText?: string
   privateMeta?: Record<string, unknown>
   isError?: boolean
+  /** Pictures the model should see, sent as MCP image content after the text. */
+  images?: Array<{ data: string; mimeType: string }>
 }
 
 export function withMcpLink(message: string, label: string, url: string | null | undefined): string {
@@ -16,8 +18,9 @@ export function renderStructuredResponse(
   modelText?: string,
   privateMeta?: Record<string, unknown>,
   isError = false,
+  images?: McpStructuredResponse['images'],
 ): McpStructuredResponse {
-  return { __mcpStructuredResponse: true, structuredContent, modelText, privateMeta, isError }
+  return { __mcpStructuredResponse: true, structuredContent, modelText, privateMeta, isError, ...(images?.length ? { images } : {}) }
 }
 
 export function isMcpRenderResponse(value: unknown): value is McpStructuredResponse {

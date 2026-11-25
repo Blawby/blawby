@@ -1,7 +1,7 @@
 <template>
   <!-- Airbnb's Payouts: How you get paid — the bank row with Edit, Add payout method, and a Need help card. Every control acts at once at Stripe, so there is nothing to Save. -->
   <DashboardLeafPanel id="organization-payout-method" title="How you get paid" :lead="connectPending || connectError ? undefined : payout ? 'Your money goes to the bank account on file with Stripe.' : 'Add a payout method with Stripe to receive your earnings.'" :footer="false">
-    <UAlert v-if="failure" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" title="Stripe Connect is unavailable" :description="failure" />
+    <UAlert v-if="failure" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :title="connectError ? 'Payment settings could not be loaded' : countriesError ? 'Business countries could not be loaded' : 'Stripe setup could not continue'" :description="failure" />
 
     <p v-if="connectPending" role="status" class="text-muted">Loading payout settings…</p>
 

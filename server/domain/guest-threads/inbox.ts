@@ -1,6 +1,7 @@
 import { executeBatch, type DbClient } from '~/server/db'
 import type { ConversationDetails, ConversationViewerRole } from '~/shared/messages-contract'
-import { messagePhotoRowsSql, type MessagePhotoRow } from './attachments'
+import { messagePhotoLinks, messagePhotoRowsSql, type MessagePhotoRow } from './attachments'
+import type { MediaLinkEnv } from '~/server/utils/private-media'
 import type { HistoryDelivery } from './deliveries'
 import { resolveGuestThreadMailbox } from './mailbox'
 import { participantLabel, type GuestRequest } from '~/server/domain/requests'
@@ -37,7 +38,7 @@ export function conversationDeliveryReceipt(deliveries: readonly Pick<HistoryDel
  * "In this conversation": its visible photos and the viewer's mailbox actions.
  * Everyone uses the roster already loaded with the conversation.
  */
-export async function getConversationDetails(db: DbClient, conversation: ConversationRow, userId: string, role: ConversationViewerRole, now = new Date()): Promise<ConversationDetails> {
+export async function getConversationDetails(db: DbClient, env: MediaLinkEnv, conversation: ConversationRow, userId: string, role: ConversationViewerRole, now = new Date()): Promise<ConversationDetails> {
   const { id, organization_id: organizationId } = conversation
   const guard = participantGuard('c', userId, role)
   const [factsResult, photosResult] = await executeBatch(db, [
@@ -58,10 +59,13 @@ export async function getConversationDetails(db: DbClient, conversation: Convers
   const facts = factsResult!.results[0] as { support: number; blocked_at: string | null; archived_at: string | null; last_message_at: string; ends_at: string | null } | undefined
   if (!facts) conversationAccessDenied()
   const photoRows = photosResult!.results as (MessagePhotoRow & Pick<MessageRow, 'author_kind' | 'event_name' | 'occurred_at'> & { provider_time: string | null })[]
-  const photos = photoRows.filter(row => !isEventMessage(row)).map(row => ({
-    id: row.id, url: row.public_url, thumbnail_url: row.thumbnail_url ?? row.public_url, width: row.width, height: row.height,
-    sent_at: row.event_name === MIRRORED_EVENT ? providerInstant(providerTimestamp(row.provider_time, `message:${row.owner_id}`, 'provider_inserted_at')) : row.occurred_at,
-  })).sort((a, b) => b.sent_at.localeCompare(a.sent_at))
+  const photos = (await Promise.all(photoRows.filter(row => !isEventMessage(row)).map(async row => {
+    const links = await messagePhotoLinks(env, row)
+    return {
+      id: row.id, url: links.url, thumbnail_url: links.thumbnail_url ?? links.url, width: row.width, height: row.height,
+      sent_at: row.event_name === MIRRORED_EVENT ? providerInstant(providerTimestamp(row.provider_time, `message:${row.owner_id}`, 'provider_inserted_at')) : row.occurred_at,
+    }
+  }))).sort((a, b) => b.sent_at.localeCompare(a.sent_at))
   const mailbox = resolveGuestThreadMailbox(facts, facts.ends_at === null ? null : { ends_at: facts.ends_at }, now.toISOString(), { lastMessageAt: facts.last_message_at }, role === 'member' ? 'member' : 'buyer')
   const canModerate = role === 'member' && conversation.kind !== 'team' && !facts.support
   return {

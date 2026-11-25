@@ -55,10 +55,14 @@ const canManage = computed(() => (props.preloaded ?? fetched.value)?.canManage =
 const error = ref('')
 const base = computed(() => `/api/messages/${encodeURIComponent(props.conversationId)}/agreement`)
 
+// A booking's document is a private link to the media route, which saves it when asked; the listing's own agreement is a public file.
 const downloadUrl = computed(() => {
   const url = agreement.value?.signed_url ?? agreement.value?.url
-  if (!url || !url.startsWith('/api/')) return url ?? null
-  return `${url}?download=1`
+  if (!url) return null
+  const link = new URL(url)
+  if (!link.pathname.startsWith('/api/media/')) return url
+  link.searchParams.set('download', '1')
+  return link.href
 })
 
 function formatWhen(at: string) {

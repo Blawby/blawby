@@ -104,11 +104,6 @@ export function isBookingAgreement(value: unknown): value is BookingAgreement {
     && typeof value.can_sign === 'boolean' && typeof value.can_manage === 'boolean'
 }
 
-/** The URL of a booking conversation's agreement document, read through that conversation's access. */
-export function agreementDocumentPath(conversationId: string, messageId: string, signed = false): string {
-  return `/api/messages/${encodeURIComponent(conversationId)}/agreements/${encodeURIComponent(messageId)}${signed ? '/signed' : ''}`
-}
-
 function joinNames(names: string[]): string {
   return names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
 }

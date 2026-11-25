@@ -1,8 +1,17 @@
 import { errorChainForTelemetry } from '~/shared/error-telemetry'
 
-function bucket(env: ApiRecord): R2Bucket {
-  if (!env.MEDIA_BUCKET) throw new Error('MEDIA_BUCKET binding not available')
-  return env.MEDIA_BUCKET
+/**
+ * Where a file is stored follows from who may read it. `MEDIA_BUCKET` is served
+ * to anyone by its public custom domains (media.blawby.com); a private slot's
+ * file is kept in `PRIVATE_MEDIA_BUCKET`, which has no public access and is read
+ * only through the Worker's signed-in media route.
+ */
+export type R2Visibility = 'public' | 'private'
+
+function bucket(env: ApiRecord, visibility: R2Visibility): R2Bucket {
+  const binding = visibility === 'private' ? env.PRIVATE_MEDIA_BUCKET : env.MEDIA_BUCKET
+  if (!binding) throw new Error(`${visibility === 'private' ? 'PRIVATE_MEDIA_BUCKET' : 'MEDIA_BUCKET'} binding not available`)
+  return binding as R2Bucket
 }
 
 function normalizeR2Key(key: string): string {
@@ -30,23 +39,25 @@ function r2BodyBytes(body: ArrayBuffer | ArrayBufferView | ReadableStream | Blob
   return null
 }
 
-/** Upload a file to R2 and return its public CDN URL. */
+/** Upload a file to R2. A public file returns its CDN URL; a private one has none. */
 export async function uploadToR2(
   env: ApiRecord,
   key: string,
   body: ArrayBuffer | ArrayBufferView | ReadableStream | Blob,
-  contentType: string
-): Promise<string> {
+  contentType: string,
+  visibility: R2Visibility = 'public',
+): Promise<string | null> {
   const normalizedKey = normalizeR2Key(key)
   const startedAt = Date.now()
   try {
-    await bucket(env).put(normalizedKey, body, { httpMetadata: { contentType } })
+    await bucket(env, visibility).put(normalizedKey, body, { httpMetadata: { contentType } })
   } catch (putError) {
     // R2 surfaces transient internal errors as `put: ... (10001)`. Callers outside
     // uploadResolvedMediaToAssetStore log nothing, so record the write here.
     console.error({
       event: 'r2_put_failed',
       r2_key: normalizedKey,
+      visibility,
       content_type: contentType,
       bytes: r2BodyBytes(body),
       streamed: !(body instanceof ArrayBuffer || ArrayBuffer.isView(body) || body instanceof Blob),
@@ -55,13 +66,13 @@ export async function uploadToR2(
     })
     throw putError
   }
-  return getR2Url(env, normalizedKey)
+  return visibility === 'public' ? getR2Url(env, normalizedKey) : null
 }
 
 /** Delete a file from R2. */
-export async function deleteFromR2(env: ApiRecord, key: string): Promise<void> {
+export async function deleteFromR2(env: ApiRecord, key: string, visibility: R2Visibility): Promise<void> {
   const normalizedKey = normalizeR2Key(key)
-  await bucket(env).delete(normalizedKey)
+  await bucket(env, visibility).delete(normalizedKey)
 }
 
 /** Build the public CDN URL for an R2 key. */
@@ -91,17 +102,19 @@ export function getR2KeyFromPublicUrl(env: ApiRecord, value: string): string | n
   }
 }
 
-/** Generate a namespaced R2 key for a media asset. */
-/** Keys under this prefix are never served by the public media host; their owner's own route reads them after checking access. */
-export const PRIVATE_R2_PREFIX = 'private/'
-
 /** Read a stored object's bytes, or null when the key holds nothing. */
-export async function readR2Object(env: ApiRecord, key: string): Promise<Uint8Array<ArrayBuffer> | null> {
-  const object = await bucket(env).get(normalizeR2Key(key))
+export async function readR2Object(env: ApiRecord, key: string, visibility: R2Visibility): Promise<Uint8Array<ArrayBuffer> | null> {
+  const object = await bucket(env, visibility).get(normalizeR2Key(key))
   return object ? new Uint8Array(await object.arrayBuffer()) : null
 }
 
-export function buildR2Key(organizationId: string, assetId: string, filename: string, visibility: 'public' | 'private' = 'public'): string {
+/** A private file as a stream, for the signed-in media route. */
+export async function getPrivateR2Object(env: ApiRecord, key: string): Promise<R2ObjectBody | null> {
+  return await bucket(env, 'private').get(normalizeR2Key(key))
+}
+
+/** Generate a namespaced R2 key for a media asset. */
+export function buildR2Key(organizationId: string, assetId: string, filename: string): string {
   const sanitizeSegment = (value: string, label: string): string => {
     const trimmed = String(value).trim().replace(/^\/+|\/+$/g, '')
     if (!trimmed) throw new Error(`Invalid ${label}`)
@@ -116,5 +129,5 @@ export function buildR2Key(organizationId: string, assetId: string, filename: st
   const safeFilename = sanitizeSegment(filename, 'filename')
   const dotIndex = safeFilename.lastIndexOf('.')
   const ext = dotIndex > 0 ? safeFilename.slice(dotIndex + 1) : ''
-  return `${visibility === 'private' ? PRIVATE_R2_PREFIX : ''}organizations/${safeOrganizationId}/media/${safeAssetId}${ext ? '.' + ext : ''}`
+  return `organizations/${safeOrganizationId}/media/${safeAssetId}${ext ? '.' + ext : ''}`
 }

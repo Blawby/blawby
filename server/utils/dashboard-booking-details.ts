@@ -431,7 +431,7 @@ async function composeBookingDetails(
     guest_can_retry_cancellation: guestCanRetryCancellation,
     guest_cancel_refunds: now <= freeCancellationUntil(row.starts_at, policy.advance_notice_minutes),
     review_invitation: reviewInvitationState(review!.results[0] as ReviewInvitationRow | undefined, now),
-    ...(agreementRows && reader.buyerUserId ? bookingAgreementFromRows(agreementRows, { userId: reader.buyerUserId, verifiedEmail: reader.verifiedEmail, canManage: false }, null) : {}),
+    ...(agreementRows && reader.buyerUserId ? await bookingAgreementFromRows(reader.env, agreementRows, { userId: reader.buyerUserId, verifiedEmail: reader.verifiedEmail, canManage: false, guest: true }, null) : {}),
   }
 }
 

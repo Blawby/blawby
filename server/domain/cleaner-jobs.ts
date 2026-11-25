@@ -198,7 +198,7 @@ export async function postJobs(env: CloudflareEnv, db: DbClient, organizationId:
         await executeBatch(db, plannedSendQueries(task, task.status === 'open' ? startAlert(task) : [], stamp), { operation: 'Store task start alert' })
         continue
       }
-      const view = roster || task.status === 'open' ? await taskViewForUser(db, organizationId, task.id, roster?.cleaners[0] ?? hostUsers[0] ?? null, now) : null
+      const view = roster || task.status === 'open' ? await taskViewForUser(db, env, organizationId, task.id, roster?.cleaners[0] ?? hostUsers[0] ?? null, now) : null
       // A booking may have changed while loading the card. Re-read on the
       // next queue delivery instead of using a new client's card in an old thread.
       if ((prep || task.kind === 'maintenance') && view && view.version !== task.version) throw new Error(`Task ${task.id} changed while its job was being posted`)

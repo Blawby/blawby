@@ -14,26 +14,10 @@ export async function agreementRequest(event: H3Event) {
         throw error
       })
     : false
-  const viewer: AgreementViewer = { userId: user.id, verifiedEmail: user.emailVerified ? user.email : null, canManage }
+  const viewer: AgreementViewer = { userId: user.id, verifiedEmail: user.emailVerified ? user.email : null, canManage, guest: role === 'guest' }
   return { ...request, viewer, actor: { userId: user.id, name: user.name } }
 }
 
 export function requireAgreementManager(viewer: AgreementViewer) {
   if (!viewer.canManage) throw new HTTPError({ statusCode: 403, message: 'Only the business can change this booking’s documents', data: { code: 'FORBIDDEN', field: 'conversation_id' } })
-}
-
-/** A booking's documents are read by its guests and by the business that may change them, not by a member who only works the booking. */
-export function requireAgreementReader(role: 'guest' | 'member', viewer: AgreementViewer) {
-  if (role !== 'guest' && !viewer.canManage) throw new HTTPError({ statusCode: 403, message: 'You cannot open this booking’s documents', data: { code: 'FORBIDDEN', field: 'conversation_id' } })
-}
-
-export function pdfResponse(bytes: Uint8Array<ArrayBuffer>, fileName: string, download: boolean): Response {
-  return new Response(bytes, {
-    headers: {
-      'content-type': 'application/pdf',
-      'content-disposition': `${download ? 'attachment' : 'inline'}; filename="${fileName.replace(/[^A-Za-z0-9._-]/g, '-')}"`,
-      'cache-control': 'private, no-store',
-      'x-content-type-options': 'nosniff',
-    },
-  })
 }

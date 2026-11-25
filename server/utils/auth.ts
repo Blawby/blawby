@@ -225,6 +225,8 @@ export interface CloudflareEnv {
   EMAIL_REPLY_DOMAIN?: string
   EMAIL_REPLY_SECRET?: string
   MEDIA_BUCKET?: R2Bucket
+  /** Files in private slots: no public domain, read only through the signed media route. */
+  PRIVATE_MEDIA_BUCKET?: R2Bucket
   ORGANIZATION_CACHE?: KVNamespace
   ASSETS?: Fetcher
   GUEST_INBOX_HUBS?: DurableObjectNamespace

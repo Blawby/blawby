@@ -2681,7 +2681,8 @@ export interface GuestStay {
 }
 
 /** The account's stay by its activity ID: its conversation's ID, or the stay's own when it has none. */
-export async function readGuestStay(db: DbClient, viewer: { userId: string; verifiedEmail: string | null }, activityId: string): Promise<GuestStay> {
+export async function readGuestStay(env: CloudflareEnv, viewer: { userId: string; verifiedEmail: string | null }, activityId: string): Promise<GuestStay> {
+  const db = env.DB
   const now = new Date()
   const buyerUserId = viewer.userId
   // The stay, its agreement and its ownership are one snapshot, read in one round trip.
@@ -2715,7 +2716,7 @@ export async function readGuestStay(db: DbClient, viewer: { userId: string; veri
   const paidStay = stay.status !== 'cancelled' && owned.paid_online === 1 && home.check_in_time !== null
     ? await ownedPaidStay(db, owned.organization_id, owned.id, buyerUserId) : null
   const cancellation = paidStay ? await guestStayCancellationQuote(db, paidStay.stay, paidStay.payments, now.toISOString()) : null
-  const { agreement, deposit } = bookingAgreementFromRows(agreementRows, { ...viewer, canManage: false }, null)
+  const { agreement, deposit } = await bookingAgreementFromRows(env, agreementRows, { ...viewer, canManage: false, guest: true }, null)
   return { organization_id: owned.organization_id, stay: { ...stay, agreement, deposit }, home, cancellation, payment_processing: owned.payment_processing === 1 }
 }
 

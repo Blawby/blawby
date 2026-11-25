@@ -19,6 +19,7 @@ import { conversationGroupCapabilities } from './team-messages'
 import { calendarDate, firstName, providerInstant, transcriptDays } from './guest-threads/presentation'
 import { conversationHistorySql, conversationMessage, groupConversationEntries, projectConversationHistory, type ConversationHistory, type HistoryRow } from './conversation-history-data'
 import { readConversationEnrichment, threadDeliveriesQuery } from './guest-threads/deliveries'
+import type { MediaLinkEnv } from '~/server/utils/private-media'
 import { bookingDay, parseGuestRequest, participantLabel } from './requests'
 import { jobBookingIdSql, jobPostMatchSql, taskScopeSql } from './tasks'
 import { submissionView } from './turnover-checklists'
@@ -78,6 +79,7 @@ function presentMessage(message: Pick<MessageRow, 'id' | 'sequence' | 'event_nam
 /** Settle the optimistic send from the same projection used by history. */
 export async function projectSentConversationMessage(
   db: DbClient,
+  env: MediaLinkEnv,
   input: { message: MessageRow; userId: string; role: ConversationViewerRole; conversation: ConversationRow },
   senderName: string,
 ): Promise<ConversationMessage> {
@@ -86,7 +88,7 @@ export async function projectSentConversationMessage(
   const guard = participantGuard('c', userId, role)
   const ids = [message.id]
   const [photosAndDeliveries, authorized] = await Promise.all([
-    readConversationEnrichment(db, ids, [], role === 'member' ? threadDeliveriesQuery(conversation.id, ids) : null),
+    readConversationEnrichment(db, env, ids, [], role === 'member' ? threadDeliveriesQuery(conversation.id, ids) : null),
     queryFirst(db, `SELECT 1 FROM conversations c WHERE c.id = ? AND ${guard.sql}`, [conversation.id, ...guard.params]),
   ])
   if (!authorized) conversationAccessDenied()
@@ -203,11 +205,11 @@ function presentEntries(
 }
 
 /** One authorization snapshot, indexed window and roster for web, native and MCP. */
-export async function loadConversationPage(db: DbClient, viewer: TranscriptViewer, window: ConversationWindow & { before: null }, now?: Date): Promise<ConversationPage>
-export async function loadConversationPage(db: DbClient, viewer: TranscriptViewer, window: ConversationWindow & { before: number }, now?: Date): Promise<ConversationEntriesPage>
-export async function loadConversationPage(db: DbClient, viewer: TranscriptViewer, window: ConversationWindow, now?: Date): Promise<ConversationPage | ConversationEntriesPage>
+export async function loadConversationPage(db: DbClient, env: MediaLinkEnv, viewer: TranscriptViewer, window: ConversationWindow & { before: null }, now?: Date): Promise<ConversationPage>
+export async function loadConversationPage(db: DbClient, env: MediaLinkEnv, viewer: TranscriptViewer, window: ConversationWindow & { before: number }, now?: Date): Promise<ConversationEntriesPage>
+export async function loadConversationPage(db: DbClient, env: MediaLinkEnv, viewer: TranscriptViewer, window: ConversationWindow, now?: Date): Promise<ConversationPage | ConversationEntriesPage>
 export async function loadConversationPage(
-  db: DbClient, { conversationId, userId, organizationId }: TranscriptViewer, window: ConversationWindow, now = new Date(),
+  db: DbClient, env: MediaLinkEnv, { conversationId, userId, organizationId }: TranscriptViewer, window: ConversationWindow, now = new Date(),
 ): Promise<ConversationPage | ConversationEntriesPage> {
   const head = window.before === null
   const access = conversationAccessQuery(userId, conversationId, organizationId)
@@ -288,7 +290,7 @@ export async function loadConversationPage(
   const context = headerRows!.results[0] as (ConversationAccessRow & HistoryContext) | undefined
   if (!context) conversationAccessDenied()
   const { conversation, role, readThrough, membership } = conversationAccessFromRow(context, userId)
-  const history = projectConversationHistory(messageRows!.results as HistoryRow[], window.limit)
+  const history = await projectConversationHistory(env, messageRows!.results as HistoryRow[], window.limit)
   const thread = conversation.kind === 'team' ? null : parseGuestRequest(conversation)
   const guestName = thread ? conversationGuestName(thread, Boolean(context.support), Boolean(context.airbnb)) : context.organization_name
   const contactAnswers = thread?.kind === 'contact' && history.entries.some(entry => entry.event_name === SUBMISSION_EVENT)

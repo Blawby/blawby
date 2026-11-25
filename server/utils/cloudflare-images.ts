@@ -5,6 +5,7 @@ interface CloudflareImagesEnv {
   CF_ACCOUNT_ID?: string
   CLOUDFLARE_IMAGES_API_TOKEN?: string
   CLOUDFLARE_IMAGES_VARIANT_BASE?: string
+  IMAGES?: ImagesBinding
 }
 
 function accountId(env: CloudflareImagesEnv): string {
@@ -68,21 +69,45 @@ export async function requestImageUpload(env: CloudflareImagesEnv): Promise<{ im
   return { imageId, uploadUrl }
 }
 
-/** Upload an image buffer directly (for server-generated images). */
+async function sha256Hex(buffer: ArrayBuffer | Uint8Array<ArrayBuffer>): Promise<string> {
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', buffer))].map(byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Store an image. A public image is stored under our own id. A private one
+ * cannot be: Cloudflare refuses `requireSignedURLs` on an image uploaded with a
+ * custom id ("Images with custom ID paths cannot be made private using signed
+ * URL tokens"), so it gets Cloudflare's own id and carries its asset id in its
+ * metadata instead.
+ *
+ * The custom id gave a public upload two things, and the metadata gives a
+ * private one the same two: a lost upload response is recovered by finding the
+ * image that was stored and checking its content hash, and a retried upload for
+ * the same asset (an idempotency-keyed MCP upload derives the same asset id)
+ * reuses the image the first attempt stored instead of storing a second one.
+ */
+export async function uploadImageBuffer(env: CloudflareImagesEnv, buffer: ArrayBuffer | Uint8Array<ArrayBuffer>, filename: string, contentType?: string, image?: { id: string }): Promise<{ imageId: string; publicUrl: string; thumbnailUrl: string }>
+export async function uploadImageBuffer(env: CloudflareImagesEnv, buffer: ArrayBuffer | Uint8Array<ArrayBuffer>, filename: string, contentType: string, image: { privateAssetId: string }): Promise<{ imageId: string; publicUrl: null; thumbnailUrl: null }>
 export async function uploadImageBuffer(
   env: CloudflareImagesEnv,
   buffer: ArrayBuffer | Uint8Array<ArrayBuffer>,
   filename: string,
   contentType = 'image/png',
-  imageId: string = `image-${crypto.randomUUID()}`,
-): Promise<{ imageId: string; publicUrl: string; thumbnailUrl: string }> {
+  image: { id: string } | { privateAssetId: string } = { id: `image-${crypto.randomUUID()}` },
+): Promise<{ imageId: string; publicUrl: string | null; thumbnailUrl: string | null }> {
   assertCloudflareImagesConfigured(env)
+  const contentHash = await sha256Hex(buffer)
+  const privateAssetId = 'privateAssetId' in image ? image.privateAssetId : null
+  if (privateAssetId) {
+    const stored = await findPrivateImage(env, privateAssetId, contentHash)
+    if (stored) return { imageId: stored, publicUrl: null, thumbnailUrl: null }
+  }
   const form = new FormData()
   form.append('file', new Blob([buffer], { type: contentType }), filename)
-  const digest = await crypto.subtle.digest('SHA-256', buffer)
-  const contentHash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2,'0')).join('')
-  form.append('id', imageId)
-  form.append('metadata', JSON.stringify({content_sha256:contentHash}))
+  if ('id' in image) form.append('id', image.id)
+  else form.append('requireSignedURLs', 'true')
+  form.append('metadata', JSON.stringify({ content_sha256: contentHash, ...(privateAssetId ? { asset_id: privateAssetId } : {}) }))
+  let imageId: string
   try {
     const res = await fetch(`${apiBase(env)}/v1`, {
       method: 'POST',
@@ -91,21 +116,59 @@ export async function uploadImageBuffer(
     })
     if (!res.ok) throw new Error(`CF Images upload error ${res.status}: ${await res.text()}`)
     const data = await res.json() as CloudflareImagesResponse
-    if (data.result?.id !== imageId) throw new Error(`CF Images upload did not return image ${imageId}`)
+    const returned = data.result?.id
+    if (!returned || ('id' in image && returned !== image.id)) throw new Error(`CF Images upload did not return image ${'id' in image ? image.id : `for asset ${privateAssetId}`}`)
+    imageId = returned
   } catch (error) {
-    let uploaded: Awaited<ReturnType<typeof getUploadedImage>>
+    let uploaded: string | null
     try {
-      uploaded = await getUploadedImage(env, imageId)
+      uploaded = privateAssetId ? await findPrivateImage(env, privateAssetId, contentHash) : await publicImageMatching(env, (image as { id: string }).id, contentHash)
     } catch (readError) {
-      throw new AggregateError([error,readError], `The upload result for image ${imageId} could not be read`, {cause:readError})
+      throw new AggregateError([error, readError], `The upload result for ${privateAssetId ? `asset ${privateAssetId}` : `image ${(image as { id: string }).id}`} could not be read`, { cause: readError })
     }
-    if (!uploaded || uploaded.draft || uploaded.metadata?.content_sha256 !== contentHash) throw error
+    if (!uploaded) throw error
+    imageId = uploaded
   }
+  if (privateAssetId) return { imageId, publicUrl: null, thumbnailUrl: null }
   return {
     imageId,
     publicUrl: buildImageUrl(env, imageId, 'public'),
     thumbnailUrl: buildImageUrl(env, imageId, 'thumbnail'),
   }
+}
+
+async function publicImageMatching(env: CloudflareImagesEnv, imageId: string, contentHash: string): Promise<string | null> {
+  const uploaded = await getUploadedImage(env, imageId)
+  return uploaded && !uploaded.draft && uploaded.metadata?.content_sha256 === contentHash ? imageId : null
+}
+
+/** The private image stored for an asset, found by the asset id its metadata carries. */
+async function findPrivateImage(env: CloudflareImagesEnv, assetId: string, contentHash: string): Promise<string | null> {
+  if (!env.IMAGES) throw new Error('The Cloudflare Images binding is required to store a private image')
+  const { images } = await env.IMAGES.hosted.list({ filter: { metadata: { asset_id: assetId } }, limit: 2 })
+  if (images.length > 1) throw new Error(`Cloudflare Images holds more than one image for asset ${assetId}`)
+  const found = images[0]
+  if (!found) return null
+  if (found.draft || found.meta?.content_sha256 !== contentHash) throw new Error(`Cloudflare image ${found.id} for asset ${assetId} does not hold these bytes`)
+  return found.id
+}
+
+/**
+ * How long a private image's link works. A link is made each time a read that
+ * passed its access check returns the image; 24 hours is Cloudflare's own
+ * example and outlasts a working session, so a thread left open keeps its photos.
+ */
+export const PRIVATE_IMAGE_LINK_SECONDS = 24 * 60 * 60
+
+/** A private image's full and thumbnail links, signed by the Images binding: the Worker never holds the signing key. */
+export async function signedImageUrls(env: CloudflareImagesEnv, imageId: string): Promise<{ url: string; thumbnail_url: string }> {
+  if (!env.IMAGES) throw new Error('The Cloudflare Images binding is required to link a private image')
+  const image = env.IMAGES.hosted.image(imageId)
+  const [url, thumbnail_url] = await Promise.all([
+    image.signedUrl({ variant: 'public', expiresIn: PRIVATE_IMAGE_LINK_SECONDS }),
+    image.signedUrl({ variant: 'thumbnail', expiresIn: PRIVATE_IMAGE_LINK_SECONDS }),
+  ])
+  return { url, thumbnail_url }
 }
 
 /** Read the stored base image through the authenticated provider API, never a public variant. */

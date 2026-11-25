@@ -2,9 +2,10 @@ import { HTTPError } from 'nitro'
 import { creationRequestHash, readCreationRecord } from '~/server/utils/organization-events'
 // Canonical media-asset creation from resolved bytes for MCP and dashboard uploads.
 import { errorChainForTelemetry } from "~/shared/error-telemetry";
-import type { DbClient } from "~/server/db";
-import { uploadImageBuffer, deleteImage } from "~/server/utils/cloudflare-images";
-import { uploadToR2, buildR2Key, deleteFromR2 } from "~/server/utils/cloudflare-r2";
+import type { BatchQuery, DbClient } from "~/server/db";
+import { isPrivateMediaPlacement, type MediaPlacementSlot } from "~/shared/media-placement-contract";
+import { downloadImageBuffer, uploadImageBuffer, deleteImage } from "~/server/utils/cloudflare-images";
+import { uploadToR2, buildR2Key, deleteFromR2, readR2Object } from "~/server/utils/cloudflare-r2";
 import { executeBatch } from "~/server/db";
 import { publicResourceCacheInvalidationQuery } from "~/server/utils/public-resource-cache";
 import { assertNotPinnedByPublication, createMediaAsset, getMediaAsset, getMediaStorageReferenceState, publicationPinGuardQuery, type MediaAsset } from "~/server/utils/media-asset-manager";
@@ -27,6 +28,14 @@ interface UploadResolvedMediaInputBase {
   idempotencyKey?: string;
   sourceFileId?: string;
   posterSourceFileId?: string;
+  /**
+   * The slot the file is stored for. A private slot's file is stored where only
+   * the people allowed to read its owner reach it: a Cloudflare image that
+   * requires a signed URL, or the private R2 bucket. Omitted, the file is public.
+   */
+  placement?: MediaPlacementSlot;
+  /** The rest of the operation, committed in the asset row's batch or not at all. */
+  queries?: (assetId: string) => BatchQuery[];
 }
 
 type UploadResolvedMediaActor =
@@ -45,9 +54,10 @@ export type UploadResolvedMediaInput = UploadResolvedMediaInputBase & UploadReso
     }
 )
 
+/** A private file has no public URL: its readers are given a link by `mediaLinks`. */
 export type UploadResolvedMediaResult = {
   assetId: string;
-  publicUrl: string;
+  publicUrl: string | null;
 } & (
   | { kind: 'image' | 'file'; thumbnailUrl: string | null }
   | { kind: 'video'; thumbnailUrl: string }
@@ -74,9 +84,9 @@ export async function getMediaUploadReplay(db: DbClient, identity: MediaUploadId
 }
 
 function savedUploadResult(asset: MediaAsset | null): UploadResolvedMediaResult {
-  if (!asset || asset.status !== 'active' || !asset.public_url) throw new HTTPError({ statusCode: 410, statusMessage: 'The saved asset is no longer available' })
+  if (!asset || asset.status !== 'active') throw new HTTPError({ statusCode: 410, statusMessage: 'The saved asset is no longer available' })
   if (asset.kind === 'video') {
-    if (!asset.thumbnail_url) throw new Error('The saved video has no poster image')
+    if (!asset.public_url || !asset.thumbnail_url) throw new Error('The saved video has no file or poster image')
     return { assetId: asset.id, publicUrl: asset.public_url, thumbnailUrl: asset.thumbnail_url, kind: 'video' }
   }
   return { assetId: asset.id, publicUrl: asset.public_url, thumbnailUrl: asset.thumbnail_url, kind: asset.kind }
@@ -100,6 +110,9 @@ function uploadFailure(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
+/** A file stored for no private slot is public and has its public URL. */
+export async function uploadResolvedMediaToAssetStore(input: UploadResolvedMediaInput & { placement?: undefined }): Promise<UploadResolvedMediaResult & { publicUrl: string }>
+export async function uploadResolvedMediaToAssetStore(input: UploadResolvedMediaInput): Promise<UploadResolvedMediaResult>
 export async function uploadResolvedMediaToAssetStore(
   input: UploadResolvedMediaInput,
 ): Promise<UploadResolvedMediaResult> {
@@ -112,6 +125,9 @@ export async function uploadResolvedMediaToAssetStore(
   if (earlier) return earlier
   const assetId = creation ? await creationRequestHash({ organization_id: input.organizationId, dedupe_key: creation.dedupeKey, request_hash: creation.requestHash }) : crypto.randomUUID();
   const provider = input.provider ?? (input.kind === "image" && !R2_IMAGE_MIME_TYPES.has(input.contentType) ? "cloudflare_images" : "cloudflare_r2");
+  const visibility = input.placement && isPrivateMediaPlacement(input.placement) ? 'private' : 'public';
+  // A private slot holds photos and documents; a video's poster would be a public image beside it.
+  if (visibility === 'private' && input.kind === 'video') throw new Error(`${input.placement!.owner_type}:${input.placement!.slot} is private and cannot hold a video`);
   // An MP4 is stored with its header first so a player has its length and size
   // from the first bytes; both are read from that header before anything is
   // stored, so an unreadable file is refused rather than saved without them.
@@ -124,27 +140,29 @@ export async function uploadResolvedMediaToAssetStore(
   const timings: Record<string, number> = {};
   let stage = input.kind === 'video' ? 'poster_upload' : provider === 'cloudflare_images' ? 'image_upload' : 'r2_put';
   let stageStartedAt = startedAt;
-  let publicUrl: string;
+  let publicUrl: string | null;
   let thumbnailUrl: string | null = null;
   let imageId: string | null = null;
 
   try {
     if (input.kind === 'image' && provider === 'cloudflare_images') {
-      const uploaded = await uploadImageBuffer(input.env, input.buffer, input.filename, input.contentType, `media-${assetId}`);
+      const uploaded = visibility === 'private'
+        ? await uploadImageBuffer(input.env, input.buffer, input.filename, input.contentType, { privateAssetId: assetId })
+        : await uploadImageBuffer(input.env, input.buffer, input.filename, input.contentType, { id: `media-${assetId}` });
       imageId = uploaded.imageId;
       publicUrl = uploaded.publicUrl;
       thumbnailUrl = uploaded.thumbnailUrl;
       timings[stage] = Date.now() - stageStartedAt;
     } else {
       if (input.kind === 'video') {
-        const poster = await uploadImageBuffer(input.env, input.poster.buffer, input.poster.filename, input.poster.contentType, `media-${assetId}-poster`);
+        const poster = await uploadImageBuffer(input.env, input.poster.buffer, input.poster.filename, input.poster.contentType, { id: `media-${assetId}-poster` });
         imageId = poster.imageId;
         thumbnailUrl = poster.publicUrl;
         timings[stage] = Date.now() - stageStartedAt;
       }
       stage = 'r2_put';
       stageStartedAt = Date.now();
-      publicUrl = await uploadToR2(input.env, r2Key!, mp4 ?? input.buffer, input.contentType);
+      publicUrl = await uploadToR2(input.env, r2Key!, mp4 ?? input.buffer, input.contentType, visibility);
       timings[stage] = Date.now() - stageStartedAt;
     }
 
@@ -171,7 +189,7 @@ export async function uploadResolvedMediaToAssetStore(
       category: input.category ?? null,
       status: "active",
       created_by_user_id: input.userId ?? null,
-    }, creation);
+    }, creation, undefined, input.queries?.(assetId));
     timings[stage] = Date.now() - stageStartedAt;
   } catch (persistError) {
     timings[stage] = Date.now() - stageStartedAt;
@@ -219,7 +237,7 @@ export async function uploadResolvedMediaToAssetStore(
     const cleanupErrors: Error[] = [];
     if (r2Key) {
       try {
-        await deleteFromR2(input.env, r2Key);
+        await deleteFromR2(input.env, r2Key, visibility);
       } catch (cleanupError) {
         cleanupErrors.push(uploadFailure(cleanupError));
         console.error({ event: 'media_cleanup_failed', asset_id: assetId, stage: 'r2_delete', errors: errorChainForTelemetry(cleanupError) });
@@ -246,11 +264,11 @@ export async function uploadResolvedMediaToAssetStore(
     throw persistError;
   }
   console.info({ event: 'media_upload_completed', asset_id: assetId, organization_id: input.organizationId,
-    provider, kind: input.kind, bytes: input.buffer.byteLength,
+    provider, kind: input.kind, visibility, bytes: input.buffer.byteLength,
     duration_ms: Date.now() - startedAt, timings_ms: timings });
 
   if (input.kind === 'video') {
-    if (!thumbnailUrl) throw new Error(`Video asset ${assetId} did not produce a thumbnail URL`)
+    if (!publicUrl || !thumbnailUrl) throw new Error(`Video asset ${assetId} did not produce a file and thumbnail URL`)
     return { assetId, publicUrl, thumbnailUrl, kind: 'video' }
   }
   return { assetId, publicUrl, thumbnailUrl, kind: input.kind };
@@ -296,14 +314,14 @@ export async function replaceR2ImageFile(input: {
     switched = Number(result?.meta?.changes ?? 0) === 1
   } catch (error) {
     try {
-      await deleteFromR2(input.env, key)
+      await deleteFromR2(input.env, key, 'public')
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], `Media asset ${input.assetId} kept its file; the new file ${key} could not be deleted`, { cause: cleanupError })
     }
     throw error
   }
   if (!switched) {
-    await deleteFromR2(input.env, key)
+    await deleteFromR2(input.env, key, 'public')
     throw new HTTPError({ statusCode: 409, statusMessage: `Media asset ${input.assetId} changed while its file was replaced`, data: { code: 'MEDIA_CHANGED', field: 'asset_id' } })
   }
   input.onSwitched?.()
@@ -311,48 +329,50 @@ export async function replaceR2ImageFile(input: {
   const references = await getMediaStorageReferenceState(input.db, { assetId: input.assetId, r2Key: asset.r2_key, cloudflareImageId: null })
   if (references.r2ReferencedElsewhere) return
   try {
-    await deleteFromR2(input.env, asset.r2_key)
+    await deleteFromR2(input.env, asset.r2_key, 'public')
   } catch (error) {
     throw new Error(`Media asset ${input.assetId} now uses ${key}; its previous file ${asset.r2_key} could not be deleted`, { cause: error })
   }
 }
 
 /**
- * A PDF only its owner's route serves: stored under the private prefix the
- * public media host refuses, with no public URL. The same asset row as any
- * other upload, written in the caller's batch so the file and what it is for
- * commit together; a failed batch removes the stored file.
+ * Store privately a file a private slot holds that was stored publicly before
+ * its slot was private (#2092): a message photo uploaded as a public image with
+ * our own id, or a document in the public bucket. The asset keeps its id, so
+ * every placement naming it stays; only where its bytes live changes. The row is
+ * switched only while it still names the public file, and the public file is
+ * deleted after, so its old URL stops working.
  */
-export async function uploadPrivateDocument(input: {
-  db: DbClient
-  env: Parameters<typeof uploadToR2>[0]
-  organizationId: string
-  userId: string
-  buffer: Uint8Array<ArrayBuffer>
-  filename: string
-  /** A booking's PDF, or a listing's agreement template text. */
-  contentType?: 'application/pdf' | 'text/markdown'
-  /** The rest of the operation, committed with the asset row or not at all. */
-  queries: (assetId: string) => import('~/server/db').BatchQuery[]
-}): Promise<{ assetId: string }> {
-  const assetId = crypto.randomUUID()
-  const r2Key = buildR2Key(input.organizationId, assetId, input.filename, 'private')
-  const contentType = input.contentType ?? 'application/pdf'
-  await uploadToR2(input.env, r2Key, input.buffer, contentType)
-  const { buildMediaAssetInsertQuery } = await import('~/server/utils/media-asset-manager')
-  try {
-    await executeBatch(input.db, [buildMediaAssetInsertQuery({
-      id: assetId, organization_id: input.organizationId, kind: 'file', provider: 'cloudflare_r2', source: 'uploaded',
-      r2_key: r2Key, public_url: null, thumbnail_url: null, mime_type: contentType, file_name: input.filename,
-      file_size: input.buffer.byteLength, status: 'active', created_by_user_id: input.userId,
-    }), ...input.queries(assetId)], { operation: 'Store private document' })
-  } catch (error) {
-    try {
-      await deleteFromR2(input.env, r2Key)
-    } catch (cleanupError) {
-      throw new AggregateError([uploadFailure(error), uploadFailure(cleanupError)], `Private document ${assetId} could not be saved or removed`, { cause: cleanupError })
+export async function storePlacedMediaPrivately(input: { db: DbClient; env: UploadResolvedMediaInput['env']; asset: Pick<MediaAsset, 'id' | 'organization_id' | 'provider' | 'cloudflare_image_id' | 'r2_key' | 'file_name' | 'mime_type'> }): Promise<'image' | 'file'> {
+  const { db, env, asset } = input
+  if (asset.provider === 'cloudflare_images' && asset.cloudflare_image_id) {
+    const publicImageId = asset.cloudflare_image_id
+    const bytes = await downloadImageBuffer(env, publicImageId)
+    if (!bytes) throw new Error(`Media asset ${asset.id} names Cloudflare image ${publicImageId}, which is gone`)
+    const stored = await uploadImageBuffer(env, bytes, asset.file_name ?? 'photo', asset.mime_type ?? 'image/jpeg', { privateAssetId: asset.id })
+    const [result] = await executeBatch(db, [{
+      query: `UPDATE media_assets SET cloudflare_image_id = ?, public_url = NULL, thumbnail_url = NULL, updated_at = ? WHERE id = ? AND organization_id = ? AND cloudflare_image_id = ?`,
+      params: [stored.imageId, new Date().toISOString(), asset.id, asset.organization_id, publicImageId],
+    }], { operation: 'Store a private slot image privately' })
+    if (Number(result?.meta?.changes ?? 0) !== 1) {
+      await deleteImage(env, stored.imageId)
+      throw new Error(`Media asset ${asset.id} changed while its image was stored privately`)
     }
-    throw error
+    await deleteImage(env, publicImageId)
+    return 'image'
   }
-  return { assetId }
+  if (asset.provider === 'cloudflare_r2' && asset.r2_key) {
+    const key = asset.r2_key
+    const bytes = await readR2Object(env, key, 'public')
+    if (!bytes) throw new Error(`Media asset ${asset.id} has no file in the public bucket at ${key}`)
+    await uploadToR2(env, key, bytes, asset.mime_type ?? 'application/octet-stream', 'private')
+    const [result] = await executeBatch(db, [{
+      query: `UPDATE media_assets SET public_url = NULL, updated_at = ? WHERE id = ? AND organization_id = ? AND r2_key = ?`,
+      params: [new Date().toISOString(), asset.id, asset.organization_id, key],
+    }], { operation: 'Store a private slot file privately' })
+    if (Number(result?.meta?.changes ?? 0) !== 1) throw new Error(`Media asset ${asset.id} changed while its file was stored privately`)
+    await deleteFromR2(env, key, 'public')
+    return 'file'
+  }
+  throw new Error(`Media asset ${asset.id} is stored by ${asset.provider}, which cannot keep it private`)
 }

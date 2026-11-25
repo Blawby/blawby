@@ -48,7 +48,7 @@ const runOrganizationJobs = async (queue: ReturnType<typeof captureEvents>, env:
   return (await sendDueOutbox(db, env, organizationId, when.toISOString())).next
 }
 const readTeamThread = async (db: DbClient, viewer: MemberAccessPrincipal, id: string) => {
-  const { conversation } = await conversationPageFor(db, viewer, id)
+  const { conversation } = await conversationPageFor(db, viewer.env, viewer, id)
   assert.equal(conversation.kind, 'team')
   return conversation
 }
@@ -69,7 +69,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
       }
     } export default { fetch() { return new Response("ok") } }` } } },
     exports: { Hub: { type: 'durable-object', storage: 'sqlite' } },
-    env: { DB: { type: 'd1' }, ORGANIZATION_CACHE: { type: 'kv' }, MEDIA_BUCKET: { type: 'r2' }, GUEST_INBOX_HUBS: { type: 'durable-object', worker: 'cleaner-jobs-proof', exportName: 'Hub' } },
+    env: { DB: { type: 'd1' }, ORGANIZATION_CACHE: { type: 'kv' }, MEDIA_BUCKET: { type: 'r2' }, PRIVATE_MEDIA_BUCKET: { type: 'r2' }, GUEST_INBOX_HUBS: { type: 'durable-object', worker: 'cleaner-jobs-proof', exportName: 'Hub' } },
   } }] })
   try {
     const db = await runtime.getD1Database('DB')
@@ -122,7 +122,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     assert.deepEqual([thread.name, thread.booking_id, thread.participants.map(person => person.id).sort(), await isUnread(db, cleaner, thread.id)], [null, dee.id, ['admin', 'cleaner', 'owner'], true])
     const [job] = await automatic(thread.id)
     assert.equal(job!.key, jobKey(turnover))
-    const messages = (await conversationPageFor(db, cleaner, thread.id)).entries.filter(entry => entry.type === 'message').reverse()
+    const messages = (await conversationPageFor(db, env, cleaner, thread.id)).entries.filter(entry => entry.type === 'message').reverse()
     assert.deepEqual([messages[0]!.automatic, messages[0]!.author_user_id], [true, null])
     // The hosts read along, and it is unread for them too until they do.
     assert.equal(await isUnread(db, owner, thread.id), true)
@@ -201,7 +201,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     const closed = await native('complete', { note: null })
     assert.equal(closed.status, 'done')
     assert.deepEqual(closed.outcome, { note: null, photos: [], closed_at: (await taskRow(`turnover:${dee.id}`))!.closed_at, closed_by: 'You' })
-    const cookMessages = (await conversationPageFor(db, cook, cookThreads[0]!.id)).entries.filter(entry => entry.type === 'message').reverse()
+    const cookMessages = (await conversationPageFor(db, env, cook, cookThreads[0]!.id)).entries.filter(entry => entry.type === 'message').reverse()
     assert.deepEqual([cookMessages[0]!.author_user_id, cookMessages[0]!.automatic, cookMessages[0]!.body, cookMessages[0]!.deliveries], ['cook', false, 'Done', []])
     assert.equal((await taskRow(`turnover:${dee.id}`))!.status, 'done')
     // The cook's own message reads the conversation through for them and is unread for the hosts; the cleaner, no longer seated with it, never sees it.
@@ -223,7 +223,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     assert.equal(reported.note, '“Fresh towels are by the door.”')
     assert.equal(reported.outcome?.photos.length, 1)
     assert.deepEqual((await getTask(db, cookViewer, turnover.id)).outcome, reported.outcome)
-    const report = (await conversationPageFor(db, cook, cookThreads[0]!.id)).entries.find(entry => entry.type === 'message' && entry.body === reported.outcome?.note)
+    const report = (await conversationPageFor(db, env, cook, cookThreads[0]!.id)).entries.find(entry => entry.type === 'message' && entry.body === reported.outcome?.note)
     assert(report?.type === 'message')
     assert.equal(report.photos[0]?.id, reported.outcome?.photos[0]?.id)
 
@@ -261,7 +261,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     await appendMessage(db, { id: 'ac-report', conversationId: deeConversation, authorKind: 'guest', authorUserId: null, body: 'The AC is blowing warm air.' },
       messagePhotoPlacements(ORG, 'ac-report', [acPhoto!], new Date().toISOString()))
     // The owner's conversation offers to make a maintenance job of it, at the place it is about; only Dee's own words are hers to report.
-    const deePage = await conversationPageFor(db, owner, deeConversation)
+    const deePage = await conversationPageFor(db, env, owner, deeConversation)
     assert.deepEqual(deePage.maintenance, { product_id: cabin.id, location_id: 'cabin-site', guest: 'Dee' })
     assert.deepEqual(deePage.entries.flatMap(entry => entry.type === 'message' && entry.author_kind === 'guest' ? [entry.id] : []), ['ac-report'])
     // Repair goes to the maintenance member, an owner or an admin, at the cabin or its location.
@@ -283,7 +283,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     const [repairThread, ...otherRepairThreads] = await teamThreads(fixer)
     assert.deepEqual([otherRepairThreads.length, repairThread!.booking_id, repairThread!.participants.map(person => person.id).sort()], [0, null, ['admin', 'fixer', 'owner']])
     assert.equal((await db.prepare('SELECT location_id FROM conversations WHERE id = ?').bind(repairThread!.id).first<string>('location_id')), 'cabin-site')
-    const repairPage = await conversationPageFor(db, fixer, repairThread!.id)
+    const repairPage = await conversationPageFor(db, env, fixer, repairThread!.id)
     const post = repairPage.entries.find(entry => entry.type === 'message' && entry.job)
     assert(post?.type === 'message')
     assert.equal(post.body, `Maintenance at Cabin: AC not cooling.\nDue ${ac.sheet.date}\nDee wrote: “The AC is blowing warm air.”`)
@@ -302,7 +302,7 @@ test('a cleaning job lives in the stay’s team conversation from assignment to 
     // Fran finishes with a note and a photo: her own message in the job's conversation, read back as the task's outcome.
     const fixed = await closeTask(db, fixerViewer, ac.id, { status: 'done', env, note: 'Replaced the capacitor; cooling again.', photos: [{ bytes: pixels, filename: 'fixed.avif' }] })
     assert.equal(fixed.status, 'done')
-    const finished = (await conversationPageFor(db, owner, repairThread!.id)).entries.find(entry => entry.type === 'message' && entry.body === 'Replaced the capacitor; cooling again.')
+    const finished = (await conversationPageFor(db, env, owner, repairThread!.id)).entries.find(entry => entry.type === 'message' && entry.body === 'Replaced the capacitor; cooling again.')
     assert(finished?.type === 'message')
     assert.deepEqual([finished.author_user_id, finished.photos.length], ['fixer', 1])
     assert.deepEqual((await getTask(db, ownerViewer, ac.id)).outcome?.photos.map(photo => photo.id), finished.photos.map(photo => photo.id))

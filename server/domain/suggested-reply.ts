@@ -1,4 +1,5 @@
 import type { MemberAccessPrincipal } from '~/server/utils/member-access'
+import type { MediaLinkEnv } from '~/server/utils/private-media'
 import { runWorkersAiText } from '~/server/utils/workers-ai'
 import { recordUsageEvent } from '~/server/utils/usage-metering'
 import { queryFirst, type DbClient } from '~/server/db'
@@ -17,7 +18,7 @@ Output only a JSON array of the reply strings, without commentary, markdown, or 
 export async function suggestGuestReplies(db: DbClient, env: Record<string, unknown>, principal: MemberAccessPrincipal, threadId: string): Promise<{ generation_id: string; suggestions: string[] }> {
   const context = await guestThreadMessagingContext(db, principal, threadId)
   // The conversation as it is shown: a contact form's words are the guest's opening message too.
-  const { conversation: thread, entries } = await loadConversationPage(db, { conversationId: threadId, userId: principal.userId, organizationId: principal.organizationId }, { before: null, limit: 40 })
+  const { conversation: thread, entries } = await loadConversationPage(db, env as MediaLinkEnv, { conversationId: threadId, userId: principal.userId, organizationId: principal.organizationId }, { before: null, limit: 40 })
   if (thread.kind !== 'guest') messagingError(409, 'SUGGESTION_NEEDS_GUEST_MESSAGE', 'Airbnb Support cases have no suggested replies', 'conversation_id')
   const messages = entries
     .flatMap(item => item.type === 'message' && item.body?.trim() ? [{ from: item.side, at: item.sent_at, text: item.body }] : [])

@@ -7,9 +7,9 @@ import { finalizeRequestMetrics, markTranscriptHandlerEntry, timeTranscriptPhase
 
 export default defineHandler(async event => {
   markTranscriptHandlerEntry(event)
-  const { db, user } = await timeTranscriptPhase(event, 'message_session', () => messageSession(event))
+  const { db, env, user } = await timeTranscriptPhase(event, 'message_session', () => messageSession(event))
   const page = await timeTranscriptPhase(event, 'transcript', () =>
-    loadConversationPage(db, { conversationId: conversationIdParam(event), userId: user.id }, parseTranscriptWindow(event.url.searchParams)),
+    loadConversationPage(db, env, { conversationId: conversationIdParam(event), userId: user.id }, parseTranscriptWindow(event.url.searchParams)),
   )
   return jsonResponse(finalizeRequestMetrics(event, 'conversation-page', page), { headers: { 'cache-control': 'private, no-store' } })
 })

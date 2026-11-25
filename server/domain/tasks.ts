@@ -11,6 +11,7 @@ import { creationDedupeKey, creationRecordOf, creationRecordQuery, creationReque
 import { publishBusinessInvalidation, publishConversationEvent } from '~/server/cloudflare/guest-inbox-events'
 import { conversationMemberSql, messageQueries, participantGuard } from '~/server/domain/conversations'
 import { firstName } from '~/server/domain/guest-threads/presentation'
+import type { MediaLinkEnv } from '~/server/utils/private-media'
 import { discardMessagePhotos, groupMessagePhotos, MAX_MESSAGE_PHOTOS, messagePhotoPlacements, messagePhotoRowsSql, MessagePhotoRejection, uploadMessagePhotos, type MessagePhoto, type MessagePhotoRow } from '~/server/domain/guest-threads/attachments'
 import { bookingEditorPath, guestConversationPath } from '~/server/utils/dashboard-links'
 import { ownerPicture } from '~/server/notifications/hero'
@@ -628,7 +629,7 @@ function taskContextQueries(organizationId: string, listed: { sql: string; param
   ]
 }
 
-function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ results: unknown[] }>): Context {
+async function taskContext(env: MediaLinkEnv, organizationId: string, rows: TaskRow[], results: Array<{ results: unknown[] }>): Promise<Context> {
   const [organizations, members, locations, messages, privateConsultations, booked, stayRows, requests, products, pictures, closureRows, reportRows, orderRows, declineRows]
     = results.map(result => result.results) as [
       Array<{ slug: string; vertical: string }>, Array<{ id: string; userId: string; name: string }>, Array<{ id: string; title: string }>,
@@ -655,7 +656,7 @@ function taskContext(organizationId: string, rows: TaskRow[], results: Array<{ r
   }
   const records = booked.filter(record => record.unit === 'slot' || rows.some(row => row.kind === 'booking_review' && row.subject_id === record.id))
   const photoRows = closureRows.filter((row): row is typeof row & MessagePhotoRow => row.owner_id !== null)
-  const photos = groupMessagePhotos(photoRows)
+  const photos = await groupMessagePhotos(env, photoRows)
   return {
     slug: organization.slug,
     vertical: organization.vertical,
@@ -692,7 +693,7 @@ const namedTasks = (organizationId: string, rows: TaskRow[]) => ({ sql: 'SELECT 
 /** The context of tasks already read, in one batch. */
 async function loadContext(db: DbClient, viewer: TaskViewer, rows: TaskRow[]): Promise<Context> {
   const organizationId = viewer.principal.organizationId
-  return taskContext(organizationId, rows, await executeBatch(db, taskContextQueries(organizationId, namedTasks(organizationId, rows), viewer.principal.userId)))
+  return await taskContext(viewer.principal.env, organizationId, rows, await executeBatch(db, taskContextQueries(organizationId, namedTasks(organizationId, rows), viewer.principal.userId)))
 }
 
 const initialOf = (name: string) => name.trim().charAt(0).toUpperCase()
@@ -1043,7 +1044,7 @@ export async function listTasks(db: DbClient, viewer: TaskViewer, query: TaskLis
   }
   const shown = rows.filter(row => query.range === 'today' ? isToday(row) : row.status === 'open' && !isToday(row))
   if (!shown.length) return { resolved_at: now.toISOString(), sections: [] }
-  const context = taskContext(organizationId, rows, related)
+  const context = await taskContext(viewer.principal.env, organizationId, rows, related)
   const views = shown.map(row => ({ row, view: present(row, viewer, context, now) }))
   const resolved_at = now.toISOString()
   if (query.range === 'today') {
@@ -1192,21 +1193,21 @@ export async function listTaskAssignees(db: DbClient, viewer: TaskViewer): Promi
 }
 
 /** A task as an alert to one of its people tells it: the member projection, with no guest's full name or contact. */
-export async function describeTaskForAlert(db: DbClient, organizationId: string, taskId: string, recipientUserId: string): Promise<{ eyebrow: string; title: string; detail: string | null; locationId: string | null; page: string }> {
-  const view = await taskViewForUser(db, organizationId, taskId, recipientUserId)
+export async function describeTaskForAlert(db: DbClient, env: MediaLinkEnv, organizationId: string, taskId: string, recipientUserId: string): Promise<{ eyebrow: string; title: string; detail: string | null; locationId: string | null; page: string }> {
+  const view = await taskViewForUser(db, env, organizationId, taskId, recipientUserId)
   // The alert opens what the work is about, under the organization's dashboard: its booking, else its conversation, else Today.
   const page = view.booking_id ? `/bookings/${encodeURIComponent(view.booking_id)}` : view.conversation_id ? `/messages/${encodeURIComponent(view.conversation_id)}` : ''
   return { eyebrow: [view.status_line, view.when].filter(Boolean).join(' · '), title: view.title, detail: view.detail, locationId: view.location_id, page }
 }
 
 /** A task as one member sees it, from a server path with no caller: the member projection, with no guest's full name or contact. */
-export async function taskViewForUser(db: DbClient, organizationId: string, taskId: string, userId: string | null, now = new Date()): Promise<TaskView> {
+export async function taskViewForUser(db: DbClient, env: MediaLinkEnv, organizationId: string, taskId: string, userId: string | null, now = new Date()): Promise<TaskView> {
   const row = await queryFirst<TaskRow>(db, `SELECT * FROM tasks WHERE organization_id = ? AND id = ? AND kind IN (SELECT value FROM json_each(?))`, [organizationId, taskId, SUPPORTED_TASK_KINDS])
   if (!row) throw new Error(`Task ${taskId} is not in organization ${organizationId}`)
   // The recipient's own membership answers what they may read; a view for nobody (a job with no people yet) reads as a member with no role.
   const member = userId === null ? null : await queryFirst<{ id: string; role: string }>(db, 'SELECT id, role FROM member WHERE organizationId = ? AND userId = ?', [organizationId, userId])
   if (userId !== null && !member) throw new Error(`User ${userId} is not a member of organization ${organizationId}`)
-  const viewer = { principal: { organizationId, userId: userId ?? '', role: member?.role ?? '' } as MemberAccessPrincipal, manage: false, memberId: member?.id ?? '' }
+  const viewer = { principal: { env, organizationId, userId: userId ?? '', role: member?.role ?? '' } as MemberAccessPrincipal, manage: false, memberId: member?.id ?? '' }
   return present(row, viewer, await loadContext(db, viewer, [row]), now)
 }
 

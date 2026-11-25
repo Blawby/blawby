@@ -7,7 +7,6 @@ import type { getHeader} from 'nitro/h3';
 import {  sendStream, setHeader, setResponseStatus } from 'nitro/h3';
 import { cloudflareEnv } from '~/server/utils/api-response'
 import { isNonProductionHost } from '~/server/utils/tenant-hosts'
-import { PRIVATE_R2_PREFIX } from '~/server/utils/cloudflare-r2'
 
 const MEDIA_HOST = 'media.krabiclaw.com'
 const WORKER_MEDIA_PREFIX = '/__media/'
@@ -61,8 +60,8 @@ export default defineHandler(async (event) => {
   const key = isWorkerMediaPath
     ? url.pathname.slice(WORKER_MEDIA_PREFIX.length)
     : url.pathname.replace(/^\/+/, '')
-  // A booking's private documents are read only through their booking's route.
-  if (!key || key.startsWith(PRIVATE_R2_PREFIX)) return mediaResponse(isWorkerMediaPath, 404)
+  // This bucket holds public files only; a private slot's file is in PRIVATE_MEDIA_BUCKET.
+  if (!key) return mediaResponse(isWorkerMediaPath, 404)
 
   const rangeHeader = (event.req.headers.get('range'))
 

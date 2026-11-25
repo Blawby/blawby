@@ -11,6 +11,7 @@
     "channex:webhook": "node --experimental-strip-types --import ./tests/unit/support/register-aliases.mjs scripts/channex-webhook.ts",
     "db:payment-tasks": "node --experimental-strip-types --import ./tests/unit/support/register-aliases.mjs scripts/backfill-payment-tasks.ts",
     "db:recipe-pages": "node --experimental-strip-types --import ./tests/unit/support/register-aliases.mjs scripts/backfill-recipe-pages.ts",
+    "db:private-media": "node --experimental-strip-types --import ./tests/unit/support/register-aliases.mjs scripts/private-media.ts",
     "resend:product-news:sync": "node --env-file-if-exists=.env --experimental-strip-types --import ./tests/unit/support/register-aliases.mjs scripts/sync-resend-product-news.ts",
     "typecheck": "nuxi typecheck",
     "lint": "eslint . --ignore-pattern .agents/ --ignore-pattern .tmp/ --ignore-pattern '**/.tmp/' --ignore-pattern .claude/ --ignore-pattern '**/.claude/' --max-warnings=0",

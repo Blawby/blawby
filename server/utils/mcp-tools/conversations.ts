@@ -126,7 +126,7 @@ export async function handleConversationTools(ctx: McpExecutorContext): Promise<
   if (toolName === 'get_conversation') {
     const before = args.before ?? null
     if (before !== null && (typeof before !== 'number' || !Number.isSafeInteger(before) || before < 1)) throw new HTTPError({ statusCode: 400, message: 'Invalid transcript cursor', data: { code: 'INVALID_TRANSCRIPT_CURSOR', field: 'before' } })
-    return loadConversationPage(db, { conversationId, userId, organizationId }, { before, limit: 40 })
+    return loadConversationPage(db, env, { conversationId, userId, organizationId }, { before, limit: 40 })
   }
   const conversation = await assertConversationAccess(db, principal, conversationId)
   switch (toolName) {

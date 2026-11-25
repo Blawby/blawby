@@ -2,7 +2,8 @@ import { expect, test, type Page } from '@playwright/test'
 import { dismissPreviewToolbar, waitForNuxtHydration } from './helpers'
 import { loginAs } from './helpers/auth'
 import { mcpData, mcpRequest } from './helpers/mcp'
-import type { Product } from '../../server/types/products'
+import { acquireTenantMutationLock } from './helpers/tenant-mutation-lock'
+import type { Product, CatalogProduct } from '../../server/types/products'
 import type { DashboardLocation } from '../../composables/useDashboardOrganization'
 import { countCatalog, type CatalogCounts } from '../../utils/product-presentation'
 import { seededTenant } from './seed/manifest'
@@ -54,13 +55,55 @@ test.describe('dashboard pane hierarchy', () => {
     await testInfo.attach('menu-navigation-timing', { body: JSON.stringify({ viewport: PHONE, elapsed_ms: Date.now() - started, catalog_reads: catalogReads }), contentType: 'application/json' })
   })
 
+  test('a phone moves a dish through the initially opened Move dialog', async ({ page }, testInfo) => {
+    const tenant = seededTenant('restaurant')
+    const release = await acquireTenantMutationLock(testInfo, tenant.organizationId)
+    const endpoint = `/api/editor/organizations/${tenant.organizationId}`
+    const read = async () => {
+      const response = await page.request.get(`${endpoint}/products?include=collections`)
+      expect(response.status(), await response.text()).toBe(200)
+      return response.json() as Promise<{ products: CatalogProduct[]; collections: Array<{ id: string; name: string }> }>
+    }
+    const members = (catalog: Awaited<ReturnType<typeof read>>, id: string) => catalog.products.flatMap(product => {
+      const membership = product.collections.find(row => row.collection_id === id)
+      return membership ? [{ id: product.id, order: membership.sort_order }] : []
+    }).sort((a, b) => a.order - b.order).map(row => row.id)
+    const before = await read()
+    const source = before.collections.find(row => row.name === 'Pizzas')!
+    const target = before.collections.find(row => row.name === 'Starters')!
+    const dish = before.products.find(row => row.name === 'Margherita')!
+    try {
+      await page.setViewportSize(PHONE)
+      await open(page, `/dashboard/${tenant.slug}/products/menu/${source.id}?kind=dish`)
+      const section = page.locator('#dashboard-panel-menu-section')
+      await section.getByTestId('list-editor-toggle').click()
+      await section.getByRole('checkbox', { name: 'Select Margherita', exact: true }).check()
+      await section.getByTestId('product-move-open').click()
+      const dialog = page.getByRole('dialog', { name: 'Move item', exact: true })
+      await dialog.getByRole('radio', { name: /Starters/ }).check()
+      await dialog.getByRole('button', { name: 'Move', exact: true }).click()
+      await expect(dialog).not.toBeVisible()
+      const after = await read()
+      expect(members(after, source.id)).toEqual(members(before, source.id).filter(id => id !== dish.id))
+      expect(members(after, target.id)).toEqual([...members(before, target.id), dish.id])
+    } finally {
+      try {
+        const current = await read()
+        for (const collection of [source, target]) {
+          const restored = await page.request.put(`${endpoint}/collections/${collection.id}/products`, { data: { product_ids: members(before, collection.id), expected_product_ids: members(current, collection.id) } })
+          expect(restored.status(), await restored.text()).toBe(200)
+        }
+      } finally { await release() }
+    }
+  })
+
   test('a phone opens its sole location and moves between days across a month boundary', async ({ page }, testInfo) => {
     const tenant = seededTenant('legal')
     await page.setViewportSize(PHONE)
     await open(page, `/dashboard/${tenant.slug}/calendar/2026-11-30?view=month`)
     const day = page.locator('#dashboard-panel-calendar-day')
     await expect(day.getByText('Raleigh Office', { exact: true })).toBeVisible()
-    await expect(page).toHaveURL(/location_id=/)
+    expect(new URL(page.url()).searchParams.get('location_id')).toBeNull()
     await expect(day.getByRole('button', { name: 'Block date', exact: true })).toBeVisible()
     const scope = new URL(page.url()).searchParams.get('location_id')
     await day.getByRole('link', { name: 'Next day', exact: true }).click()
@@ -69,6 +112,35 @@ test.describe('dashboard pane hierarchy', () => {
     await day.getByRole('link', { name: 'Previous day', exact: true }).click()
     await expect(day.getByRole('heading', { name: 'Monday, November 30', exact: true })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('calendar-phone.png'), fullPage: true })
+  })
+
+  test('a location change removes the previous availability action while the new location loads', async ({ page }) => {
+    const tenant = seededTenant('restaurant')
+    const response = await page.request.get(`/api/dashboard/locations?org=${tenant.slug}&organization=true`)
+    expect(response.status(), await response.text()).toBe(200)
+    const { locations } = await response.json() as { locations: DashboardLocation[] }
+    expect(locations).toHaveLength(2)
+    const [first, second] = locations as [DashboardLocation, DashboardLocation]
+    await page.setViewportSize(PHONE)
+    await open(page, `/dashboard/${tenant.slug}/calendar/2026-11-25?location_id=${first.id}`)
+    const day = page.locator('#dashboard-panel-calendar-day')
+    await expect(day.getByRole('button', { name: 'Block date', exact: true })).toBeVisible()
+    let release!: () => void, requested!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    const pending = new Promise<void>(resolve => { requested = resolve })
+    await page.route(`**/api/organizations/${tenant.organizationId}/locations/${second.id}`, async route => {
+      requested()
+      await held
+      await route.continue()
+    })
+    try {
+      await day.getByRole('combobox', { name: 'Location', exact: true }).click()
+      await page.getByRole('option', { name: second.title, exact: true }).click()
+      await pending
+      await expect(day.getByRole('button', { name: 'Block date', exact: true })).toHaveCount(0)
+      release()
+      await expect(day.getByRole('button', { name: 'Block date', exact: true })).toBeVisible()
+    } finally { release() }
   })
 
   test('an empty phone Posts screen offers existing social connections and a first post', async ({ page }, testInfo) => {
@@ -83,8 +155,10 @@ test.describe('dashboard pane hierarchy', () => {
     await page.screenshot({ path: testInfo.outputPath('posts-phone.png'), fullPage: true })
   })
 
-  test('an unconnected business offers optional payment setup without an empty debt warning', async ({ page }) => {
+  test('an unconnected business offers optional payment setup without an empty debt warning', async ({ page }, testInfo) => {
     const tenant = seededTenant('restaurant')
+    const release = await acquireTenantMutationLock(testInfo, tenant.organizationId)
+    try {
     const balances = await page.request.get(`/api/dashboard/payments/unpaid?org=${tenant.slug}`)
     expect(balances.status(), await balances.text()).toBe(200)
     expect(await balances.json()).toEqual({ bookings: [] })
@@ -95,6 +169,7 @@ test.describe('dashboard pane hierarchy', () => {
     await expect(payments.getByText('Loading payments to collect…', { exact: true })).toHaveCount(0)
     await expect(payments.getByRole('link', { name: /Payments to collect|Unpaid/ })).toHaveCount(0)
     await expect(payments.getByText('Nobody owes you money', { exact: true })).toHaveCount(0)
+    } finally { await release() }
   })
 
   test('automatic messages use the vertical’s words and show an exact hour offset', async ({ page }) => {

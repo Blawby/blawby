@@ -15,7 +15,7 @@ export async function useOrganizationLocations(options: { includeInactive?: bool
     query: { organization: 'true', status: options.includeInactive ? 'all' : undefined }, signal,
     validate: (value): value is { success: true; locations: DashboardLocation[] } =>
       isRecord(value) && value.success === true && Array.isArray(value.locations),
-  }), { immediate: options.initial === undefined, enabled, lazy: true })
+  }), { immediate: options.initial === undefined, enabled })
   if (options.initial !== undefined) {
     if (options.organization_id !== dashboard.organizationId.value) throw createError({ statusCode: 409, statusMessage: 'The workspace changed while its locations were loading' })
     load.clear()

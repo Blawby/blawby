@@ -416,13 +416,14 @@ function addTo(date?: string) {
 }
 const addAvailabilityTo = computed(() => addTo(openDay.value ?? undefined))
 
-const { data: chosenLocation, error: locationError, refresh: refreshLocation } = await useAsyncData(
-  () => `calendar-location:${organizationId}:${filters.locationId}`,
-  async () => props.sessionProduct || filters.locationId === AGENDA_FILTER_ALL || !organizationId
+const availabilityLocationId = computed(() => filters.locationId === AGENDA_FILTER_ALL && locations.value.length === 1 ? locations.value[0]!.id : filters.locationId)
+const { data: locationReply, error: locationError, refresh: refreshLocation } = await useAsyncData(
+  () => `calendar-location:${organizationId}:${availabilityLocationId.value}`,
+  async () => props.sessionProduct || availabilityLocationId.value === AGENDA_FILTER_ALL || !organizationId
     ? null
-    : (await dashboardApi<{ location: CalendarLocation }>(`/api/organizations/${organizationId}/locations/${filters.locationId}`, { validate: isLocationHours })).location,
-  { watch: [() => filters.locationId] },
+    : (await dashboardApi<{ location: CalendarLocation }>(`/api/organizations/${organizationId}/locations/${availabilityLocationId.value}`, { validate: isLocationHours })).location,
 )
+const chosenLocation = computed(() => locationReply.value?.id === availabilityLocationId.value ? locationReply.value : null)
 function isUnavailableKey(key: string): boolean {
   if (sessionProduct.value) return false
   const record = chosenLocation.value
@@ -769,11 +770,6 @@ watch([view, monthKey, shownYear], () => {
   void router.replace({ query: { ...route.query, view: view.value === 'month' ? undefined : view.value, month: monthKey.value === monthKeyOf(todayDate) ? undefined : monthKey.value, from: gridView.value ? route.query.from : undefined } })
   void ensureLoaded(neededKeys())
 })
-
-// A business with exactly one location has one explicit calendar scope.
-watch(locations, (places) => {
-  if (!props.personalScope && !sessionProduct.value && places.length === 1 && filters.locationId === AGENDA_FILTER_ALL) filters.locationId = places[0]!.id
-}, { immediate: true })
 
 // The filters own their place in the URL; the months reload for the new answer.
 watch(filterSignature, () => {

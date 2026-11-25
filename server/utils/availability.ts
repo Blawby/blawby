@@ -1398,13 +1398,13 @@ function readSavedBookingOpening(db: DbClient, input: SessionSelector) {
   return queryFirst<SavedBookingOpening>(db, query, params)
 }
 
-export function bookingOpeningInstant(sessionId: string, saved?: SavedBookingOpening): string | null {
+export function bookingOpeningInstant(sessionId: string, saved?: SavedBookingOpening | null): string | null {
   const starts = saved?.starts_at ?? projectedIdPattern.exec(sessionId)?.[1]
   return starts && Number.isFinite(Date.parse(starts)) ? starts : null
 }
 
 /** The offered time a session id names, read through the slot reader at that instant. */
-async function calendarAtOpening(db: DbClient, env: CloudflareEnv | null, input: SessionSelector, saved: SavedBookingOpening | undefined, now: string, scope: SlotReadScope) {
+async function calendarAtOpening(db: DbClient, env: CloudflareEnv | null, input: SessionSelector, saved: SavedBookingOpening | null | undefined, now: string, scope: SlotReadScope) {
   const starts = bookingOpeningInstant(input.sessionId, saved)
   if (!starts) return null
   return readSlotCalendar(db, env, {
@@ -1434,7 +1434,7 @@ export async function resolveBookingSession(db: DbClient, input: SessionSelector
 
 export async function bookingSessionFrom(db: DbClient, input: SessionSelector & {
   env: CloudflareEnv; actorId: string
-}, saved: SavedBookingOpening | undefined, scope: SlotReadScope = 'bookable'): Promise<ResolvedBookingSession> {
+}, saved: SavedBookingOpening | null | undefined, scope: SlotReadScope = 'bookable'): Promise<ResolvedBookingSession> {
   const now = input.now ?? new Date().toISOString()
   const calendar = await calendarAtOpening(db, input.env, input, saved, now, scope)
   if (!calendar) throw new HTTPError({ statusCode: 404, message: 'That session is not open for booking' })

@@ -580,7 +580,7 @@ export function conversationAccessQuery(userId: string, conversationId: string, 
   params: organizationId === undefined ? [userId, userId, conversationId] : [userId, userId, conversationId, organizationId] }
 }
 
-export function conversationAccessFromRow(row: ConversationAccessRow | undefined, userId: string) {
+export function conversationAccessFromRow(row: ConversationAccessRow | null | undefined, userId: string) {
   if (!row) conversationAccessDenied()
   const { viewer_role, read_through, member_id, member_role, ...conversation } = row
   const membership = member_id && member_role !== null ? { userId, organizationId: conversation.organization_id, memberId: member_id, role: member_role } : null

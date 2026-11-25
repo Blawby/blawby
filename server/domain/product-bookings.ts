@@ -706,7 +706,7 @@ async function createNightBooking(event: H3Event, env: CloudflareEnv, db: DbClie
       activity_path: accountActivityPath('stay', conversationId), message, ...(replayed ? { replayed } : {}),
     }, { status: replayed ? 200 : 201 })
   }
-  const replayRequest = async (saved: SavedRequest | undefined, buyerUserId?: string) => {
+  const replayRequest = async (saved: SavedRequest | null | undefined, buyerUserId?: string) => {
     if (!saved) return null
     const currentUserId = buyerUserId ?? (await getAuthSession(event, env))?.user.id
     if (!currentUserId || saved.user_id !== currentUserId || saved.fingerprint !== fingerprint) {

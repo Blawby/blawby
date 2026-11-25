@@ -48,7 +48,7 @@ const { connect, connectError, connectPending, refreshConnect, account, payout, 
 type CountryChoices = { success: true; countries: string[]; suggested_country: string | null }
 const selectedCountry = ref<string>()
 const needsCountry = computed(() => !account.value?.stripe_account_id)
-// Read only while a country is still to be chosen; Stripe answers this slowly.
+// Read country choices only while a country is still to be chosen.
 const { data: countryList, error: countriesError, status: countriesStatus, execute: loadCountries } = useAsyncData(`dashboard-connect-countries:${String(route.params.org_slug)}`,
   () => dashboardApi<CountryChoices>('/api/dashboard/connect/countries', {
     validate: (value): value is CountryChoices => isRecord(value) && value.success === true

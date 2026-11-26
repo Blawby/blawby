@@ -1,6 +1,5 @@
 import { HTTPError } from 'nitro'
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
-import fontkit from '@pdf-lib/fontkit'
+import type { PDFFont, PDFPage } from 'pdf-lib'
 import { executeBatch, queryFirst, type DbClient } from '~/server/db'
 import { isWinAnsi, notoFontFor } from '~/server/domain/agreements'
 import type { ConversationRow } from '~/server/domain/conversations'
@@ -135,7 +134,6 @@ function fieldValues(facts: Facts, hostName: string): Partial<Record<AgreementTe
 }
 
 const PAGE = { width: 612, height: 792, margin: 72 }
-const INK = rgb(0.09, 0.09, 0.11)
 
 /** Words, and for text without spaces (Thai, Chinese, Japanese) characters, that fit the line. */
 function wrap(text: string, font: PDFFont, size: number, width: number): string[] {
@@ -173,6 +171,8 @@ export async function generateAgreementFromTemplate(env: CloudflareEnv, conversa
   }
   const blocks = fillAgreementTemplate(text, values)
 
+  const [{ PDFDocument, StandardFonts, rgb }, { default: fontkit }] = await Promise.all([import('pdf-lib'), import('@pdf-lib/fontkit')])
+  const INK = rgb(0.09, 0.09, 0.11)
   const pdf = await PDFDocument.create()
   pdf.registerFontkit(fontkit)
   const [regular, bold] = await Promise.all([pdf.embedFont(StandardFonts.Helvetica), pdf.embedFont(StandardFonts.HelveticaBold)])

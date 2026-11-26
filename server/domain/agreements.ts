@@ -1,6 +1,5 @@
 import { HTTPError } from 'nitro'
-import { PDFDocument, StandardFonts, rgb, type PDFFont } from 'pdf-lib'
-import fontkit from '@pdf-lib/fontkit'
+import type { PDFFont } from 'pdf-lib'
 import { z } from 'zod'
 import { executeBatch, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import { findMessageByDedupeKey, messageQueries, type ConversationRow, type MessageRow } from '~/server/domain/conversations'
@@ -306,6 +305,7 @@ async function readUploadedPdf(file: File): Promise<{ bytes: Uint8Array<ArrayBuf
   if (file.size > MAX_AGREEMENT_BYTES) throw new HTTPError({ statusCode: 413, message: 'The PDF is larger than 20 MB', data: { code: 'UPLOAD_TOO_LARGE', field: 'file' } })
   const bytes = new Uint8Array(await file.arrayBuffer())
   if (sniffMediaMimeType(bytes) !== 'application/pdf') throw new HTTPError({ statusCode: 415, message: 'Upload a PDF', data: { code: 'UNSUPPORTED_MEDIA_TYPE', field: 'file' } })
+  const { PDFDocument } = await import('pdf-lib')
   const pdf = await PDFDocument.load(bytes).catch((cause: unknown) => {
     throw new HTTPError({ statusCode: 422, message: 'This PDF could not be read. Encrypted PDFs cannot be signed here.', data: { code: 'INVALID_PDF', field: 'file' }, cause })
   })
@@ -529,7 +529,6 @@ export async function signAgreement(env: CloudflareEnv, conversation: Conversati
   await publishConversationEvent(env, env.DB, { conversationId: conversation.id, type: 'MESSAGE_CREATE' })
 }
 
-const SIGNATURE_COLOR = rgb(0.09, 0.09, 0.11)
 const SIGNABLE_NAME = /^[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Thai}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}\p{Script=Common}\p{Script=Inherited}]+$/u
 
 const NOTO_FONT_FILES = {
@@ -576,6 +575,7 @@ export async function notoFontFor(env: CloudflareEnv, text: string, loaded: Map<
         : chars.some(c => /\p{Script=Han}/u.test(c)) ? 'sc' : 'latin'
   const bytes = await loadFontAssetBytes(env, NOTO_FONT_FILES[key], loaded)
   if (key !== 'sc') return { key, bytes }
+  const { default: fontkit } = await import('@pdf-lib/fontkit')
   const sc = fontkit.create(bytes)
   if (chars.every(c => !/\p{Script=Han}/u.test(c) || sc.hasGlyphForCodePoint(c.codePointAt(0)!))) return { key, bytes }
   return { key: 'tc', bytes: await loadFontAssetBytes(env, NOTO_FONT_FILES.tc, loaded) }
@@ -596,6 +596,8 @@ interface SignedCopyInput {
 
 /** The document with every signature where it was placed and a closing page that records who signed, when and how. */
 async function renderSignedAgreement(env: CloudflareEnv, input: SignedCopyInput): Promise<{ bytes: Uint8Array<ArrayBuffer>; fileName: string }> {
+  const [{ PDFDocument, StandardFonts, rgb }, { default: fontkit }] = await Promise.all([import('pdf-lib'), import('@pdf-lib/fontkit')])
+  const SIGNATURE_COLOR = rgb(0.09, 0.09, 0.11)
   const { original, fingerprint, signatures } = input
   // The signed document's dates are the signing's, not the moment it was drawn.
   const pdf = await PDFDocument.load(original, { updateMetadata: false })

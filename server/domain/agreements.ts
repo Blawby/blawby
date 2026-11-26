@@ -579,15 +579,15 @@ export function agreementTextLayout(env: CloudflareEnv, pdf: PDFDocument) {
     }
     return held
   }
-  const runsFor = async (text: string, standard: PDFFont): Promise<AgreementTextRun[]> => {
+  const runsFor = async (text: string, standard: PDFFont, cjkFont: NotoFontKey): Promise<AgreementTextRun[]> => {
     const runs: AgreementTextRun[] = []
     for (const { segment } of graphemes.segment(text)) {
       let font = standard
       if (!isWinAnsi(segment)) {
-        const key: NotoFontKey = /\p{Script=Thai}/u.test(segment) ? 'thai'
+        const key: NotoFontKey = /[\p{Script_Extensions=Thai}\u0e3f]/u.test(segment) ? 'thai'
           : /\p{Script=Hangul}/u.test(segment) ? 'kr'
             : /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(segment) ? 'jp'
-              : /[\p{Script=Han}\u3000-\u303f\uff00-\uffef]/u.test(segment) ? 'sc' : 'latin'
+              : /[\p{Script_Extensions=Han}\p{Script_Extensions=Hangul}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Bopomofo}\u3000-\u303f\uff00-\uffef]/u.test(segment) ? cjkFont : 'latin'
         let selected = await fontAt(key)
         const covers = () => [...segment].every(character => selected.characters.has(character.codePointAt(0)!))
         if (!covers() && key === 'sc') selected = await fontAt('tc')
@@ -601,6 +601,7 @@ export function agreementTextLayout(env: CloudflareEnv, pdf: PDFDocument) {
     return runs
   }
   return async (text: string, standard: PDFFont, size: number, width = Infinity): Promise<AgreementTextRun[][]> => {
+    const cjkFont: NotoFontKey = /\p{Script=Hangul}/u.test(text) ? 'kr' : /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text) ? 'jp' : 'sc'
     const lines: AgreementTextRun[][] = []
     let line: AgreementTextRun[] = []
     const append = (left: AgreementTextRun[], right: AgreementTextRun[]) => {
@@ -625,10 +626,10 @@ export function agreementTextLayout(env: CloudflareEnv, pdf: PDFDocument) {
     }
     for (const { segment } of words.segment(text)) {
       const token = /\s/u.test(segment) && !segment.trim() ? ' ' : segment
-      let parts = [await runsFor(token, standard)]
+      let parts = [await runsFor(token, standard, cjkFont)]
       if (append([], parts[0]!).reduce((sum, run) => sum + run.width, 0) > width) {
         parts = []
-        for (const { segment: character } of graphemes.segment(token)) parts.push(await runsFor(character, standard))
+        for (const { segment: character } of graphemes.segment(token)) parts.push(await runsFor(character, standard, cjkFont))
       }
       for (const part of parts) {
         if (!line.length && part.every(run => !run.text.trim())) continue

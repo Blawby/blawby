@@ -394,6 +394,7 @@
   "site.posts.featured": "เรื่องเด่น",
   "site.posts.meta_description": "เรื่องราว ข่าวสาร และอัปเดตจาก {organization}",
   "site.posts.next": "ถัดไป",
+  "site.posts.view_markdown": "ดูเป็น Markdown",
   "site.posts.next_steps": "ขั้นตอนถัดไป",
   "site.posts.previous": "ก่อนหน้า",
   "site.posts.read_full_story": "อ่านเพิ่มเติม",

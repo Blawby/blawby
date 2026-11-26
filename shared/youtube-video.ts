@@ -28,7 +28,7 @@ export function youTubeVideoId(value: unknown): string | null {
   return candidate && VIDEO_ID.test(candidate) ? candidate : null
 }
 
-export const youTubeEmbedUrl = (id: string) => `https://www.youtube-nocookie.com/embed/${id}`
+export const youTubeEmbedUrl = (id: string) => `https://www.youtube.com/embed/${id}`
 export const youTubeWatchUrl = (id: string) => `https://www.youtube.com/watch?v=${id}`
 export const youTubeThumbnailUrl = (id: string) => `https://i.ytimg.com/vi/${id}/hqdefault.jpg`
 

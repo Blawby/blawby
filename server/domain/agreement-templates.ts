@@ -1,7 +1,7 @@
 import { HTTPError } from 'nitro'
-import type { PDFFont, PDFPage } from 'pdf-lib'
+import type { PDFPage } from 'pdf-lib'
 import { executeBatch, queryFirst, type DbClient } from '~/server/db'
-import { isWinAnsi, notoFontFor } from '~/server/domain/agreements'
+import { agreementTextLayout } from '~/server/domain/agreements'
 import type { ConversationRow } from '~/server/domain/conversations'
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { formatBookingPolicySummary, parseBookingPolicy } from '~/server/utils/booking-policy-summary'
@@ -135,24 +135,6 @@ function fieldValues(facts: Facts, hostName: string): Partial<Record<AgreementTe
 
 const PAGE = { width: 612, height: 792, margin: 72 }
 
-/** Words, and for text without spaces (Thai, Chinese, Japanese) characters, that fit the line. */
-function wrap(text: string, font: PDFFont, size: number, width: number): string[] {
-  const lines: string[] = []
-  let line = ''
-  const tokens = text.split(/(\s+)/).flatMap(token => font.widthOfTextAtSize(token, size) > width ? [...token] : [token])
-  for (const token of tokens) {
-    const next = line + token
-    if (line && font.widthOfTextAtSize(next.trimEnd(), size) > width) {
-      lines.push(line.trimEnd())
-      line = token.trimStart()
-    } else {
-      line = next
-    }
-  }
-  if (line.trim()) lines.push(line.trimEnd())
-  return lines
-}
-
 /**
  * Fill the listing's template from this booking and lay it out as a PDF, with
  * each signer's signature and date lines after the text. A field the booking
@@ -176,17 +158,7 @@ export async function generateAgreementFromTemplate(env: CloudflareEnv, conversa
   const pdf = await PDFDocument.create()
   pdf.registerFontkit(fontkit)
   const [regular, bold] = await Promise.all([pdf.embedFont(StandardFonts.Helvetica), pdf.embedFont(StandardFonts.HelveticaBold)])
-  const loaded = new Map<string, Uint8Array>()
-  const embedded = new Map<string, PDFFont>()
-  const fontFor = async (value: string, fallback: PDFFont) => {
-    if (isWinAnsi(value)) return fallback
-    const { key, bytes } = await notoFontFor(env, value, loaded)
-    const held = embedded.get(key)
-    if (held) return held
-    const font = await pdf.embedFont(bytes, { subset: true })
-    embedded.set(key, font)
-    return font
-  }
+  const layout = agreementTextLayout(env, pdf)
   const width = PAGE.width - 2 * PAGE.margin
   let page: PDFPage = pdf.addPage([PAGE.width, PAGE.height])
   let y = PAGE.height - PAGE.margin
@@ -198,12 +170,15 @@ export async function generateAgreementFromTemplate(env: CloudflareEnv, conversa
   for (const block of blocks) {
     const heading = block.type === 'heading'
     const size = heading ? 14 : 11
-    const font = await fontFor(block.text, heading ? bold : regular)
-    const lines = wrap(block.text, font, size, width)
+    const lines = await layout(block.text, heading ? bold : regular, size, width)
     y -= heading ? 10 : 0
-    for (const line of lines) {
+    for (const runs of lines) {
       room(size + 6)
-      page.drawText(line, { x: PAGE.margin, y: y - size, size, font, color: INK })
+      let x = PAGE.margin
+      for (const run of runs) {
+        page.drawText(run.text, { x, y: y - size, size, font: run.font, color: INK })
+        x += run.width
+      }
       y -= size + 6
     }
     y -= heading ? 4 : 10
@@ -214,10 +189,17 @@ export async function generateAgreementFromTemplate(env: CloudflareEnv, conversa
   const fields: AgreementField[] = []
   const box = { signature: { width: 260, height: 34 }, date: { width: 140, height: 34 } }
   for (const signer of ordered) {
-    room(72)
-    const label = await fontFor(signer.name, regular)
-    page.drawText(signer.name, { x: PAGE.margin, y: y - 10, size: 10, font: label, color: INK })
-    const top = y - 16
+    const labels = await layout(signer.name, regular, 10, width)
+    room(labels.length * 14 + 60)
+    for (const runs of labels) {
+      let x = PAGE.margin
+      for (const run of runs) {
+        page.drawText(run.text, { x, y: y - 10, size: 10, font: run.font, color: INK })
+        x += run.width
+      }
+      y -= 14
+    }
+    const top = y - 2
     const lineY = top - box.signature.height
     page.drawLine({ start: { x: PAGE.margin, y: lineY }, end: { x: PAGE.margin + box.signature.width, y: lineY }, thickness: 0.8, color: INK })
     page.drawLine({ start: { x: PAGE.margin + 300, y: lineY }, end: { x: PAGE.margin + 300 + box.date.width, y: lineY }, thickness: 0.8, color: INK })

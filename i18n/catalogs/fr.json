@@ -415,6 +415,7 @@
   "site.posts.featured": "En vedette",
   "site.posts.meta_description": "Histoires, actualités et mises à jour de {organization}.",
   "site.posts.next": "Suivant",
+  "site.posts.view_markdown": "Afficher en Markdown",
   "site.posts.next_steps": "Étapes suivantes",
   "site.posts.previous": "Précédent",
   "site.posts.read_full_story": "Lire l'histoire complète",

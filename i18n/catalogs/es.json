@@ -415,6 +415,7 @@
   "site.posts.featured": "Destacados",
   "site.posts.meta_description": "Historias, noticias y actualizaciones de {organization}.",
   "site.posts.next": "Siguiente",
+  "site.posts.view_markdown": "Ver en Markdown",
   "site.posts.next_steps": "Próximos pasos",
   "site.posts.previous": "Anterior",
   "site.posts.read_full_story": "Leer la historia completa",

@@ -154,7 +154,7 @@ export function renderMcpToolReference(tools: McpToolDefinition[]) {
     '',
     `Tools: ${tools.length}.`,
     '',
-    'Connect with [the setup guide](/docs/mcp-setup), then read [what AI assistants can do](/docs/what-you-can-edit-through-chatgpt). Select the intended business and use its internal IDs returned by the tools. Permissions and entitlements are checked when each operation runs.',
+    'Connect from [ChatGPT](/docs/mcp-setup) or [Claude and Claude Code](/docs/connect-blawby-to-claude) with the server URL `https://blawby.com/api/mcp`, then read [what AI assistants can do](/docs/what-you-can-edit-through-chatgpt). Select the intended business and use its internal IDs returned by the tools. Permissions and entitlements are checked when each operation runs.',
     '',
     'For step-by-step tasks, see [menu updates](/docs/update-your-menu-with-an-ai-assistant), [bookings](/docs/manage-your-bookings), [photos and video](/docs/add-photos-and-video), [publishing a post](/docs/publish-a-post), and [guest messages and requests](/docs/handle-inquiries-and-reservation-requests).',
     '',

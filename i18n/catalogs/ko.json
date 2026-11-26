@@ -415,6 +415,7 @@
   "site.posts.featured": "추천",
   "site.posts.meta_description": "{organization}의 이야기, 뉴스 및 업데이트",
   "site.posts.next": "다음",
+  "site.posts.view_markdown": "Markdown으로 보기",
   "site.posts.next_steps": "다음 단계",
   "site.posts.previous": "이전",
   "site.posts.read_full_story": "전체 스토리 읽기",

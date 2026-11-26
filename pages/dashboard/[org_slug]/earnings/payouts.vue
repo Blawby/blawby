@@ -9,10 +9,9 @@
       <p class="mb-6 text-sm text-muted">Transfers from your connected Stripe account. Channel payouts are managed by each channel.</p>
       <UAlert v-if="error" color="error" :description="error.message" />
       <template v-else-if="data">
-        <template v-if="data.configured === false">
-          <p class="text-base text-muted">Payouts start once your business is connected to Stripe.</p>
-          <UButton class="mt-4" label="Add payout method" :to="`/dashboard/${route.params.org_slug}/payments`" />
-        </template>
+        <DashboardEmptyState v-if="data.configured === false && status === 'success'" illustration="/images/offers/card.webp" title="Payouts start once your business is connected to Stripe.">
+          <template #actions><UButton label="Add payout method" :to="`/dashboard/${route.params.org_slug}/payments`" /></template>
+        </DashboardEmptyState>
         <template v-else>
           <section v-if="clearing.length" class="my-6">
             <h2 class="text-base font-semibold text-highlighted">Stripe balance</h2>
@@ -41,7 +40,7 @@
               <UIcon name="i-lucide-chevron-right" class="size-5 shrink-0 text-muted" />
             </NuxtLink>
           </div>
-          <p v-else class="text-base text-muted">Nothing has been paid out yet.</p>
+          <DashboardEmptyState v-else-if="status === 'success'" illustration="/images/offers/card.webp" title="Nothing has been paid out yet." />
           <section v-if="other.length" class="mt-8">
             <h2 class="text-base font-semibold text-highlighted">Failed and cancelled</h2>
             <div class="divide-y divide-default">
@@ -81,7 +80,7 @@ const api = useDashboardApi()
 const level = useRouteLevel()
 const after = ref<string | null>(null)
 const loaded = ref<PayoutRow[]>([])
-const { data, error } = await useAsyncData(
+const { data, error, status } = await useAsyncData(
   () => `earnings-paid:${route.params.org_slug}:${after.value ?? ''}`,
   async () => {
     const page = await api<PayoutsView>('/api/dashboard/payments', { query: { view: 'payouts', ...(after.value ? { after: after.value } : {}) }, validate: isPayoutsView })

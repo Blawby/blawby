@@ -10,7 +10,7 @@
       title="Photos"
       :error="p.loadError.value || p.photoError.value"
       empty-title="Add your first photo"
-      empty-icon="i-lucide-image-plus"
+      empty-illustration="/images/empty-states/photos.webp"
       add-label="Add photos"
       manage-label="Manage photos"
       remove-label="Remove selected photos"

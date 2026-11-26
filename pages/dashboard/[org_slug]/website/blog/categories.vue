@@ -12,7 +12,7 @@
         :items="listItems"
         :error="loadError"
         empty-title="No categories yet"
-        empty-icon="i-lucide-folder"
+        empty-illustration="/images/empty-states/documents.webp"
         add-label="Add a category"
         reorderable
         :removing-id="removingId"

@@ -26,7 +26,7 @@
       :items="selectedAmenities"
       title="Amenities"
       empty-title="No amenities added yet"
-      empty-icon="i-lucide-house"
+      empty-illustration="/images/offers/home.webp"
       add-label="Add amenity"
       :add-to="p.sectionPath('amenities/add')"
       :addable="!editing"

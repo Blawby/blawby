@@ -9,7 +9,7 @@
       :thumbnail-skeleton="true"
       :error="loadError"
       empty-title="No posts yet"
-      empty-icon="i-lucide-newspaper"
+      empty-illustration="/images/empty-states/documents.webp"
       add-label="Write a post"
       :removing-id="removingId"
       :reorderable="orderedCollection !== null"

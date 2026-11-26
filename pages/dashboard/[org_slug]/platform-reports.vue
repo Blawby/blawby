@@ -36,7 +36,7 @@
             <UButton size="sm" color="neutral" variant="soft" class="rounded-full" :loading="deciding === `${report.id}:dismiss`" :disabled="deciding !== null" @click="decide(report.id, 'dismiss')">Dismiss</UButton>
           </div>
         </li>
-        <li v-if="!reports.length" class="py-6 text-sm text-muted">No {{ status }} reports.</li>
+        <li v-if="!reports.length"><DashboardEmptyState illustration="/images/empty-states/documents.webp" :title="`No ${status} reports.`" /></li>
       </ul>
     </div>
   </DashboardIndexPanel>

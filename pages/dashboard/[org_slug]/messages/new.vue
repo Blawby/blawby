@@ -1,7 +1,7 @@
 <template>
   <DashboardLeafPanel id="new-team-conversation" title="Message your team" save-label="Start" :disabled="!selected.length || !!membersError || !!stayError" :saving="saving" :error="actionError" @save="start">
     <UAlert v-if="membersError || stayError" class="mb-6" color="error" title="Conversation could not be prepared" :description="getErrorMessage(membersError || stayError, 'Team members could not be loaded')" />
-    <template v-if="members">
+    <template v-if="members && !membersError && !stayError">
       <UFormField v-if="selected.length >= 2 && !stayId && !locationId" label="Conversation name" class="mb-6">
         <UInput v-model="name" aria-label="Conversation name" placeholder="Optional" :maxlength="100" :disabled="saving" class="w-full" />
       </UFormField>
@@ -13,7 +13,7 @@
           <UCheckbox :model-value="selected.includes(member.id)" :label="member.name" :description="member.email" :disabled="saving" class="min-w-0 flex-1" :ui="{ root: 'flex-row-reverse justify-between', wrapper: 'min-w-0 flex-1' }" @update:model-value="toggle(member.id, $event === true)" />
         </div>
       </div>
-      <p v-if="!visibleMembers.length" class="py-6 text-muted">{{ search ? 'No teammates match your search.' : 'You’re the only person on this team.' }}</p>
+      <DashboardEmptyState v-if="!visibleMembers.length" :illustration="search ? undefined : '/images/empty-states/team.webp'" :title="search ? 'No teammates match your search.' : 'You’re the only person on this team.'" />
       <UButton v-if="!teammates.length && permissions?.invite" label="Invite a teammate" :to="`/dashboard/${route.params.org_slug}/team/invite`" color="neutral" variant="soft" />
       <p v-else-if="!teammates.length" class="text-sm text-muted">Ask the business owner to invite a teammate.</p>
       <p v-if="location" class="mt-8 text-base text-muted">About {{ location.title }}</p>

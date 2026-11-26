@@ -74,10 +74,7 @@
         <UButton color="neutral" variant="ghost" :loading="loadingMore" :disabled="pending" @click="loadMore">Load more conversations</UButton>
       </div>
 
-      <div v-if="page && threads.length === 0" class="py-14 text-center">
-        <p class="text-base font-medium text-highlighted">{{ emptyTitle }}</p>
-        <p v-if="emptyDescription" class="mt-1 text-sm text-muted">{{ emptyDescription }}</p>
-      </div>
+      <DashboardEmptyState v-if="page && threads.length === 0 && !pending && !threadsError && !nextPageError && !readAheadError" :illustration="search || kind || unreadOnly ? undefined : '/images/empty-states/messages.webp'" :title="emptyTitle" :description="emptyDescription" />
 
       <!-- Airbnb's own: a full-bleed row at the foot of the list. Past conversations are a place you go to. -->
       <!-- A search reads Current and Past together, so it has no other mailbox to go to. -->

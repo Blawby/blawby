@@ -12,7 +12,7 @@
         <h2 class="mb-4 flex items-center gap-4 text-sm text-muted after:h-px after:flex-1 after:bg-border">{{ section.label }}</h2>
         <div class="space-y-4"><AccountActivityCard v-for="item in section.items" :key="`${item.kind}:${item.id}`" :item="item" /></div>
       </section>
-      <UEmpty v-if="!sections.length && !cancelled.length" icon="i-lucide-history" title="No past activity yet" />
+      <DashboardEmptyState v-if="!sections.length && !cancelled.length" illustration="/images/offers/calendar.webp" icon="i-lucide-history" title="No past activity yet" />
       <UCard
         v-if="cancelled.length"
         :as="NuxtLink"

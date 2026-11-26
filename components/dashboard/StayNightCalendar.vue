@@ -93,7 +93,7 @@
             </UCalendar>
           </div>
           <div v-else-if="data" class="divide-y divide-default border-y border-default">
-            <p v-if="!listedStays.length" class="py-10 text-center text-sm text-muted">No stays in {{ placeholder?.year }}.</p>
+            <DashboardEmptyState v-if="!listedStays.length && !error && status === 'success'" illustration="/images/offers/calendar.webp" :title="`No stays in ${placeholder?.year}.`" />
             <NuxtLink v-for="stay in listedStays" :key="stay.booking_id" :to="stayTo(stay.booking_id)" class="flex items-center justify-between gap-4 py-5">
               <div>
                 <p class="font-medium text-highlighted">{{ stay.guest_name || 'Guest name not provided' }}</p>

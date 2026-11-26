@@ -13,7 +13,7 @@
         :items="rows"
         title="Questions"
         empty-title="No questions yet"
-        empty-icon="i-lucide-message-square-text"
+        empty-illustration="/images/empty-states/messages.webp"
         add-label="Add a question"
         :add-to="`${level.path.value}/new`"
         :addable="!editing && owner.questions.value.length < FORM_QUESTION_LIMITS.questions"

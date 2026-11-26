@@ -40,29 +40,40 @@ additively and use this sequence for a release that affects the native app.
 
 1. **Staging.** Run the affected authenticated checks in the existing deployed
    verification suite. Open each affected screen in the staging demo workspace
-   using Debug builds from the exact source revisions of the oldest supported
+   using Simulator Debug builds from the exact source revisions of the oldest supported
    App Store build, the current TestFlight candidate, and each newer shipped
    build with a different API contract. Record the app versions, build numbers,
-   source SHAs and screen outcomes in the existing release PR. Fix failures
+   source SHAs, candidate archive mapping and observed screen outcomes in the existing release PR. Fix failures
    before promoting the server. When distributing a candidate to an existing
    external TestFlight group, select **Automatically notify testers**.
 2. **Production server.** Deploy the compatible server first. Repeat the
-   affected read-only journeys in the installed App Store build against
-   production.
+   affected read-only journeys against production in a Simulator build from
+   the exact released source revision.
 3. **App Store.** Once the iOS release is authorized, select **Automatically
    release this version** before submitting to App Review. During review,
-   confirm the installed App Store build still completes the affected journeys
-   in production. If that build has the update banner, verify the candidate
+   confirm a Simulator build from the supported released source still completes
+   the affected production journeys. If that build has the update banner, verify the candidate
    does not trigger it during review. After release, verify the exact version
    is downloadable from the [Blawby App Store listing](https://apps.apple.com/us/app/blawby/id6823834381)
    in the storefront being checked. [Apple's release options](https://developer.apple.com/help/app-store-connect/manage-your-apps-availability/select-an-app-store-version-release-option)
-4. **Installed app.** With the previous banner-capable App Store version still
-   installed, confirm **Update available** appears and **Update** opens the
-   listing with an available update. Dismiss the banner and reopen the app to
-   confirm it stays dismissed for seven days for that version and returns if
-   still behind. Install the update from the listing, confirm the banner is gone, and repeat the affected production
-   journeys in the new release. The first release that includes the banner
-   establishes the installed build for this check when the next version ships.
+4. **Simulator update behavior.** Exercise the candidate's banner in Simulator
+   against Apple's real listing. If the listing is not newer than the candidate,
+   use a locally older marketing-version build setting for this isolated check
+   and record that setting alongside the candidate source revision. This is
+   separate from the exact released-source compatibility checks above; a previous
+   release is checked against its own dismissal behavior, not the candidate's.
+   Confirm **Update available** appears and **Update** opens the canonical
+   listing. Dismiss through the actual control and reopen the app. For a
+   candidate with the seven-day reminder, verify persistence before the boundary
+   and recurrence afterward; controlled app-process time is valid evidence.
+   Do not change the host clock or edit persisted dismissal storage. The
+   candidate's ordinary version and build must show no self-update prompt.
+   After release, verify the listing's actual version availability separately,
+   run the Simulator build from the exact newly released source, and repeat the
+   affected production read-only journeys. Record the source, version/build
+   settings and outcomes actually checked. Simulator does not install App Store
+   binaries or prove production StoreKit transactions or distributor receipts;
+   a physical iPhone is not a release prerequisite.
    iOS manages automatic updates on each device, and customers can manually
    update during a phased release. [Apple's update settings](https://support.apple.com/en-us/102629) · [Phased releases](https://developer.apple.com/help/app-store-connect/update-your-app/release-a-version-update-in-phases)
 

@@ -10,7 +10,7 @@
       :title="records.noun.value.plural"
       :items="listItems"
       :empty-title="`No ${records.noun.value.plural.toLowerCase()} yet`"
-      empty-icon="i-lucide-list"
+      empty-illustration="/images/empty-states/documents.webp"
       :add-label="records.noun.value.add"
       reorderable
       @add="navigateTo(`${level.path.value}/${records.addRecord()}`)"

@@ -48,7 +48,7 @@
         missing-image-hint="Add one in this item’s photo editor."
         data-testid="catalog-grid"
       />
-      <UEmpty v-else-if="!showFirstHomeSetup || (!setupPending && !setupError)" icon="i-lucide-store" :title="`No ${activeFilterLabel.toLowerCase()} yet`" />
+      <DashboardEmptyState v-else-if="catalogStatus === 'success' && (!showFirstHomeSetup || (!setupPending && !setupError))" :illustration="kind === 'stay' ? '/images/offers/home.webp' : '/images/empty-states/documents.webp'" :title="`No ${activeFilterLabel.toLowerCase()} yet`" />
     </template>
   </DashboardIndexPanel>
 </template>
@@ -80,7 +80,7 @@ const kind = computed({
   get: () => typeof route.query.kind === 'string' ? route.query.kind : 'all',
   set: (value: string) => void navigateTo({ path: level.path.value, query: { ...route.query, kind: value === 'all' ? undefined : value } }),
 })
-const { data: catalog, error: catalogError } = await useAsyncData(
+const { data: catalog, error: catalogError, status: catalogStatus } = await useAsyncData(
   () => `dashboard-catalog:${organizationId}:${kind.value}${level.mode.value === 'yield' ? ':hidden' : ''}`,
   async () => {
     if (level.mode.value === 'yield') return null

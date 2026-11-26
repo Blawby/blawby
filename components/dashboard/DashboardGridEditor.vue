@@ -49,7 +49,7 @@
       />
     </div>
 
-    <UEmpty v-else-if="!error && !items.length" :icon="emptyIcon" :title="emptyTitle" data-testid="grid-editor-empty" />
+    <DashboardEmptyState v-else-if="!error && !items.length" :illustration="emptyIllustration" :icon="emptyIcon" :title="emptyTitle" data-testid="grid-editor-empty" />
 
     <div v-if="items.length" :class="gridClass">
       <div
@@ -173,7 +173,8 @@ const props = defineProps<{
   items: T[]
   title: string
   emptyTitle: string
-  emptyIcon: string
+  emptyIcon?: string
+  emptyIllustration?: string
   /** Names the add control for screen readers, e.g. "Add photos". */
   addLabel: string
   /** Bar title while selecting, e.g. "Select photos". */

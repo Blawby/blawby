@@ -25,7 +25,7 @@
           </div>
         </li>
       </ul>
-      <p v-else class="text-base text-muted">No checklist yet. Done stays one tap until you add an item.</p>
+      <DashboardEmptyState v-else illustration="/images/empty-states/documents.webp" title="No checklist yet. Done stays one tap until you add an item." />
       <div v-if="manage" class="mt-6 flex flex-col gap-3">
         <UButton label="Add item" icon="i-lucide-plus" color="neutral" variant="outline" class="w-full justify-center rounded-xl py-4" :disabled="saving || draft.length >= CHECKLIST_LIMITS.items" data-testid="turnover-checklist-add" @click="openItem(null)" />
         <UButton v-if="saved?.items.length && otherHomes.length" label="Copy to other homes" icon="i-lucide-copy" color="neutral" variant="ghost" class="w-full justify-center" :disabled="saving || changed" @click="copyOpen = true" />

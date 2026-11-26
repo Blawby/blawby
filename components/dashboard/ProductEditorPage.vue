@@ -202,7 +202,7 @@
         <UAlert v-if="locationsError" color="error" :description="getErrorMessage(locationsError, 'Locations could not be loaded')" />
         <p v-else-if="locationsPending" role="status">Loading locations…</p>
         <EditorNavigationList v-else-if="previewLocationChoices[0]?.items.length" :groups="previewLocationChoices" />
-        <UEmpty v-else title="This dish has no locations" description="Add the dish to a location to preview its menu page." :actions="[{ label: 'Locations', to: sectionPath('locations'), color: 'neutral' }]" />
+        <DashboardEmptyState v-else illustration="/images/offers/mappin.webp" title="This dish has no locations" description="Add the dish to a location to preview its menu page." :actions="[{ label: 'Locations', to: sectionPath('locations'), color: 'neutral' }]" />
       </div>
     </template>
   </DashboardContentPreview>

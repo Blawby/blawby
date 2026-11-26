@@ -24,7 +24,7 @@
         <div class="h-3 w-1/3 rounded bg-elevated/40" />
       </div>
     </div>
-    <UEmpty
+    <DashboardEmptyState illustration="/images/offers/mappin.webp"
       v-else-if="!locations.length"
       icon="i-lucide-map-pin"
       :title="`No ${locationsLabel.toLowerCase()} yet`"

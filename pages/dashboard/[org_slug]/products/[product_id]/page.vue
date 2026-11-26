@@ -12,14 +12,14 @@
       :title="p.product.value.page.title"
       :actions="[{ label: 'Edit page content', to: `/dashboard/${String(route.params.org_slug)}/website/pages/${encodeURIComponent(p.product.value.page.id)}` }]"
     />
-    <UEmpty
+    <DashboardEmptyState
       v-else
-      icon="i-lucide-file-text"
+      illustration="/images/empty-states/documents.webp"
       title="No page"
       :actions="[{ label: 'Create page', icon: 'i-lucide-plus', loading: p.saving.value, onClick: p.createPage }]"
     >
-      <UAlert v-if="p.saveError.value" class="text-left" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="p.saveError.value" />
-    </UEmpty>
+      <template #footer><UAlert v-if="p.saveError.value" class="text-left" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="p.saveError.value" /></template>
+    </DashboardEmptyState>
   </DashboardIndexPanel>
 </template>
 

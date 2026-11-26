@@ -33,7 +33,7 @@
           <UButton icon="i-lucide-trash-2" color="neutral" variant="ghost" :aria-label="`Remove ${KIND_LABELS[entry.kind].toLowerCase()} of ${money(entry.amount_minor)}`" :loading="removing === entry.id" @click="removeEntry(entry)" />
         </li>
       </ul>
-      <p v-else class="mt-2 text-sm text-muted">Nothing recorded yet.</p>
+      <DashboardEmptyState v-else illustration="/images/offers/card.webp" title="Nothing recorded yet." />
 
       <div class="mt-4 divide-y divide-default border-t border-default">
         <button v-for="kind in DEPOSIT_ENTRY_KINDS" :key="kind" type="button" :class="rowClass" :disabled="kind !== 'received' && deposit.held_minor === 0" :data-testid="`deposit-${kind}`" @click="openEntry(kind)">

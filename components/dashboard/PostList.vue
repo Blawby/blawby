@@ -9,7 +9,7 @@
       :thumbnail-skeleton="true"
       :error="loadError"
       empty-title="No posts yet"
-      empty-icon="i-lucide-file-text"
+      empty-illustration="/images/offers/social.webp"
       add-label="Write a post"
       :removing-id="removingId"
       @add="openNew"
@@ -20,11 +20,11 @@
       </template>
 
       <template #empty>
-        <UEmpty data-testid="posts-empty" :title="activeTab === 'all' ? 'No posts yet' : activeTab === 'draft' ? 'No drafts' : 'No live posts'" icon="i-lucide-file-text" description="Write a post to share news, photos, or an upcoming event.">
+        <DashboardEmptyState illustration="/images/offers/social.webp" data-testid="posts-empty" :title="activeTab === 'all' ? 'No posts yet' : activeTab === 'draft' ? 'No drafts' : 'No live posts'" description="Write a post to share news, photos, or an upcoming event.">
           <template #actions>
             <UButton label="Write a post" color="neutral" @click="openNew" />
           </template>
-        </UEmpty>
+        </DashboardEmptyState>
         <p v-if="connectionStatus === 'pending'" role="status" class="mt-4 text-sm text-muted">Reading social accounts…</p>
         <UAlert v-else-if="connectionError" class="mt-4" color="error" title="Social accounts could not be read" :description="getErrorMessage(connectionError, 'Connections could not be loaded')" />
         <div v-else-if="unconnectedChannels.length" class="mt-6 space-y-4 text-center">

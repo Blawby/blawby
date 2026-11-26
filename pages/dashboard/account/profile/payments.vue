@@ -47,7 +47,7 @@
       </section>
       <UButton v-if="shown < entries.length" color="neutral" variant="soft" size="lg" class="w-full justify-center" label="Show more" @click="shown += PAGE" />
     </template>
-    <UEmpty v-else-if="data" icon="i-lucide-receipt" title="No payments yet" />
+    <DashboardEmptyState v-else-if="data && !membershipsError" illustration="/images/offers/card.webp" icon="i-lucide-receipt" title="No payments yet" />
   </DashboardLeafPanel>
 </template>
 

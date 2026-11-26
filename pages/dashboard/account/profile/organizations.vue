@@ -16,7 +16,7 @@
       title="Organizations"
       :items="items"
       empty-title="No organizations yet"
-      empty-icon="i-lucide-building-2"
+      empty-illustration="/images/offers/home.webp"
       add-label="New organization"
       :addable="Boolean(createAction && !resumeAction)"
       :add-to="createAction?.to"

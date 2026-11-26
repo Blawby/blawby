@@ -6,7 +6,7 @@
   -->
   <DashboardIndexPanel id="product-members" title="Members">
     <UAlert v-if="error" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(error, 'Members could not be loaded')" />
-    <UEmpty v-else-if="data && !data.memberships.length" icon="i-lucide-users" title="No members yet" description="Members appear here once Stripe takes their first payment." />
+    <DashboardEmptyState v-else-if="data && !data.memberships.length" illustration="/images/empty-states/team.webp" title="No members yet" description="Members appear here once Stripe takes their first payment." />
     <EditorNavigationList v-else :groups="groups" />
   </DashboardIndexPanel>
 </template>

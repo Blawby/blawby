@@ -12,7 +12,7 @@
       :disabled="busy || Boolean(loadError)"
       :addable="!editing"
       :empty-title="`No items in this ${noun} yet`"
-      :empty-icon="menuSection ? 'i-lucide-utensils' : 'i-lucide-folder'"
+      empty-illustration="/images/empty-states/documents.webp"
       :add-label="menuSection ? 'Add dish' : 'Add item'"
       reorderable
       selectable

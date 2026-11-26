@@ -4,7 +4,7 @@
     <UAlert v-if="error" color="error" title="Automatic messages could not be loaded" :description="getErrorMessage(error, 'Automatic messages request failed')" />
     <template v-else-if="data">
       <EditorNavigationList :groups="[{ id: 'automatic', items: data.templates.map(reply => ({ id: reply.id, label: reply.title, summary: reply.schedule_label, to: `${level.path.value}/${encodeURIComponent(reply.id)}` })) }]" :active-item="level.child.value" />
-      <p v-if="!data.templates.length" class="py-8 text-muted">No automatic messages yet.</p>
+      <DashboardEmptyState v-if="!data.templates.length && status === 'success'" illustration="/images/empty-states/messages.webp" title="No automatic messages yet." />
       <div v-if="offset || data.pagination.has_more" class="mt-6 flex justify-between gap-3">
         <UButton label="Previous" color="neutral" variant="outline" :disabled="!offset || status === 'pending'" @click="offset = Math.max(0, offset - 50)" />
         <UButton label="Next" color="neutral" variant="outline" :disabled="!data.pagination.has_more || status === 'pending'" @click="offset = data.pagination.next_offset!" />

@@ -53,11 +53,11 @@
             </span>
           </div>
         </div>
-        <p v-else class="mt-4 text-sm text-muted">Nothing was earned in {{ monthTitle }}.</p>
+        <DashboardEmptyState v-else-if="status === 'success'" illustration="/images/offers/chart.webp" :title="`Nothing was earned in ${monthTitle}.`" />
         <p class="mt-4 text-xs text-muted">Stripe payments captured in the selected period, less refunds; channel reservation amounts are separate.</p>
       </section>
 
-      <ChannelReservationSummary v-if="data && dashboard.hasFeature('stays')" class="mt-10" :rows="data.channel_reservations" :month="monthTitle" />
+      <ChannelReservationSummary v-if="data && status === 'success' && dashboard.hasFeature('stays')" class="mt-10" :rows="data.channel_reservations" :month="monthTitle" />
     </template>
   </DashboardLeafPanel>
 </template>
@@ -86,7 +86,7 @@ const year = computed({
 })
 watch(month, (next) => { void router.replace({ query: { ...route.query, month: next } }) })
 
-const { data, error } = await useAsyncData(
+const { data, error, status } = await useAsyncData(
   () => `earnings-performance:${route.params.org_slug}:${month.value}`,
   async () => {
     const requestedMonth = month.value

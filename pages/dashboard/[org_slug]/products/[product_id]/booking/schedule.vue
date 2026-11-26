@@ -3,7 +3,7 @@
     <template v-if="p.locationId.value" #right><UButton :to="chooseLocationPath" :label="legal ? 'Change office' : 'Change location'" color="neutral" variant="outline" /></template>
     <UAlert v-if="p.loadError.value || p.organizationLocationsError.value || scopeError" color="error" variant="soft" :description="p.loadError.value || p.organizationLocationsError.value || scopeError || ''" />
     <p v-else-if="!p.product.value" role="status" class="text-muted">Loading offering…</p>
-    <UEmpty v-else-if="!groups[0]?.items.length" :title="legal ? 'No offices assigned' : 'No physical locations'" :description="`Add this offering to ${legal ? 'an office' : 'a location'} before setting its weekly times.`" :actions="[{ label: p.sectionLabels.locations, to: p.sectionPath('locations'), color: 'neutral' }]" />
+    <DashboardEmptyState v-else-if="!groups[0]?.items.length" illustration="/images/offers/mappin.webp" :title="legal ? 'No offices assigned' : 'No physical locations'" :description="`Add this offering to ${legal ? 'an office' : 'a location'} before setting its weekly times.`" :actions="[{ label: p.sectionLabels.locations, to: p.sectionPath('locations'), color: 'neutral' }]" />
     <EditorNavigationList v-else :groups="groups" :active-item="level.child.value" />
   </DashboardIndexPanel>
 </template>

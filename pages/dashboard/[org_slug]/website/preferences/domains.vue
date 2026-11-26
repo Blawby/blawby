@@ -64,25 +64,15 @@
           </div>
 
           <!-- Empty state when no custom domains connected -->
-          <div
+          <DashboardEmptyState
             v-if="domainSettings && !loadError && !domainGroups?.length"
-            class="rounded-3xl p-6 sm:p-8 text-center bg-white dark:bg-neutral-900 shadow-[0_4px_24px_rgba(0,0,0,0.06)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.3)]"
+            illustration="/images/empty-states/documents.webp"
+            :title="domainSettings.empty_title"
           >
-            <div class="size-12 rounded-full bg-accented flex items-center justify-center mx-auto mb-3">
-              <UIcon name="i-lucide-globe" class="size-6 text-muted" />
-            </div>
-            <h4 class="text-sm sm:text-base font-semibold text-highlighted">
-              {{ domainSettings.empty_title }}
-            </h4>
-            <UButton
-              v-if="domainSettings?.action?.to"
-              :label="domainSettings.action.label"
-              :to="domainSettings.action.to"
-              color="neutral"
-              variant="outline"
-              class="mt-4 rounded-xl"
-            />
-          </div>
+            <template #actions>
+              <UButton v-if="domainSettings.action?.to" :label="domainSettings.action.label" :to="domainSettings.action.to" color="neutral" variant="outline" />
+            </template>
+          </DashboardEmptyState>
 
           <!-- Custom domains list -->
           <div v-else class="space-y-4">

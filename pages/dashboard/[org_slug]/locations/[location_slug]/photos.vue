@@ -10,7 +10,7 @@
         :items="gridItems"
         :error="photosError ? getErrorMessage(photosError, 'Failed to load media') : null"
         empty-title="No location media yet"
-        empty-icon="i-lucide-image"
+        empty-illustration="/images/empty-states/photos.webp"
         add-label="Add media"
         selection-title="Select media"
         grid-class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,9rem),1fr))] gap-3"

@@ -8,7 +8,7 @@
         <dd class="font-medium text-highlighted">{{ paymentMoney(row.amount, row.currency) }}</dd>
       </div>
     </dl>
-    <p v-else class="mt-4 text-sm text-muted">No confirmed channel reservations arriving this month.</p>
+    <DashboardEmptyState v-else illustration="/images/offers/calendar.webp" title="No confirmed channel reservations arriving this month." />
     <p class="mt-4 text-sm text-muted">Reservation amounts reported by each channel, grouped by arrival month. They are not confirmed bank transfers and are not added to direct payment totals. Check the channel for its payout status and bank details.</p>
   </section>
 </template>

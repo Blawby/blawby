@@ -3,7 +3,7 @@
     <UButton icon="i-lucide-user-plus" color="neutral" variant="soft" square aria-label="Invite a team member" :to="level.path.value + '/invite'" />
   </Teleport>
   <p v-if="status === 'pending' && !data" role="status" class="py-3 text-sm text-muted">Loading team…</p>
-  <UAlert v-else-if="loadError && !data" color="error" variant="soft" title="The team could not be loaded" :description="getErrorMessage(loadError, 'Members request failed')" :actions="[{ label: 'Retry', onClick: () => refresh() }]" />
+  <UAlert v-else-if="loadError" color="error" variant="soft" title="The team could not be loaded" :description="getErrorMessage(loadError, 'Members request failed')" :actions="[{ label: 'Retry', onClick: () => refresh() }]" />
   <div v-else-if="data" class="space-y-6">
     <section aria-labelledby="team-members">
       <h2 id="team-members" class="text-sm font-semibold text-highlighted">Members</h2>
@@ -43,7 +43,7 @@
           <UAlert v-if="roleUpdateError && roleUpdateErrorMemberId === member.id" class="mt-2" color="error" variant="soft" :description="roleUpdateError" />
         </li>
       </ul>
-      <p v-else class="py-3 text-sm text-muted">No members found for this organization.</p>
+      <DashboardEmptyState v-else-if="status === 'success'" illustration="/images/empty-states/team.webp" title="No members found for this organization." />
       <UAlert v-if="memberError" class="mt-2" color="error" variant="soft" :description="memberError" />
     </section>
 
@@ -62,7 +62,7 @@
           <p class="mt-0.5 text-xs" :class="invitation.delivery.failed ? 'text-error' : 'text-muted'">{{ invitation.delivery.message }}</p>
         </li>
       </ul>
-      <p v-else class="py-3 text-sm text-muted">No pending invitations.</p>
+      <DashboardEmptyState v-else-if="status === 'success'" illustration="/images/empty-states/team.webp" title="No pending invitations." />
       <UAlert v-if="pendingInvitationError" class="mt-2" color="error" variant="soft" :description="pendingInvitationError" />
     </section>
   </div>

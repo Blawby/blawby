@@ -9,9 +9,10 @@
     v-model:editing="editing"
     title="Q&A"
     :items="listItems"
+    :loading="status === 'pending'"
     :error="qaError ? getErrorMessage(qaError, 'Q&A request failed') : null"
     :empty-title="locationScope ? 'No Q&A yet' : 'No site Q&A yet'"
-    empty-icon="i-lucide-circle-help"
+    empty-illustration="/images/empty-states/messages.webp"
     add-label="Add a question"
     reorderable
     :removing-id="removingId"
@@ -69,7 +70,7 @@ const qaEndpoint = computed(() => locationScope.value
 const { data: website } = useNuxtData<{ pages: TenantPageListRow[] }>(websiteSettingsKey(String(route.params.org_slug)))
 
 const pagePath = computed(() => selectedPagePath.value === 'general' ? null : selectedPagePath.value)
-const { data, refresh, error: qaError } = await useWebsiteIndexData(
+const { data, refresh, error: qaError, status } = await useWebsiteIndexData(
   () => qaIndexKey(organizationId, locationScope.value, pagePath.value),
   () => dashboardApi(qaEndpoint.value, {
     query: { ...(pagePath.value ? { page_path: pagePath.value } : {}), ...(!locationScope.value ? { scopes: '1' } : {}) },

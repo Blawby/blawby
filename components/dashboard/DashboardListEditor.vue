@@ -70,7 +70,7 @@
     </ul>
 
     <slot v-else-if="!items.length" name="empty">
-      <UEmpty :icon="emptyIcon" :title="emptyTitle" data-testid="list-editor-empty" />
+      <DashboardEmptyState :illustration="emptyIllustration" :icon="emptyIcon" :title="emptyTitle" data-testid="list-editor-empty" />
     </slot>
 
     <ul v-else class="divide-y divide-default border-y border-default">
@@ -179,7 +179,8 @@ const props = withDefaults(defineProps<{
   items: T[]
   title: string
   emptyTitle: string
-  emptyIcon: string
+  emptyIcon?: string
+  emptyIllustration?: string
   /** Names the add control for screen readers, e.g. "Add a question". */
   addLabel?: string
   /** A creation level is a link; inline list actions keep the add event. */

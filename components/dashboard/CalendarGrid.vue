@@ -38,7 +38,7 @@
         <div v-else-if="windowData" class="-mx-4 min-h-0 overflow-auto overscroll-contain border-y border-default sm:-mx-6" :aria-busy="status === 'pending'" :inert="!hasRequestedWindow" :data-testid="`${words.testId}-grid`">
           <div
             ref="gridElement"
-            class="grid w-max select-none [--home-column:8rem] sm:[--home-column:14rem]"
+            class="grid w-max select-none [--home-column:10rem] sm:[--home-column:14rem]"
             role="grid"
             :aria-label="words.gridLabel"
             :aria-multiselectable="true"
@@ -53,12 +53,17 @@
               </div>
             </div>
             <div v-for="(row, rowIndex) in rows" :key="row.id" role="row" class="contents">
-              <div role="rowheader" class="sticky left-0 z-20 flex min-w-0 items-center gap-2 border-b border-r border-default bg-default px-2 py-1 sm:px-3 sm:py-2" :class="selectedRow(row.id) ? 'shadow-[inset_3px_0_0_var(--ui-primary)]' : undefined">
-                <UCheckbox v-if="selection" :model-value="selectedRow(row.id)" :aria-label="`Include ${row.name}`" :disabled="editor.busy.value" @update:model-value="includeRow(row.id, Boolean($event))" />
-                <NuxtLink :to="row.to" class="flex min-w-0 flex-col hover:underline" :data-home="row.home?.product_id" :data-place="row.place ? `${row.place.kind}:${row.place.id}` : undefined">
-                  <span class="line-clamp-2 text-sm font-medium text-highlighted">{{ row.name }}</span>
+              <div role="rowheader" class="sticky left-0 z-20 flex min-w-0 items-center gap-2 border-b border-r border-default bg-default px-2 py-1 sm:px-3" :class="selectedRow(row.id) ? 'shadow-[inset_3px_0_0_var(--ui-primary)]' : undefined">
+                <div v-if="row.home" class="relative size-8 shrink-0">
+                  <img v-if="row.home.photos[0]" :src="row.home.photos[0].url" alt="" loading="lazy" class="size-8 rounded-md object-cover">
+                  <UIcon v-else name="i-lucide-house" class="size-8 rounded-md bg-elevated p-1.5 text-muted" aria-hidden="true" />
+                  <UCheckbox v-if="selection" :model-value="selectedRow(row.id)" :aria-label="`Include ${row.name}`" class="absolute -right-1 -bottom-1 rounded bg-default" :disabled="editor.busy.value" @update:model-value="includeRow(row.id, Boolean($event))" />
+                </div>
+                <UCheckbox v-else-if="selection" :model-value="selectedRow(row.id)" :aria-label="`Include ${row.name}`" :disabled="editor.busy.value" @update:model-value="includeRow(row.id, Boolean($event))" />
+                <NuxtLink :to="row.to" class="flex min-w-0 flex-1 flex-col hover:underline" :data-home="row.home?.product_id" :data-place="row.place ? `${row.place.kind}:${row.place.id}` : undefined">
+                  <span class="truncate text-sm font-medium text-highlighted" :title="row.name">{{ row.name }}</span>
+                  <span v-if="row.home" class="text-xs text-muted">Min {{ row.home.min_nights }}</span>
                   <span v-if="row.place" class="hidden truncate text-xs text-muted sm:block" :title="row.place.detail">{{ row.place.detail }}</span>
-                  <StayNightMinimum v-if="row.home" :nights="row.home.min_nights" is-default />
                 </NuxtLink>
               </div>
               <div class="relative grid border-b border-default" :data-row-index="rowIndex" :style="{ gridColumn: `2 / span ${dates.length}`, gridTemplateColumns: `repeat(${dates.length}, 4rem)` }">
@@ -70,9 +75,9 @@
                   :aria-selected="inSelection(rowIndex, index)"
                   :aria-label="cell.title"
                   :tabindex="cursor.row === rowIndex && cursor.day === index ? 0 : -1"
-                  class="relative flex flex-col justify-end border-r border-default px-1.5 text-left text-xs leading-4 tabular-nums outline-none hover:bg-elevated focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inverted"
+                  class="relative flex flex-col border-r border-default px-1.5 text-left text-xs leading-4 tabular-nums outline-none hover:bg-elevated focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-inverted"
                   :class="[
-                    row.home ? 'min-h-22 pb-2 pt-10' : 'min-h-16 py-1 sm:min-h-18',
+                    row.home ? 'h-12 justify-center py-1' : 'min-h-16 justify-end py-1 sm:min-h-18',
                     cell.open ? 'bg-default text-highlighted' : 'bg-elevated/60 text-muted',
                     inSelection(rowIndex, index) && !chosenWeekday(cell.date) ? 'text-dimmed' : '',
                   ]"
@@ -84,8 +89,8 @@
                   @keydown="keydown($event, rowIndex, index)"
                   @focus="cursor = { row: rowIndex, day: index }"
                 >
-                  <span v-if="row.home" class="flex min-h-9 w-full flex-col items-start gap-1">
-                    <span class="flex h-4 w-full items-center gap-1">
+                  <span v-if="row.home" class="flex w-full flex-col items-start">
+                    <span v-if="cell.minimumOverride !== undefined || cell.mark" class="flex h-4 w-full items-center gap-1">
                       <StayNightMinimum v-if="cell.minimumOverride !== undefined" :nights="cell.minimumOverride" aria-hidden="true" />
                       <UIcon v-if="cell.mark" :name="CHANNEL_MARKS[cell.mark]" class="ml-auto size-3 shrink-0" :class="cell.mark === 'pending' ? 'text-muted' : 'text-warning'" :data-testid="`stay-homes-channel-${cell.mark}`" aria-hidden="true" />
                     </span>
@@ -96,12 +101,12 @@
                 <div
                   v-for="(piece, pieceIndex) in pills(rowIndex)"
                   :key="piece.column"
-                  class="pointer-events-none z-[5] mx-0.5 mt-1 flex h-7 min-w-0 items-center self-start rounded-full sm:mt-1.5 bg-accented px-2.5 text-xs font-semibold text-highlighted ring-2 ring-inset ring-inverted"
+                  class="pointer-events-none z-[5] mx-0.5 flex h-10 min-w-0 items-center self-center rounded-lg px-2.5 text-xs font-semibold text-highlighted ring-2 ring-inset ring-inverted"
                   :style="{ gridRow: 1, gridColumn: `${piece.column} / span ${piece.span}` }"
                   :data-testid="`${words.testId}-selection`"
                   aria-hidden="true"
                 >
-                  <span v-if="pieceIndex === 0" class="truncate">{{ piece.label }}</span>
+                  <span v-if="!homesView && pieceIndex === 0" class="truncate">{{ piece.label }}</span>
                 </div>
                 <NuxtLink
                   v-for="bar in row.bars"
@@ -109,7 +114,7 @@
                   :to="bar.to"
                   :prefetch="Boolean(bar.stayId)"
                   prefetch-on="interaction"
-                  class="z-10 mx-0.5 mt-1 flex h-7 min-w-0 items-center gap-1.5 self-start rounded-full px-2.5 text-xs font-medium text-white sm:mt-1.5"
+                  class="z-10 mx-0.5 flex h-8 min-w-0 items-center gap-1.5 self-center rounded-lg px-2 text-xs font-medium text-white"
                   :style="{ gridRow: 1, gridColumn: `${bar.column} / span ${bar.span}`, backgroundColor: STAY_CHANNEL_COLORS[bar.channel ?? 'direct'] }"
                   :title="reservationRead.error.value?.bookingId === bar.stayId ? reservationRead.error.value?.message : bar.title"
                   :data-stay="bar.stayId"
@@ -147,7 +152,7 @@
       :dismissible="!editor.busy.value"
       no-body-styles
       handle-only
-      :ui="{ content: 'max-h-[85dvh] rounded-t-3xl', body: 'overflow-y-auto' }"
+      :ui="{ content: 'max-h-[85dvh] rounded-t-3xl', header: 'sr-only', body: 'overflow-y-auto' }"
       @update:open="closeDrawer"
     >
       <template #body>
@@ -184,7 +189,7 @@ import StayNightInspector from './StayNightInspector.vue'
 import StayNightMinimum from './StayNightMinimum.vue'
 import StayNightRangeDialog from './StayNightRangeDialog.vue'
 
-type Home = Pick<StayHome, 'product_id' | 'name' | 'internal_name' | 'timezone' | 'currency' | 'base_price_minor' | 'min_nights' | 'calendar_rules' | 'address'>
+type Home = Pick<StayHome, 'product_id' | 'name' | 'internal_name' | 'timezone' | 'currency' | 'base_price_minor' | 'min_nights' | 'calendar_rules' | 'address' | 'photos'>
 // A manager reads each stay's channel; a member's turnover has none.
 type GridStay = StayCalendarStay
 interface HomesPayload { from: string; to: string; homes: { home: Home; nights: StayNight[] }[]; bookings: GridStay[]; manage: boolean }
@@ -247,7 +252,8 @@ const isAmount = (value: unknown) => value === null || typeof value === 'number'
 function isHome(value: unknown): value is Home {
   if (!isRecord(value) || typeof value.product_id !== 'string' || typeof value.name !== 'string' || typeof value.internal_name !== 'string' || typeof value.timezone !== 'string' || !isValidTimezone(value.timezone)
     || !isCurrencyCode(value.currency) || !isAmount(value.base_price_minor) || typeof value.min_nights !== 'number' || !Number.isInteger(value.min_nights) || value.min_nights < 1 || value.min_nights > MAX_STAY_NIGHTS
-    || !(value.address === null || isRecord(value.address))) return false
+    || !(value.address === null || isRecord(value.address)) || !Array.isArray(value.photos)
+    || !value.photos.every(photo => isRecord(photo) && typeof photo.url === 'string')) return false
   parseStayCalendarRules(value.calendar_rules)
   return true
 }

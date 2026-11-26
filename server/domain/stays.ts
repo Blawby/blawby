@@ -1401,7 +1401,7 @@ export async function readHomeCalendar(db: DbClient, access: StayAccess, input: 
 }
 
 /** What of a home the host calendar draws. */
-export const STAY_CALENDAR_HOME_FIELDS = ['product_id', 'name', 'internal_name', 'timezone', 'currency', 'base_price_minor', 'min_nights', 'calendar_rules', 'address', 'cancellation_policy', 'long_term_cancellation_policy'] as const
+export const STAY_CALENDAR_HOME_FIELDS = ['product_id', 'name', 'internal_name', 'timezone', 'currency', 'base_price_minor', 'min_nights', 'calendar_rules', 'address', 'cancellation_policy', 'long_term_cancellation_policy', 'photos'] as const
 export type StayCalendarHome = Pick<StayHome, typeof STAY_CALENDAR_HOME_FIELDS[number]>
 
 /** A stay as the host calendar draws it; a member reads the guest's first name and no channel. */
@@ -1440,6 +1440,7 @@ export function stayCalendarQueries(membership: BatchQuery, input: { from: strin
   // The calendar keeps the stays of the homes it shows, so it reads every booked record of the business.
   return [
     ...stayHomeQueries(organization, input.productId, scope).map(query => withViewer(membership, query)),
+    withViewer(membership, mediaPlacementsQuery({ organizationId: { sql: organization.query }, ownerType: 'product', owners: { sql: homes.query, params: homes.params } })),
     withViewer(membership, bookedRecordsInRange(BATCH_VIEWER, { ...input, includeAssignedStays: true, includeCalendarGrants: true, includePayments: true })),
     ...homeNightsQueries(organization, homes, input.from, input.to, true).map(query => withViewer(membership, query)),
   ]
@@ -1469,8 +1470,11 @@ function stayMoneyOnCalendar(record: BookedRecordInRange, now: Date): Pick<StayC
 
 /** The host calendar from `stayCalendarQueries`' results. */
 export function stayCalendarOf(results: Array<{ results: unknown[] }>, manage: boolean, window: { from: string; to: string }): { homes: Array<{ home: StayCalendarHome; nights: StayNight[] }>; stays: StayCalendarStay[] } {
-  const [rows, prices, records, ...nightResults] = results
-  const homes = stayHomesFrom(rows!.results as Array<Record<string, unknown>>, prices!.results as Array<Price & { product_id: string }>)
+  const [rows, prices, photoRows, records, ...nightResults] = results
+  const photos = productPhotosFromPlacements(groupMediaPlacements(photoRows!.results))
+  const homes = stayHomesFrom(rows!.results as Array<Record<string, unknown>>, prices!.results as Array<Price & { product_id: string }>).map(home => ({
+    ...home, photos: (photos.get(home.product_id) ?? []).map(stayPhoto),
+  }))
   const nights = homeNightsFrom(homes, nightResults, window.from, window.to) as StayNight[][]
   const shown = new Set(homes.map(home => home.product_id))
   const stays = calendarStays(records!.results as BookedRecordInRange[], manage, window, record => shown.has(record.product_id)).map(({ name: _name, ...stay }) => stay)

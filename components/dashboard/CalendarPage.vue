@@ -23,7 +23,7 @@
           class="mr-1"
           @click="startSelecting"
         />
-        <AgendaFilters v-if="!personalScope && !sessionProduct" :kinds="availableKinds" :organization-id="organizationId" />
+        <AgendaFilters v-if="!personalScope && !sessionProduct && !gridView" :kinds="availableKinds" :organization-id="organizationId" />
         <!-- List, Month, Year behind one icon, as Airbnb's view menu. -->
         <UDropdownMenu :items="viewItems" :content="{ align: 'end' }" :ui="{ content: 'w-44' }">
           <UButton :icon="VIEWS[view].icon" color="neutral" variant="soft" square :aria-label="`View: ${VIEWS[view].label}`" />

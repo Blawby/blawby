@@ -3,9 +3,10 @@
     read-only
     title="Reviews"
     :items="listItems"
+    :loading="status === 'pending'"
     :error="error ? getErrorMessage(error, 'Reviews request failed') : null"
     empty-title="No reviews yet"
-    empty-icon="i-lucide-star"
+    empty-illustration="/images/empty-states/messages.webp"
   >
     <template #item="{ item }">
       <div class="flex flex-wrap items-center gap-2">
@@ -41,7 +42,7 @@ const STATUS_COLORS: Record<TestimonialStatus, 'warning' | 'success' | 'neutral'
 const level = useRouteLevel()
 const organizationId = useDashboardOrganizationId()
 
-const { data, error } = await useDashboardReviews(organizationId, locationScope)
+const { data, error, status } = await useDashboardReviews(organizationId, locationScope)
 
 const testimonials = computed(() => data.value?.reviews ?? [])
 // A review is a record, so its row links to its own level, as a question's does.

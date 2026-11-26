@@ -24,12 +24,13 @@
         <ul v-if="visits.length" class="space-y-4" role="list" data-testid="today-list">
           <li v-for="item in visits" :key="item.id"><TodayAgendaCard :item="item" /></li>
         </ul>
-        <p v-else-if="!pending && !loadError" class="text-sm text-muted">{{ range === 'today' ? 'No bookings today' : 'No upcoming bookings' }}</p>
+        <DashboardEmptyState v-else-if="!pending && !loadError" illustration="/images/offers/calendar.webp" :title="range === 'today' ? 'No bookings today' : 'No upcoming bookings'" />
       </template>
 
       <!-- The business's one list for the person looking. -->
       <template v-else-if="business">
-        <h2 class="wtitle" data-testid="today-title">{{ business.title }}</h2>
+        <DashboardEmptyState v-if="!business.cards.length && !pending && !loadError" illustration="/images/offers/calendar.webp" :title="business.title" data-testid="today-title" />
+        <h2 v-else class="wtitle" data-testid="today-title">{{ business.title }}</h2>
         <ul v-if="business.cards.length" class="wgrid" role="list" data-testid="today-list">
           <li v-for="item in business.cards" :key="item.id"><TodayItemCard :item="item" :busy="closing === item.id" @done="markDone" /></li>
         </ul>

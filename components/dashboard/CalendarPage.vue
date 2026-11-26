@@ -178,7 +178,7 @@
         </div>
 
         <!-- List: the days of the month that have something, Airbnb's agenda, with the rows the day leaf draws. -->
-        <p v-else-if="!scheduledDays.length" class="py-10 text-center text-sm text-muted">Nothing scheduled in {{ periodLabel }}.</p>
+        <DashboardEmptyState v-else-if="!scheduledDays.length" illustration="/images/offers/calendar.webp" :title="`Nothing scheduled in ${periodLabel}.`" />
         <div v-else class="divide-y divide-default border-y border-default">
           <div v-for="dayKey in scheduledDays" :key="dayKey" class="grid grid-cols-[3.5rem_1fr] gap-3 py-3" :data-day="dayKey">
             <NuxtLink :to="dayTo(dayKey)" class="pt-1 text-center">

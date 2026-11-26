@@ -5,7 +5,7 @@
     <div v-else-if="cancelled.length" class="space-y-4 pb-6">
       <AccountActivityCard v-for="item in cancelled" :key="`${item.kind}:${item.id}`" :item="item" />
     </div>
-    <UEmpty v-else-if="data" icon="i-lucide-calendar-x" title="No cancelled visits" />
+    <DashboardEmptyState v-else-if="data" illustration="/images/offers/calendar.webp" icon="i-lucide-calendar-x" title="No cancelled visits" />
   </DashboardIndexPanel>
 </template>
 

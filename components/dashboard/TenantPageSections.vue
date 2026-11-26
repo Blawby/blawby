@@ -12,7 +12,7 @@
       :items="listItems"
       :thumbnail-skeleton="true"
       empty-title="No sections yet"
-      empty-icon="i-lucide-layout-list"
+      empty-illustration="/images/empty-states/documents.webp"
       add-label="Add a section"
       reorderable
       @add="navigateTo(`${level.path.value}/new`)"

@@ -9,7 +9,7 @@
     :read-only="readOnly"
     :disabled="catalog.pending.value || Boolean(removingId) || savingOrder || Boolean(loadError) || Boolean(orderError)"
     empty-title="No sections yet"
-    empty-icon="i-lucide-layout-list"
+    empty-illustration="/images/empty-states/documents.webp"
     add-label="Add section"
     reorderable
     :removing-id="removingId"

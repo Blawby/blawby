@@ -21,20 +21,9 @@
     </button>
 
     <!-- Empty State -->
-    <div
-      v-if="!listItems.length"
-      class="rounded-3xl border border-dashed border-default p-10 text-center"
-    >
-      <UIcon name="i-lucide-file-text" class="size-10 text-muted mx-auto mb-3" />
-      <h3 class="text-base font-semibold text-highlighted">No pages yet</h3>
-      <p class="text-sm text-muted mt-1 mb-4">Create your first page to start customizing your storefront.</p>
-      <UButton
-        icon="i-lucide-plus"
-        color="neutral"
-        label="Add a page"
-        :to="`${level.path.value}/new`"
-      />
-    </div>
+    <DashboardEmptyState v-if="!listItems.length && editor.status.value === 'success' && !editor.editorError.value" illustration="/images/empty-states/documents.webp" title="No pages yet" description="Create your first page to start customizing your storefront.">
+      <template #actions><UButton icon="i-lucide-plus" color="neutral" label="Add a page" :to="`${level.path.value}/new`" /></template>
+    </DashboardEmptyState>
 
     <!-- Airbnb Portrait Image Cards Grid -->
     <div v-else class="grid grid-cols-2 sm:grid-cols-3 gap-4 sm:gap-6 pt-2">
@@ -89,8 +78,10 @@
 import { computed, ref } from 'vue'
 import { tenantPageRows, websiteSettingsKey, type PageTask, type TenantPageListRow } from '~/composables/useTenantPageDraft'
 import PageTasksModal from '~/components/dashboard/PageTasksModal.vue'
+import { organizationSettingsEditorKey } from '~/lib/components/workspace/settings/OrganizationSettingsPage.vue'
 
 const level = useRouteLevel()
+const editor = inject(organizationSettingsEditorKey)!
 
 const tasksModalOpen = ref(false)
 const dismissedTaskIds = ref<Set<string>>(new Set())

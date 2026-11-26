@@ -46,7 +46,7 @@
       </button>
     </div>
 
-    <p v-else-if="!listError" class="text-sm text-muted">This account belongs to no organization yet.</p>
+    <DashboardEmptyState v-else-if="!listError" illustration="/images/offers/home.webp" title="This account belongs to no organization yet." />
   </div>
 </template>
 

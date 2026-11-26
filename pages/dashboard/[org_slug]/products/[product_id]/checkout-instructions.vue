@@ -11,7 +11,7 @@
         :items="instructions"
         title="Checkout instructions"
         empty-title="No checkout instructions added yet"
-        empty-icon="i-lucide-list-checks"
+        empty-illustration="/images/empty-states/documents.webp"
         add-label="Add instructions"
         :add-to="p.sectionPath('checkout-instructions/add')"
         :addable="!editing && instructions.length < taskCount"
@@ -29,8 +29,9 @@
           </div>
         </template>
       </DashboardListEditor>
-      <UButton v-else-if="p.arrivalManage.value" :to="p.sectionPath('checkout-instructions/add')" label="Add instructions" icon="i-lucide-plus" color="neutral" variant="outline" class="w-full justify-center rounded-xl py-4" />
-      <p v-else class="text-base text-muted">No checkout instructions added yet.</p>
+      <DashboardEmptyState v-else illustration="/images/empty-states/documents.webp" title="No checkout instructions added yet.">
+        <template v-if="p.arrivalManage.value" #actions><UButton :to="p.sectionPath('checkout-instructions/add')" label="Add instructions" icon="i-lucide-plus" color="neutral" variant="outline" /></template>
+      </DashboardEmptyState>
     </template>
   </DashboardIndexPanel>
 </template>

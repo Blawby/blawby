@@ -21,7 +21,7 @@
 
       <UAlert v-if="error" class="mt-6" color="error" :description="error.message" />
       <template v-else-if="data">
-        <p v-if="!rows.length" class="mt-6 text-base text-muted">No transactions in this period.</p>
+        <DashboardEmptyState v-if="!rows.length && status === 'success'" illustration="/images/offers/card.webp" title="No transactions in this period." />
         <div v-else class="mt-6 space-y-6">
           <NuxtLink v-for="row in rows" :key="row.id" :to="row.to" class="flex items-center gap-4" :data-testid="`transaction-${row.id}`">
             <span class="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-elevated">
@@ -124,7 +124,7 @@ const TYPES = [{ value: '' as const, label: 'All earnings types' }, { value: 'pa
 const typeItems = computed(() => [TYPES.map(type => ({ label: type.label, type: 'checkbox' as const, checked: earningsType.value === type.value, onSelect: () => { earningsType.value = type.value } }))])
 const typeLabel = computed(() => TYPES.find(type => type.value === earningsType.value)!.label)
 
-const { data, error } = await useAsyncData(
+const { data, error, status } = await useAsyncData(
   () => `earnings-transactions:${route.params.org_slug}:${from.value}:${through.value}:${locationId.value}:${earningsType.value}:${after.value ?? ''}`,
   async () => {
     // The default range is the same twelve months the picker offers.

@@ -272,7 +272,7 @@ export default defineNuxtConfig({
         app: { ...context.app, pages: context.app.pages?.filter(page => isDashboardPath(page.path) === dashboard) },
       })
       app.templates.push({ ...routes, filename: 'dashboard-routes.mjs', dst: undefined, write: true, getContents: forSurface(true) })
-      routes.getContents = forSurface(false)
+      app.templates[app.templates.indexOf(routes)] = { ...routes, getContents: forSurface(false) }
     },
     'pages:extend'(pages) {
       pages.push(...localizedPublicRouteAliases(pages))

@@ -1,0 +1,34 @@
+diff --git a/dist/src/workers/d1/database.worker.js b/dist/src/workers/d1/database.worker.js
+index 4099b5d7e50c8a094a001c9184a90a2f8b81cfa2..12ee8990b50a687a4d9f951718378b87cdd33319 100644
+--- a/dist/src/workers/d1/database.worker.js
++++ b/dist/src/workers/d1/database.worker.js
+@@ -225,7 +225,7 @@ var D1DatabaseObject = class extends MiniflareDurableObject {
+       }
+     };
+   };
+-  async #txn(queries, format) {
++  async #txn(queries, format, includeCommitToken) {
+     if (queries = queries.filter(
+       (query) => query.sql.replace(/^\s+--.*/gm, "").trim().length > 0
+     ), queries.length === 0) {
+@@ -235,6 +235,7 @@ var D1DatabaseObject = class extends MiniflareDurableObject {
+     try {
+       return await this.state.storage.transaction(async () => {
+         let results = queries.map(this.#query.bind(this, format)), commitToken;
++        if (!includeCommitToken) return { results };
+         try {
+           commitToken = await this.state.storage.getCurrentBookmark();
+         } catch (e) {
+@@ -255,9 +256,10 @@ var D1DatabaseObject = class extends MiniflareDurableObject {
+       return this.#doExportData(queries);
+     let { searchParams } = new URL(req.url), resultsFormat = D1ResultsFormatSchema.parse(
+       searchParams.get("resultsFormat")
+-    ), { results, commitToken } = await this.#txn(queries, resultsFormat);
++    ), includeCommitToken = Boolean(req.headers.get(D1_SESSION_COMMIT_TOKEN_HTTP_HEADER)?.trim()),
++      { results, commitToken } = await this.#txn(queries, resultsFormat, includeCommitToken);
+     return Response.json(results, {
+-      headers: { [D1_SESSION_COMMIT_TOKEN_HTTP_HEADER]: commitToken }
++      headers: commitToken === void 0 ? void 0 : { [D1_SESSION_COMMIT_TOKEN_HTTP_HEADER]: commitToken }
+     });
+   };
+   #doExportData(queries) {

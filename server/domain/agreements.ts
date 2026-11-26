@@ -1,6 +1,5 @@
 import { HTTPError } from 'nitro'
-import { PDFDocument, StandardFonts, rgb, type PDFFont } from 'pdf-lib'
-import fontkit from '@pdf-lib/fontkit'
+import type { PDFDocument, PDFFont } from 'pdf-lib'
 import { z } from 'zod'
 import { executeBatch, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import { findMessageByDedupeKey, messageQueries, type ConversationRow, type MessageRow } from '~/server/domain/conversations'
@@ -306,6 +305,7 @@ async function readUploadedPdf(file: File): Promise<{ bytes: Uint8Array<ArrayBuf
   if (file.size > MAX_AGREEMENT_BYTES) throw new HTTPError({ statusCode: 413, message: 'The PDF is larger than 20 MB', data: { code: 'UPLOAD_TOO_LARGE', field: 'file' } })
   const bytes = new Uint8Array(await file.arrayBuffer())
   if (sniffMediaMimeType(bytes) !== 'application/pdf') throw new HTTPError({ statusCode: 415, message: 'Upload a PDF', data: { code: 'UNSUPPORTED_MEDIA_TYPE', field: 'file' } })
+  const { PDFDocument } = await import('pdf-lib')
   const pdf = await PDFDocument.load(bytes).catch((cause: unknown) => {
     throw new HTTPError({ statusCode: 422, message: 'This PDF could not be read. Encrypted PDFs cannot be signed here.', data: { code: 'INVALID_PDF', field: 'file' }, cause })
   })
@@ -529,7 +529,6 @@ export async function signAgreement(env: CloudflareEnv, conversation: Conversati
   await publishConversationEvent(env, env.DB, { conversationId: conversation.id, type: 'MESSAGE_CREATE' })
 }
 
-const SIGNATURE_COLOR = rgb(0.09, 0.09, 0.11)
 const SIGNABLE_NAME = /^[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Thai}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}\p{Script=Common}\p{Script=Inherited}]+$/u
 
 const NOTO_FONT_FILES = {
@@ -544,7 +543,7 @@ type NotoFontKey = keyof typeof NOTO_FONT_FILES
 
 const WIN_ANSI_REGEX = /^[\u0020-\u007E\u00A0-\u00FF\u20AC\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u017D\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u017E\u0178]*$/
 
-export function isWinAnsi(text: string): boolean {
+function isWinAnsi(text: string): boolean {
   return WIN_ANSI_REGEX.test(text)
 }
 
@@ -563,22 +562,88 @@ async function loadFontAssetBytes(env: CloudflareEnv, fileName: string, loaded: 
   return bytes
 }
 
-/**
- * The one font a non-WinAnsi line needs, chosen by its script. Kana is
- * Japanese and Hangul Korean; Han text is Simplified Chinese unless the SC
- * font lacks one of its characters, when it is Traditional.
- */
-export async function notoFontFor(env: CloudflareEnv, text: string, loaded: Map<string, Uint8Array>): Promise<{ key: NotoFontKey; bytes: Uint8Array }> {
-  const chars = [...text]
-  const key: NotoFontKey = chars.some(c => /\p{Script=Thai}/u.test(c)) ? 'thai'
-    : chars.some(c => /\p{Script=Hangul}/u.test(c)) ? 'kr'
-      : chars.some(c => /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(c)) ? 'jp'
-        : chars.some(c => /\p{Script=Han}/u.test(c)) ? 'sc' : 'latin'
-  const bytes = await loadFontAssetBytes(env, NOTO_FONT_FILES[key], loaded)
-  if (key !== 'sc') return { key, bytes }
-  const sc = fontkit.create(bytes)
-  if (chars.every(c => !/\p{Script=Han}/u.test(c) || sc.hasGlyphForCodePoint(c.codePointAt(0)!))) return { key, bytes }
-  return { key: 'tc', bytes: await loadFontAssetBytes(env, NOTO_FONT_FILES.tc, loaded) }
+type AgreementTextRun = { text: string; font: PDFFont; width: number }
+
+/** Per-document fonts and measured lines shared by templates, signatures and their record. */
+export function agreementTextLayout(env: CloudflareEnv, pdf: PDFDocument) {
+  const loaded = new Map<string, Uint8Array>()
+  const embedded = new Map<NotoFontKey, { font: PDFFont; characters: Set<number> }>()
+  const graphemes = new Intl.Segmenter('und', { granularity: 'grapheme' })
+  const words = new Intl.Segmenter('und', { granularity: 'word' })
+  const fontAt = async (key: NotoFontKey) => {
+    let held = embedded.get(key)
+    if (!held) {
+      const font = await pdf.embedFont(await loadFontAssetBytes(env, NOTO_FONT_FILES[key], loaded))
+      held = { font, characters: new Set(font.getCharacterSet()) }
+      embedded.set(key, held)
+    }
+    return held
+  }
+  const runsFor = async (text: string, standard: PDFFont, cjkFont: NotoFontKey): Promise<AgreementTextRun[]> => {
+    const runs: AgreementTextRun[] = []
+    for (const { segment } of graphemes.segment(text)) {
+      let font = standard
+      if (!isWinAnsi(segment)) {
+        const key: NotoFontKey = /[\p{Script_Extensions=Thai}\u0e3f]/u.test(segment) ? 'thai'
+          : /\p{Script=Hangul}/u.test(segment) ? 'kr'
+            : /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(segment) ? 'jp'
+              : /[\p{Script_Extensions=Han}\p{Script_Extensions=Hangul}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Bopomofo}\u3000-\u303f\uff00-\uffef]/u.test(segment) ? cjkFont : 'latin'
+        let selected = await fontAt(key)
+        const covers = () => [...segment].every(character => selected.characters.has(character.codePointAt(0)!))
+        if (!covers() && key === 'sc') selected = await fontAt('tc')
+        if (!covers()) throw new HTTPError({ statusCode: 422, message: 'This document contains a character its fonts cannot render.', data: { code: 'AGREEMENT_GLYPH_UNSUPPORTED', field: 'document' } })
+        font = selected.font
+      }
+      const last = runs.at(-1)
+      if (last?.font === font) last.text += segment
+      else runs.push({ text: segment, font, width: 0 })
+    }
+    return runs
+  }
+  return async (text: string, standard: PDFFont, size: number, width = Infinity): Promise<AgreementTextRun[][]> => {
+    const cjkFont: NotoFontKey = /\p{Script=Hangul}/u.test(text) ? 'kr' : /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text) ? 'jp' : 'sc'
+    const lines: AgreementTextRun[][] = []
+    let line: AgreementTextRun[] = []
+    const append = (left: AgreementTextRun[], right: AgreementTextRun[]) => {
+      const next = left.map(run => ({ ...run }))
+      for (const run of right) {
+        const last = next.at(-1)
+        if (last?.font === run.font) last.text += run.text
+        else next.push({ ...run })
+      }
+      for (const run of next) run.width = run.font.widthOfTextAtSize(run.text, size)
+      return next
+    }
+    const flush = () => {
+      while (line.length && !line.at(-1)!.text.trim()) line.pop()
+      if (line.length) {
+        const last = line.at(-1)!
+        last.text = last.text.trimEnd()
+        last.width = last.font.widthOfTextAtSize(last.text, size)
+        lines.push(line)
+      }
+      line = []
+    }
+    for (const { segment } of words.segment(text)) {
+      const token = /\s/u.test(segment) && !segment.trim() ? ' ' : segment
+      let parts = [await runsFor(token, standard, cjkFont)]
+      if (append([], parts[0]!).reduce((sum, run) => sum + run.width, 0) > width) {
+        parts = []
+        for (const { segment: character } of graphemes.segment(token)) parts.push(await runsFor(character, standard, cjkFont))
+      }
+      for (const part of parts) {
+        if (!line.length && part.every(run => !run.text.trim())) continue
+        const next = append(line, part)
+        if (line.length && next.reduce((sum, run) => sum + run.width, 0) > width) {
+          flush()
+          if (part.every(run => !run.text.trim())) continue
+          line = append([], part)
+        } else line = next
+      }
+    }
+    flush()
+    return lines
+  }
 }
 
 interface SignedCopyInput {
@@ -596,6 +661,8 @@ interface SignedCopyInput {
 
 /** The document with every signature where it was placed and a closing page that records who signed, when and how. */
 async function renderSignedAgreement(env: CloudflareEnv, input: SignedCopyInput): Promise<{ bytes: Uint8Array<ArrayBuffer>; fileName: string }> {
+  const [{ PDFDocument, StandardFonts, rgb }, { default: fontkit }] = await Promise.all([import('pdf-lib'), import('@pdf-lib/fontkit')])
+  const SIGNATURE_COLOR = rgb(0.09, 0.09, 0.11)
   const { original, fingerprint, signatures } = input
   // The signed document's dates are the signing's, not the moment it was drawn.
   const pdf = await PDFDocument.load(original, { updateMetadata: false })
@@ -603,17 +670,7 @@ async function renderSignedAgreement(env: CloudflareEnv, input: SignedCopyInput)
   pdf.registerFontkit(fontkit)
   const [script, regular, bold] = await Promise.all([pdf.embedFont(StandardFonts.TimesRomanItalic), pdf.embedFont(StandardFonts.Helvetica), pdf.embedFont(StandardFonts.HelveticaBold)])
 
-  const embeddedNotoFonts = new Map<NotoFontKey, PDFFont>()
-  const loadedFonts = new Map<string, Uint8Array>()
-  async function resolveFont(text: string, defaultFont: PDFFont): Promise<PDFFont> {
-    if (isWinAnsi(text)) return defaultFont
-    const { key, bytes } = await notoFontFor(env, text, loadedFonts)
-    const embedded = embeddedNotoFonts.get(key)
-    if (embedded) return embedded
-    const font = await pdf.embedFont(bytes, { subset: true })
-    embeddedNotoFonts.set(key, font)
-    return font
-  }
+  const layout = agreementTextLayout(env, pdf)
 
   const day = (at: string) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(at))
   for (const field of input.fields) {
@@ -623,25 +680,33 @@ async function renderSignedAgreement(env: CloudflareEnv, input: SignedCopyInput)
     const signature = signatures.find(({ signer }) => signer.key === field.signer_key)!
     const text = field.kind === 'signature' ? signature.signed.typed_name : day(signature.at)
     const defaultFont = field.kind === 'signature' ? script : regular
-    const font = await resolveFont(text, defaultFont)
+    const runs = (await layout(text, defaultFont, 1)).flat()
     const box = { x: left + field.x * width, y: bottom + height - (field.y + field.height) * height, w: field.width * width, h: field.height * height }
     // One line, shrunk to the field's width, so a long name never runs below it.
     const tallest = Math.min(box.h * (field.kind === 'signature' ? 0.8 : 0.6), field.kind === 'signature' ? 28 : 12)
     // Padding scales with the field, so even a hairline field keeps a positive width to fit the text into.
     const pad = Math.min(2, box.w * 0.05)
-    const size = Math.min(tallest, (box.w - 2 * pad) / Math.max(font.widthOfTextAtSize(text, 1), 0.01))
-    page.drawText(text, { x: box.x + pad, y: box.y + (box.h - size) / 2 + size * 0.2, size, font, color: SIGNATURE_COLOR })
+    const size = Math.min(tallest, (box.w - 2 * pad) / Math.max(runs.reduce((sum, run) => sum + run.width, 0), 0.01))
+    let x = box.x + pad
+    for (const run of runs) {
+      page.drawText(run.text, { x, y: box.y + (box.h - size) / 2 + size * 0.2, size, font: run.font, color: SIGNATURE_COLOR })
+      x += run.width * size
+    }
   }
   // The signature record: what was signed, by whom, when and from where.
   let page = pdf.addPage([612, 792])
   let y = 740
   const line = async (text: string, size = 10, defaultFont = regular) => {
-    const font = await resolveFont(text, defaultFont)
-    // A line wraps at the record's width; the record runs onto another page before it leaves this one.
-    const rows = Math.max(1, Math.ceil(font.widthOfTextAtSize(text, size) / 504))
-    if (y - rows * (size + 2) < 54) { page = pdf.addPage([612, 792]); y = 740 }
-    page.drawText(text, { x: 54, y, size, font, color: SIGNATURE_COLOR, maxWidth: 504, lineHeight: size + 2 })
-    y -= rows * (size + 2) + 6
+    for (const runs of await layout(text, defaultFont, size, 504)) {
+      if (y - (size + 2) < 54) { page = pdf.addPage([612, 792]); y = 740 }
+      let x = 54
+      for (const run of runs) {
+        page.drawText(run.text, { x, y, size, font: run.font, color: SIGNATURE_COLOR })
+        x += run.width
+      }
+      y -= size + 2
+    }
+    y -= 6
   }
   await line('Signature record', 16, bold)
   await line(`${input.label} · ${input.fileName}`)

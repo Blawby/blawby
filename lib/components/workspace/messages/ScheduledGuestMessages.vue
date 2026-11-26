@@ -22,7 +22,7 @@
           </div>
         </article>
       </div>
-      <p v-if="!data.messages.length" class="py-8 text-muted">No scheduled messages yet.</p>
+      <DashboardEmptyState v-if="!data.messages.length && status === 'success'" illustration="/images/empty-states/messages.webp" title="No scheduled messages yet." />
       <div v-if="offset || data.pagination.has_more" class="mt-6 flex justify-between gap-3">
         <UButton label="Previous" color="neutral" variant="outline" :disabled="!offset || status === 'pending' || !!cancelling" @click="offset = Math.max(0, offset - pageSize)" />
         <UButton label="Next" color="neutral" variant="outline" :disabled="!data.pagination.has_more || status === 'pending' || !!cancelling" @click="offset = data.pagination.next_offset!" />

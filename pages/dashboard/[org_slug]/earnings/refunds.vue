@@ -6,12 +6,12 @@
     <template v-else-if="refunds && disputes">
       <section>
         <h2 class="text-base font-semibold text-highlighted">Refunds</h2>
-        <p v-if="!refunds.rows.length" class="mt-2 text-base text-muted">No refunds yet.</p>
+        <DashboardEmptyState v-if="!refunds.rows.length && status === 'success'" illustration="/images/offers/card.webp" title="No refunds yet." />
         <EditorNavigationList v-else class="mt-2" :groups="[{ id: 'refunds', items: refunds.rows.map(row => item(row, 'refund')) }]" />
       </section>
       <section class="mt-8 border-t border-default pt-6">
         <h2 class="text-base font-semibold text-highlighted">Disputes</h2>
-        <p v-if="!disputes.rows.length" class="mt-2 text-base text-muted">No disputes.</p>
+        <DashboardEmptyState v-if="!disputes.rows.length && status === 'success'" illustration="/images/offers/card.webp" title="No disputes." />
         <EditorNavigationList v-else class="mt-2" :groups="[{ id: 'disputes', items: disputes.rows.map(row => item(row, 'dispute')) }]" />
       </section>
     </template>
@@ -31,7 +31,7 @@ const route = useRoute()
 const api = useDashboardApi()
 const isRows = (value: unknown): value is Rows => isRecord(value) && Array.isArray(value.rows) && value.rows.every(row => isRecord(row) && typeof row.id === 'string' && typeof row.payment_id === 'string' && Number.isSafeInteger(row.amount) && isCurrencyCode(row.currency) && typeof row.status === 'string')
 const load = (view: 'refunds' | 'disputes') => api<Rows>('/api/dashboard/payments', { query: { view }, validate: isRows })
-const { data, error } = await useAsyncData(() => `earnings-refunds:${route.params.org_slug}`, async () => {
+const { data, error, status } = await useAsyncData(() => `earnings-refunds:${route.params.org_slug}`, async () => {
   const [refunds, disputes] = await Promise.all([load('refunds'), load('disputes')])
   return { refunds, disputes }
 })

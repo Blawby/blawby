@@ -33,7 +33,7 @@
             </div>
           </div>
         </div>
-        <p v-else-if="windowData && !rows.length" class="py-10 text-center text-sm text-muted">{{ search ? `No results for “${search}”` : words.none }}</p>
+        <DashboardEmptyState v-else-if="windowData && !rows.length && status === 'success' && hasRequestedWindow" :illustration="search ? undefined : homesView ? '/images/offers/home.webp' : '/images/offers/mappin.webp'" :title="search ? `No results for “${search}”` : words.none" />
         <!-- The grid is its own scroller on both axes, edge to edge like Airbnb's multi-calendar: the day header pins to its top and the home column to its left, the corner over both. -->
         <div v-else-if="windowData" class="-mx-4 min-h-0 overflow-auto overscroll-contain border-y border-default sm:-mx-6" :aria-busy="status === 'pending'" :inert="!hasRequestedWindow" :data-testid="`${words.testId}-grid`">
           <div

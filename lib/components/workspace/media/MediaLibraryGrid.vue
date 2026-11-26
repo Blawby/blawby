@@ -48,10 +48,7 @@
       <div v-for="i in 12" :key="i" class="aspect-square rounded-lg bg-elevated/70 animate-pulse border-2 border-transparent" />
     </div>
 
-    <div v-else-if="media?.media.length === 0" class="py-10 text-center">
-      <UIcon name="i-lucide-image" class="mx-auto size-8 text-muted" />
-      <p class="mt-3 text-sm text-muted">No media yet. Upload your first file.</p>
-    </div>
+    <DashboardEmptyState v-else-if="!mediaError && media?.media.length === 0" :illustration="kindFilter === 'image' ? '/images/empty-states/photos.webp' : undefined" :title="kindFilter === 'image' ? 'No photos yet. Upload your first photo.' : 'No matching media.'" />
 
     <div v-else class="grid grid-cols-4 gap-2 sm:grid-cols-5 lg:grid-cols-6 overflow-y-auto max-h-80">
       <button

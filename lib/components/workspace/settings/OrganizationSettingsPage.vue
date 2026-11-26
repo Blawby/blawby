@@ -528,6 +528,7 @@ export interface OrganizationSettingsEditor {
   saving: Ref<boolean>
   saveDisabled: ComputedRef<boolean>
   editorError: ComputedRef<string | null>
+  status: Readonly<Ref<'idle' | 'pending' | 'success' | 'error'>>
   validationMessage: ComputedRef<string | null>
   nameCharactersRemaining: ComputedRef<number>
   socialCardRefresh: ComputedRef<OrganizationSocialCardRefresh | null>
@@ -963,7 +964,7 @@ function resetDraft() {
 
 const readsSettings = computed(() => surface.value !== 'settings' || needsWebsiteSettings(route.path.replace(/^\/dashboard\/[^/]+/, '')))
 const settingsResourceKey = computed(() => `${websiteSettingsKey(String(route.params.org_slug))}${readsSettings.value ? '' : ':closed'}`)
-const { data: settingsResource, error: settingsResourceError, refresh: refreshSettingsResource } = await useWebsiteIndexData(settingsResourceKey, () => dashboardApi('/api/dashboard/settings', {
+const { data: settingsResource, error: settingsResourceError, status: settingsResourceStatus, refresh: refreshSettingsResource } = await useWebsiteIndexData(settingsResourceKey, () => dashboardApi('/api/dashboard/settings', {
     query: { view: 'website' },
     validate: (value): value is SettingsPageResource => isSettingsResponse(value) && isTenantPageListResponse(value)
       && 'articles' in value && Array.isArray(value.articles) && 'posts' in value && Array.isArray(value.posts)
@@ -1102,6 +1103,7 @@ provide(organizationSettingsEditorKey, {
   organizationId,
   saving,
   saveDisabled,
+  status: settingsResourceStatus,
   // A leaf opened on settings that failed to load shows why.
   editorError: computed(() => loadError.value ?? editorError.value),
   validationMessage,

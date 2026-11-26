@@ -89,7 +89,7 @@ lsof -ti tcp:3000 | xargs kill
 On macOS, raise the file limit if the dev server runs out of handles:
 `ulimit -n 65536`.
 
-Yarn accepts new package releases only after seven days. For an urgent reviewed
+Yarn accepts new package releases only after 30 days. For an urgent reviewed
 security fix, `corepack yarn up <package>@<fixed-version> --no-time-gate` and
 record the advisory in the pull request. Dependency patches live in `patches/`
 and are applied by Yarn's `patch:` protocol on every install.

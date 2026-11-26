@@ -11018,6 +11018,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"miniflare@patch:miniflare@npm%3A5.20261023.0-beta#~/patches/miniflare-npm-5.20261023.0-beta.patch":
+  version: 5.20261023.0-beta
+  resolution: "miniflare@patch:miniflare@npm%3A5.20261023.0-beta#~/patches/miniflare-npm-5.20261023.0-beta.patch::version=5.20261023.0-beta&hash=b4f2a8"
+  dependencies:
+    "@cspotcode/source-map-support": "npm:0.8.1"
+    sharp: "npm:0.35.5"
+    undici: "npm:7.30.1"
+    workerd: "npm:1.20261023.1"
+    ws: "npm:8.21.0"
+    youch: "npm:4.1.0-beta.10"
+  checksum: 10c0/73743de6caaa37935cc76ab938cbe234db33050ad12648f1afcd319229224d176c7ae19a2d744ec244b3c2ccad649b7ac96fa717f741ae940edcc4cfce55a703
+  languageName: node
+  linkType: hard
+
 "minimatch@npm:^10.2.2, minimatch@npm:^10.2.4, minimatch@npm:^9.0.3 || ^10.1.2":
   version: 10.2.5
   resolution: "minimatch@npm:10.2.5"

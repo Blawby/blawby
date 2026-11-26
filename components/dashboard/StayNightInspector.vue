@@ -1,20 +1,20 @@
 <template>
-  <div data-testid="stay-night-inspector" class="space-y-4">
+  <div data-testid="stay-night-inspector" class="space-y-3">
     <div class="flex items-center justify-between gap-3">
       <UButton v-if="selectDates" color="neutral" class="rounded-full px-4 py-2" :label="dateLabel" aria-label="Select nights" :disabled="busy" @click="$emit('dates')" />
       <span v-else class="rounded-full bg-inverted px-4 py-2 text-sm font-medium text-inverted">{{ dateLabel }}</span>
       <UButton icon="i-lucide-x" :aria-label="`Clear selected ${nouns.units}`" color="neutral" variant="soft" square class="rounded-full" :disabled="busy" @click="$emit('clear')" />
     </div>
     <div class="flex items-start justify-between gap-3">
-      <p class="min-w-0 break-words text-xs text-muted">{{ scope }}</p>
+      <p class="min-w-0 truncate text-sm font-medium text-highlighted" :title="scope">{{ scope }}</p>
       <div v-if="calendarTo || homeEditorTo" class="flex shrink-0 flex-wrap justify-end gap-x-3 gap-y-1">
         <ULink v-if="calendarTo" :to="calendarTo" class="text-xs font-medium text-highlighted underline">Open calendar</ULink>
         <UButton v-if="homeEditorTo" :to="`${homeEditorTo}/internal-name`" label="Edit internal name" color="neutral" variant="link" size="xs" class="p-0 underline" :disabled="busy" />
       </div>
     </div>
-    <div v-if="rangeWeekdays.length > 1">
-      <p class="mb-2 text-sm font-medium text-highlighted">Apply to</p>
-      <div class="flex flex-wrap gap-1.5" role="group" aria-label="Apply to weekdays">
+    <details v-if="rangeWeekdays.length > 1" class="rounded-xl border border-default p-3">
+      <summary class="cursor-pointer text-sm font-medium text-highlighted">Apply to: {{ weekdaySummary }}</summary>
+      <div class="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Apply to weekdays">
         <UButton
           v-for="day in WEEK"
           :key="day"
@@ -30,13 +30,13 @@
       </div>
       <p class="mt-2 text-sm text-muted">The change applies only to the chosen weekdays within these dates.</p>
       <p v-if="weekdays" class="mt-1 text-sm text-muted" data-testid="stay-night-weekdays">{{ weekdaySummary }}</p>
-    </div>
+    </details>
     <UAlert v-if="error" color="error" variant="soft" :description="error" />
     <UAlert v-if="notice" color="warning" variant="soft" :description="notice" />
     <p v-if="result && concern === 'summary'" class="text-sm text-highlighted" data-testid="stay-night-result">{{ result }}</p>
     <UAlert v-if="blocker && concern === 'summary'" color="neutral" variant="soft" :description="blocker" data-testid="stay-night-blocker" :actions="manage ? [{ label: blockerAction?.label ?? 'Change minimum nights', color: 'neutral', variant: 'solid', ...(blockerAction?.to ? { to: blockerAction.to } : { onClick: () => $emit('blocker') }) }] : undefined" />
     <template v-if="concern === 'summary'">
-      <UCard class="rounded-3xl bg-inverted text-inverted" :ui="{ body: 'p-5' }">
+      <UCard class="rounded-xl bg-inverted text-inverted" :ui="{ body: 'p-3' }">
         <div class="flex items-center justify-between gap-4">
           <p class="text-sm">{{ availabilityLabel }}</p>
           <USwitch v-if="nights.length && closed !== 'mixed'" :model-value="!closed" :aria-label="`Open selected ${nouns.units}`" color="neutral" :disabled="busy || !manage" @update:model-value="$emit('patch', { closed: !$event })" />
@@ -59,28 +59,28 @@
         <UButton v-for="id in stayIds" :key="id" :to="stayTo(id)" label="View stay" color="neutral" variant="outline" class="mt-3" />
       </UCard>
       <UButton v-if="addStayTo" :to="addStayTo" label="Add stay" icon="i-lucide-plus" color="neutral" variant="outline" class="w-full justify-center rounded-full" :disabled="busy" />
-      <template v-if="pricing">
-        <UButton label="Nightly price for selected dates" color="neutral" class="w-full flex-col items-start rounded-3xl p-6 text-left" :disabled="busy || !manage || !nights.length" @click="$emit('edit', 'price')">
-          <span class="block text-sm font-normal">Nightly price for selected dates</span>
-          <span class="mt-4 block text-3xl font-semibold">{{ priceLabel }}</span>
+      <div v-if="pricing" class="grid grid-cols-2 gap-3">
+        <UButton label="Nightly price for selected dates" color="neutral" class="w-full flex-col items-start rounded-xl p-3 text-left" :disabled="busy || !manage || !nights.length" @click="$emit('edit', 'price')">
+          <span class="block text-sm font-normal">Nightly price</span>
+          <span class="mt-1 block text-xl font-semibold">{{ priceLabel }}</span>
         </UButton>
-        <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-1 text-sm text-muted">
+        <UButton label="Minimum nights" color="neutral" variant="soft" class="w-full flex-col items-start rounded-xl p-3 text-left" :disabled="busy || !manage || !nights.length" @click="$emit('edit', 'minimum')">
+          <span class="block text-sm font-normal">Minimum nights</span>
+          <span class="mt-1 block text-xl font-semibold">{{ minimumLabel }}</span>
+          <span class="mt-1 block text-xs font-normal text-muted">{{ defaultMinimumLabel }}</span>
+        </UButton>
+        <div class="col-span-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-1 text-xs text-muted">
           <p>{{ basePriceLabel }}</p>
           <UButton v-if="homeEditorTo" :to="`${homeEditorTo}/price`" label="Edit default price" color="neutral" variant="link" size="xs" class="p-0 underline" :disabled="busy" />
         </div>
-      </template>
-      <UButton v-if="pricing" label="Minimum nights" color="neutral" variant="soft" class="w-full flex-col items-start rounded-3xl p-6 text-left" :disabled="busy || !manage || !nights.length" @click="$emit('edit', 'minimum')">
-        <span class="block text-sm font-normal">Minimum nights</span>
-        <span class="mt-4 block text-3xl font-semibold">{{ minimumLabel }}</span>
-        <span class="mt-1 block text-sm font-normal text-muted">{{ defaultMinimumLabel }}</span>
-      </UButton>
-      <UButton v-if="manage && pricing" label="Custom settings" trailing-icon="i-lucide-plus" color="neutral" class="w-full justify-between rounded-3xl p-6" :disabled="busy || !nights.length" @click="$emit('edit', 'custom')" />
+      </div>
+      <UButton v-if="manage && pricing" label="Custom settings" trailing-icon="i-lucide-plus" color="neutral" class="w-full justify-between rounded-xl p-3" :disabled="busy || !nights.length" @click="$emit('edit', 'custom')" />
       <p v-else-if="!manage" class="text-sm text-muted">Only owners and admins can change these {{ nouns.units }}.</p>
     </template>
     <template v-else-if="concern === 'custom'">
       <h2 class="text-xl font-semibold text-highlighted">Custom settings</h2>
       <UButton v-for="item in settingItems" :key="item.concern" :label="item.label" trailing-icon="i-lucide-chevron-right" color="neutral" variant="outline" class="w-full justify-between py-4" :disabled="busy" @click="$emit('edit', item.concern)" />
-      <UButton label="Reset all night settings" color="neutral" variant="link" class="px-0" :disabled="busy" @click="$emit('edit', 'reset')" />
+      <UButton label="Reset all night settings" color="error" variant="link" class="px-0" :disabled="busy" @click="$emit('edit', 'reset')" />
       <UButton label="Done" color="neutral" class="w-full" @click="$emit('cancel')" />
     </template>
     <template v-else>
@@ -127,10 +127,10 @@
           <USelect :model-value="draft[field.key]" :items="permissionItems" class="w-full" :disabled="busy" @update:model-value="$emit('field', field.key, String($event))" />
         </UFormField>
       </template>
-      <p v-else-if="concern === 'reset'" class="text-sm text-muted">Remove all selected nights’ custom prices, closures and stay rules. The listing’s settings apply again. Existing reservations keep their settings.</p>
+      <p v-else-if="concern === 'reset'" class="text-sm text-muted">Reset {{ scope }}? Remove the selected nights’ custom prices, closures and stay rules. The listing’s settings apply again. Existing reservations keep their settings.</p>
       <div class="flex items-center justify-between gap-4 border-t border-default pt-5">
         <UButton label="Cancel" color="neutral" variant="link" :disabled="busy" @click="$emit('cancel')" />
-        <UButton :label="concern === 'reset' ? 'Reset all night settings' : 'Save'" color="neutral" :loading="busy" :disabled="concern !== 'reset' && !dirty" @click="$emit('save')" />
+        <UButton :label="concern === 'reset' ? 'Reset all night settings' : 'Save'" :color="concern === 'reset' ? 'error' : 'neutral'" :loading="busy" :disabled="concern !== 'reset' && !dirty" @click="$emit('save')" />
       </div>
     </template>
   </div>

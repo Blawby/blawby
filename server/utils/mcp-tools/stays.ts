@@ -148,7 +148,7 @@ const night = { type: 'object', properties: { date: day, available: { type: 'boo
   channel: { type: ['object', 'null'], properties: { state: { type: 'string', enum: ['pending', 'pushed', 'needs_review'] }, detail: nullableText }, required: ['state', 'detail'] } },
   required: ['date', 'available', 'booking_id', 'closed', 'price_minor', 'min_stay_arrival', 'max_stay', 'closed_to_arrival', 'closed_to_departure', 'source', 'channel'] }
 // The home's calendar as the host Calendar reads it: the home's name, clock, price, minimum nights, rules, address and cancellation terms, and its stays.
-const calendarHomeProperties = { product_id: text, name: text, internal_name: text, timezone: text, currency: text, base_price_minor: stayHomeObject.properties.base_price_minor,
+const calendarHomeProperties = { product_id: text, name: text, internal_name: text, timezone: text, currency: text, photos: stayHomeObject.properties.photos, base_price_minor: stayHomeObject.properties.base_price_minor,
   min_nights: { type: 'integer' }, calendar_rules: STAY_CALENDAR_RULES_SCHEMA, address: stayHomeObject.properties.address,
   cancellation_policy: STAY_LISTING_SCHEMA.cancellation_policy, long_term_cancellation_policy: STAY_LISTING_SCHEMA.long_term_cancellation_policy }
 const calendarHome = { type: 'object', properties: calendarHomeProperties, required: Object.keys(calendarHomeProperties), additionalProperties: false }

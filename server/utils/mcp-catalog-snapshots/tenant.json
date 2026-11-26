@@ -1,7 +1,7 @@
 {
   "surface": "tenant",
-  "fingerprint": "sha256:31fd86e2bbc351093e51e558756a942fd29326b1de95126284eb061a9e2a8671",
-  "documentationFingerprint": "sha256:9b0416f2394456d6931de4bd7caae8a7e9add49de151050d859f8da87816889e",
+  "fingerprint": "sha256:c6e4aa5ce4c092524c4f08ce3f94bc72a60110c1cb801c3b7149baf918fb0f37",
+  "documentationFingerprint": "sha256:dd9e27bf0c302e6d5e086fe06473fc99d4a967fa1b5a71dfaccb4881bfbff0cf",
   "tools": [
     {
       "name": "add_organization_language",
@@ -67868,6 +67868,62 @@
                 "minLength": 1,
                 "type": "string"
               },
+              "photos": {
+                "description": "The home's photos in order, the cover first: its product's image, then its gallery. id is the media asset id; set_media, attach_media, reorder_media, remove_media and update_media_asset change them.",
+                "items": {
+                  "properties": {
+                    "alt_text": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "height": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "image",
+                        "video"
+                      ],
+                      "type": "string"
+                    },
+                    "position": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "url": {
+                      "description": "The picture to show; a video shows its poster frame.",
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "width": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "url",
+                    "width",
+                    "height",
+                    "alt_text",
+                    "position"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
               "product_id": {
                 "minLength": 1,
                 "type": "string"
@@ -67883,6 +67939,7 @@
               "internal_name",
               "timezone",
               "currency",
+              "photos",
               "base_price_minor",
               "min_nights",
               "calendar_rules",
@@ -107984,6 +108041,62 @@
                 "minLength": 1,
                 "type": "string"
               },
+              "photos": {
+                "description": "The home's photos in order, the cover first: its product's image, then its gallery. id is the media asset id; set_media, attach_media, reorder_media, remove_media and update_media_asset change them.",
+                "items": {
+                  "properties": {
+                    "alt_text": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "height": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "image",
+                        "video"
+                      ],
+                      "type": "string"
+                    },
+                    "position": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "url": {
+                      "description": "The picture to show; a video shows its poster frame.",
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "width": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "url",
+                    "width",
+                    "height",
+                    "alt_text",
+                    "position"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
               "product_id": {
                 "minLength": 1,
                 "type": "string"
@@ -107999,6 +108112,7 @@
               "internal_name",
               "timezone",
               "currency",
+              "photos",
               "base_price_minor",
               "min_nights",
               "calendar_rules",

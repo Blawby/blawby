@@ -415,6 +415,7 @@
   "site.posts.featured": "特色",
   "site.posts.meta_description": "來自 {organization} 的故事、新聞和更新。",
   "site.posts.next": "下一步",
+  "site.posts.view_markdown": "以 Markdown 檢視",
   "site.posts.next_steps": "下一步",
   "site.posts.previous": "上一步",
   "site.posts.read_full_story": "閱讀完整故事",

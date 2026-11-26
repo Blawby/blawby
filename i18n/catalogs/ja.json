@@ -394,6 +394,7 @@
   "site.posts.featured": "注目",
   "site.posts.meta_description": "{organization}のストーリー、ニュース、最新情報。",
   "site.posts.next": "次へ",
+  "site.posts.view_markdown": "Markdown で表示",
   "site.posts.next_steps": "次のステップ",
   "site.posts.previous": "前へ",
   "site.posts.read_full_story": "全文を読む",

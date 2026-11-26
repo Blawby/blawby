@@ -683,6 +683,7 @@ export default {
       "next_steps": "Next steps",
       "previous": "Previous",
       "next": "Next",
+      "view_markdown": "View as Markdown",
       "docs_meta_description": "Documentation from {organization}.",
       "category_meta_description": "{category} articles in the {collection} of {organization}.",
       "read_time": "{count} min read",

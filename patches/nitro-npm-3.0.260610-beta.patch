@@ -20,3 +20,18 @@ index c9357d6760354d28e47382d73b4fc15240111809..0bffdf4386facdc712e41461c31ba10e
  		},
  		queue(batch, env, context) {
  			globalThis.__env__ = env;
+diff --git a/dist/_build/common.mjs b/dist/_build/common.mjs
+index 76694ff..1e3e59e 100644
+--- a/dist/_build/common.mjs
++++ b/dist/_build/common.mjs
+@@ -21188,7 +21188,9 @@ function app(nitro) {
+ 			code.push(`  return app;`, `}`);
+ 			if (routingImports.length) imports.push(`import { ${routingImports.join(", ")} } from "#nitro/virtual/routing";`);
+ 			code.push(``, `function createH3App(config) {`, `  const h3App = new H3Core(config);`);
+-			if (hasRoutes) code.push(`  h3App["~findRoute"] = (event) => findRoute(event.req.method, event.url.pathname);`);
++			// Backport of nitro 3.0.261103-rc: a HEAD request without a HEAD route of its own answers from
++			// the GET route, as h3 does; without it every *.get.ts route fell through to the catch-all 404.
++			if (hasRoutes) code.push(`  h3App["~findRoute"] = (event) => {`, `    if (event.req.method === "HEAD") {`, `      const route = findRoute("HEAD", event.url.pathname);`, `      return route?.data.method ? route : findRoute("GET", event.url.pathname);`, `    }`, `    return findRoute(event.req.method, event.url.pathname);`, `  };`);
+ 			if (hasGlobalMiddleware) code.push(`  h3App["~middleware"].push(...globalMiddleware);`);
+ 			if (hasGetMiddleware) {
+ 				code.push(`  h3App["~getMiddleware"] = (event, route) => {`, `    const pathname = event.url.pathname;`, `    const method = event.req.method;`, `    const middleware = [];`);

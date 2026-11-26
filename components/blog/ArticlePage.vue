@@ -7,7 +7,13 @@
   -->
   <div :data-collection="collection" :class="hasToc ? 'xl:grid xl:grid-cols-[minmax(0,1fr)_240px] xl:gap-10' : undefined">
     <div class="min-w-0">
-      <ArticleBreadcrumb :crumbs="breadcrumbs" />
+      <div class="flex flex-wrap items-start justify-between gap-x-4">
+        <ArticleBreadcrumb :crumbs="breadcrumbs" />
+        <a v-if="markdownPath" :href="markdownPath" type="text/markdown" class="mb-6 inline-flex items-center gap-1.5 text-sm text-muted no-underline transition-colors hover:text-default">
+          <PlatformIcon name="file-text" class="size-4 shrink-0" />
+          {{ t('site.posts.view_markdown') }}
+        </a>
+      </div>
 
       <div ref="articleBodyRef" data-parity-section="article-content">
         <BlogArticleRenderer
@@ -82,6 +88,9 @@ const authorName = computed(() => post.value.author?.name ?? null)
 const indexPath = computed(() => localePath(ARTICLE_COLLECTIONS[props.collection].pathPrefix))
 const indexLabel = computed(() => props.collection === 'docs' ? t('site.footer.docs') : t('site.footer.blog'))
 const articlePath = computed(() => localePath(tenantBlogPostPath(post.value.slug, props.collection)))
+// The article's Markdown mirror (server/routes/{collection}-md), for readers and assistants that want the text without the page.
+const markdownPath = computed(() => post.value.visibility !== 'listed' ? null : `/${props.collection}-md/${encodeURIComponent(post.value.slug)}.md`)
+useHead(() => ({ link: markdownPath.value ? [{ rel: 'alternate', type: 'text/markdown', href: markdownPath.value }] : [] }))
 // The index, the article's category, the article: the category is a page of its own.
 const breadcrumbs = computed(() => [
   { name: indexLabel.value, url: indexPath.value },

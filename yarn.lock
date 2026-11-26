@@ -11325,7 +11325,7 @@ __metadata:
 
 "nitro@patch:nitro@npm%3A3.0.260610-beta#~/patches/nitro-npm-3.0.260610-beta.patch":
   version: 3.0.260610-beta
-  resolution: "nitro@patch:nitro@npm%3A3.0.260610-beta#~/patches/nitro-npm-3.0.260610-beta.patch::version=3.0.260610-beta&hash=780ced"
+  resolution: "nitro@patch:nitro@npm%3A3.0.260610-beta#~/patches/nitro-npm-3.0.260610-beta.patch::version=3.0.260610-beta&hash=debb28"
   dependencies:
     consola: "npm:^3.4.2"
     crossws: "npm:^0.4.6"
@@ -11369,7 +11369,7 @@ __metadata:
       optional: true
   bin:
     nitro: dist/cli/index.mjs
-  checksum: 10c0/e1cec68e8d521152bcd2fc01c42d3b7d7dae9a4dda61841370907eef19a3563d0b1b56b60c28c955af850ceaad433373d92019dae3a195c6d1e464a61f288b03
+  checksum: 10c0/6c34f2fe23cbbd47c9ecd51e0b005c064fb141a8183aa6a52150312239589da25bf0c3cec65c269a41e705700fa0fd82d3be81ad3ad1afc0b11769af699f0149
   languageName: node
   linkType: hard
 

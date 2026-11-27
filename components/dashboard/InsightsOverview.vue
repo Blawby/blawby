@@ -9,7 +9,7 @@
           <DashboardSurface v-for="item in data.opportunities" :key="item.id" :presentation="data.presentation" as="article" class="relative w-64 shrink-0 snap-start">
             <NuxtLink :to="item.path" class="font-semibold after:absolute after:inset-0 after:rounded-2xl">{{ item.title }}</NuxtLink>
             <p class="mt-2 text-sm text-muted">{{ item.detail }}</p>
-            <div v-if="item.progress" class="mt-4"><progress class="h-1 w-full" :value="item.progress.completed" :max="item.progress.total" :aria-label="item.progress.label" :style="{ accentColor: data.presentation.light.rating_accent }" /><p class="mt-1 flex justify-between text-xs text-muted"><span>{{ item.progress.label }}</span><span>{{ item.progress.completed }}/{{ item.progress.total }}</span></p></div>
+            <div v-if="item.progress" class="mt-4"><progress class="h-1 w-full" :value="item.progress.completed" :max="item.progress.total" :aria-label="item.progress.label" :style="{ accentColor: 'var(--surface-rating)' }" /><p class="mt-1 flex justify-between text-xs text-muted"><span>{{ item.progress.label }}</span><span>{{ item.progress.completed }}/{{ item.progress.total }}</span></p></div>
           </DashboardSurface>
         </div>
       </section>
@@ -24,12 +24,12 @@
         <template v-if="section.id === 'quality'">
           <h3 class="mb-4 font-semibold">Overview</h3>
           <NuxtLink :to="metricLink('quality/overall-rating')" class="flex items-center gap-4">
-            <span class="flex size-16 shrink-0 items-center justify-center rounded-full border-2 border-default text-xs tracking-tight" :style="{ color: data.presentation.light.rating_accent }" aria-hidden="true">★★★★★</span>
+            <span class="flex size-16 shrink-0 items-center justify-center rounded-full border-2 border-default text-xs tracking-tight" :style="{ color: 'var(--surface-rating)' }" aria-hidden="true">★★★★★</span>
             <span><strong class="block text-2xl">{{ section.metrics[0]?.display }}</strong><span class="text-xs text-muted">Overall rating</span></span>
             <UIcon name="i-lucide-chevron-right" class="ml-auto" />
           </NuxtLink>
           <h3 class="mb-3 mt-6 text-sm">Ratings</h3>
-          <dl class="space-y-3"><div v-for="rating in section.rating_counts" :key="rating.label" class="flex items-center gap-3"><dd class="text-2xl font-semibold">{{ rating.count }}</dd><dt class="text-xs text-muted">{{ rating.label }}<span class="block" :style="{ color: data.presentation.light.rating_accent }" aria-hidden="true">★★★★★</span></dt></div></dl>
+          <dl class="space-y-3"><div v-for="rating in section.rating_counts" :key="rating.label" class="flex items-center gap-3"><dd class="text-2xl font-semibold">{{ rating.count }}</dd><dt class="text-xs text-muted">{{ rating.label }}<span class="block" :style="{ color: 'var(--surface-rating)' }" aria-hidden="true">★★★★★</span></dt></div></dl>
           <p class="mt-5 text-xs text-muted">{{ data.range.label }}</p>
           <div class="mt-6 border-t border-default pt-4"><h3 class="text-sm">Recent issues</h3><button class="mt-2 text-sm underline" @click="showIssues = true">View recent issues</button></div>
         </template>
@@ -39,7 +39,7 @@
       <button class="text-sm font-semibold underline" @click="showIndex = true">All insights</button>
       <UModal v-model:open="showIndex" title="All insights"><template #body><nav class="space-y-6"><section v-for="section in data.index.sections" :key="section.id"><h2 class="mb-3 font-semibold">{{ section.title }}</h2><NuxtLink v-for="item in section.pages" :key="item.id" :to="metricLink(item.id)" class="block py-3 text-sm underline">{{ item.title }}</NuxtLink></section></nav></template></UModal>
       <UModal v-model:open="showAll" title="Opportunities"><template #body><div class="space-y-4"><DashboardSurface v-for="item in data.opportunities" :key="item.id" :presentation="data.presentation" class="relative"><NuxtLink :to="item.path" class="font-semibold after:absolute after:inset-0">{{ item.title }}</NuxtLink><p class="mt-2 text-sm text-muted">{{ item.detail }}</p>
-            <div v-if="item.progress" class="mt-4"><progress class="h-1 w-full" :value="item.progress.completed" :max="item.progress.total" :aria-label="item.progress.label" :style="{ accentColor: data.presentation.light.rating_accent }" /><p class="mt-1 flex justify-between text-xs text-muted"><span>{{ item.progress.label }}</span><span>{{ item.progress.completed }}/{{ item.progress.total }}</span></p></div></DashboardSurface></div></template></UModal>
+            <div v-if="item.progress" class="mt-4"><progress class="h-1 w-full" :value="item.progress.completed" :max="item.progress.total" :aria-label="item.progress.label" :style="{ accentColor: 'var(--surface-rating)' }" /><p class="mt-1 flex justify-between text-xs text-muted"><span>{{ item.progress.label }}</span><span>{{ item.progress.completed }}/{{ item.progress.total }}</span></p></div></DashboardSurface></div></template></UModal>
       <UModal v-model:open="showIssues" title="Recent issues"><template #body><div v-if="data.recent_issues.length" class="divide-y divide-default"><NuxtLink v-for="issue in data.recent_issues" :key="issue.id" :to="{ path: metricLink('quality/overall-rating'), query: { review: issue.id } }" class="block py-4"><p class="font-semibold">{{ issue.line }}</p><p class="text-sm text-muted">{{ issue.author }} · {{ issue.rating }} stars</p><p v-if="issue.content" class="mt-2 text-sm">{{ issue.content }}</p></NuxtLink></div><p v-else class="text-muted">No recent issues in this period.</p></template></UModal>
     </template>
   </div>

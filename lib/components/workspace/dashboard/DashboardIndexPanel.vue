@@ -1,5 +1,6 @@
 <template>
   <UDashboardPanel
+    v-bind="$attrs"
     :id="id"
     data-dashboard-index
     :class="level.mode.value === 'yield' ? 'hidden' : undefined"
@@ -87,6 +88,7 @@
 </template>
 
 <script setup lang="ts">
+defineOptions({ inheritAttrs: false })
 /*
   An index: a level whose rows link to its children. It is the whole screen
   with nothing open, the left column once a child is, and it steps aside when a

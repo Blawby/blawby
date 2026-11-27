@@ -53,7 +53,7 @@
         <p class="mt-4 text-xs text-muted">Stripe payments captured in the selected period, less refunds; channel reservation amounts are separate.</p>
       </section>
 
-      <ChannelReservationSummary v-if="data && status === 'success' && dashboard.hasFeature('stays')" class="mt-10" :rows="data.channel_reservations" :month="monthTitle" />
+      <ChannelReservationSummary v-if="data && status === 'success' && data.channel_reservations.length" class="mt-10" :rows="data.channel_reservations" :month="monthTitle" :presentation="data.presentation" />
     </template>
     <p v-else role="status" class="text-sm text-muted">Loading performance…</p>
   </DashboardLeafPanel>
@@ -73,7 +73,6 @@ definePageMeta({ layout: 'dashboard' })
 useSeoMeta({ title: 'Performance | Blawby', robots: 'noindex, nofollow' })
 
 const route = useRoute()
-const dashboard = useDashboardOrganization()
 const router = useRouter()
 const api = useDashboardApi()
 const now = new Date()

@@ -5,7 +5,7 @@
     page's ≡ button. It lists every page the business's offerings support,
     whatever the filters are.
   -->
-  <UDashboardPanel id="organization-insights" :ui="{ body: 'p-0 sm:p-0 gap-0' }">
+  <UDashboardPanel id="organization-insights" class="dashboard-themed" :style="dashboardThemeStyle(dashboardPresentation)" :ui="{ body: 'p-0 sm:p-0 gap-0' }">
     <template #body>
       <InsightsOverview v-if="!current" />
       <template v-else>
@@ -51,6 +51,7 @@
 </template>
 
 <script setup lang="ts">
+import { dashboardPresentation, dashboardThemeStyle } from '~/shared/dashboard-presentation'
 import InsightsOverview from '~/components/dashboard/InsightsOverview.vue'
 import { createReusableTemplate } from '@vueuse/core'
 import { insightsPageSchema, type InsightsPage, type InsightsPageId } from '~/shared/insights'

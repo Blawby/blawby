@@ -1,21 +1,18 @@
 <template>
-  <UCard as="section" variant="subtle" aria-label="Payments help">
+  <DashboardSurface :presentation="dashboardPresentation" aria-label="Payments help">
     <h2 class="text-xl font-semibold text-highlighted">Need help?</h2>
     <div class="mt-2 divide-y divide-default">
       <NuxtLink v-for="article in articles" :key="article.path" :to="`https://blawby.com${article.path}`" external class="flex items-center justify-between gap-4 py-4">
         <span class="text-base font-medium text-highlighted underline underline-offset-4">{{ article.title }}</span>
         <UIcon name="i-lucide-chevron-right" class="size-5 shrink-0 text-muted" />
       </NuxtLink>
-      <NuxtLink :to="`/dashboard/${route.params.org_slug}/earnings/transactions`" class="flex items-center justify-between gap-4 py-4">
-        <span class="text-base font-medium text-highlighted underline underline-offset-4">Go to your transactions</span>
-        <UIcon name="i-lucide-chevron-right" class="size-5 shrink-0 text-muted" />
-      </NuxtLink>
     </div>
-  </UCard>
+  </DashboardSurface>
 </template>
 
 <script setup lang="ts">
-const route = useRoute()
+import { dashboardPresentation } from '~/shared/dashboard-presentation'
+import DashboardSurface from '~/components/dashboard/DashboardSurface.vue'
 const articles = [
   { title: 'When you’ll get your payout', path: '/docs/when-youll-get-your-payout' },
   { title: 'How refunds work', path: '/docs/how-refunds-work' },

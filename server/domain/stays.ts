@@ -1433,7 +1433,7 @@ export interface StayCalendarStay {
  * and the nights of [from, to), each statement taking its homes from the same
  * visible-homes subquery.
  */
-export function stayCalendarQueries(input: { from: string; to: string; productId: string | null }): BatchQuery[] {
+export function stayCalendarQueries(input: { from: string; to: string; productId: string | null; cancelled?: boolean }): BatchQuery[] {
   const organization: BatchQuery = { query: BATCH_VIEWER.organization, params: [] }
   const scope = { sql: `(${BATCH_VIEWER.organizationWide} = 1 OR (${roleMatchesSql(BATCH_VIEWER.role!, assignedOperationsRoles)} AND EXISTS (
     SELECT 1 FROM product_booking_configs looked_after WHERE looked_after.organization_id = c.organization_id
@@ -1481,7 +1481,7 @@ export function stayCalendarOf(results: Array<{ results: unknown[] }>, manage: b
   }))
   const nights = homeNightsFrom(homes, nightResults, window.from, window.to) as StayNight[][]
   const shown = new Set(homes.map(home => home.product_id))
-  const stays = calendarStays(records!.results as BookedRecordInRange[], manage, window, record => shown.has(record.product_id)).map(({ name: _name, ...stay }) => stay)
+  const stays = calendarStays(records!.results as BookedRecordInRange[], manage, window, record => record.status !== 'cancelled' && shown.has(record.product_id)).map(({ name: _name, ...stay }) => stay)
   return {
     homes: homes.map((home, index) => ({ home: Object.fromEntries(STAY_CALENDAR_HOME_FIELDS.map(field => [field, home[field]])) as StayCalendarHome, nights: nights[index]! })),
     stays,

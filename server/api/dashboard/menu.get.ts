@@ -24,16 +24,22 @@ export default defineHandler(async event => {
   const earningsAllowed = await roleAllows({ ...principal, permissions: { payments: ['read'] } })
   const insightsAllowed = await roleAllows({ ...principal, permissions: { analytics: ['read'] } })
   const index = insightsAllowed ? insights.read(await insightsReader(organization, userId), rows.slice(1, 1 + insights.queries.length)) : null
-  const monthly = earningsAllowed ? paymentMonths(rows[0]!, year) : null
+  const paymentRows = rows[0]!.results as Array<{ currency: string }>
+  const currencies = [...new Set(paymentRows.map(row => row.currency))]
+  const monthly = earningsAllowed ? (currencies.length ? currencies : [organization.default_currency]).map(currency => ({
+    currency, ...paymentMonths({ ...rows[0]!, results: paymentRows.filter(row => row.currency === currency) }, year),
+  })) : []
   const reviews = rows.at(-1)!.results[0] as { count: number; rating: number | null }
-  const currency = monthly?.currencies[0] ?? organization.default_currency
-  const total = monthly?.months.find(row => row.month === month)
-  const amount = total ? total.paid - total.refunded : null
+  const totals = monthly.map(({ currency, months }) => {
+    const total = months.find(row => row.month === month)!
+    return { currency, amount: total.paid - total.refunded }
+  })
+  const single = totals.length === 1 ? totals[0]! : null
   return jsonResponse({
     title: 'Menu',
     presentation: dashboardPresentation,
     cards: [
-      ...(amount !== null ? [{ id: 'earnings', title: 'Earnings', value: paymentMoney(amount, currency), detail: `Direct payments for ${new Intl.DateTimeFormat('en', { month: 'long', timeZone: 'UTC' }).format(new Date(`${month}-01T00:00:00Z`))}`, symbol: 'chart.bar.fill', bars: monthly!.months.map(row => row.paid - row.refunded), month, currency, amount }] : []),
+      ...(totals.length ? [{ id: 'earnings', title: 'Earnings', value: totals.map(total => `${single ? '' : `${total.currency} `}${paymentMoney(total.amount, total.currency)}`).join(' · '), detail: `Direct payments for ${new Intl.DateTimeFormat('en', { month: 'long', timeZone: 'UTC' }).format(new Date(`${month}-01T00:00:00Z`))}`, symbol: 'chart.bar.fill', bars: single ? monthly[0]!.months.map(row => row.paid - row.refunded) : [], month, currency: single?.currency ?? null, amount: single?.amount ?? null, totals }] : []),
       ...(index ? [{ id: 'insights', title: 'Insights', value: reviews.rating === null ? 'No ratings yet' : `★ ${reviews.rating.toFixed(2)}`, detail: `${reviews.count} ${reviews.count === 1 ? 'review' : 'reviews'}`, symbol: 'star.bubble.fill', bars: [] }] : []),
     ],
     insights: index,

@@ -9,6 +9,7 @@ import { createAuth, type CloudflareEnv } from '../../server/utils/auth.ts'
 import connectStartRoute from '../../server/api/dashboard/connect/index.post.ts'
 import connectStatusRoute from '../../server/api/dashboard/connect/status.post.ts'
 import paymentsRoute from '../../server/api/dashboard/payments/index.get.ts'
+import menuRoute from '../../server/api/dashboard/menu.get.ts'
 import { processStripeWebhookEvent } from '../../server/utils/stripe-webhook-events.ts'
 import { createProduct, getProduct, updateProduct } from '../../server/utils/product-management.ts'
 import { setProductBookingConfig } from '../../server/utils/availability.ts'
@@ -118,7 +119,7 @@ test('Today suggests Stripe setup until the account is ready, and a price for ea
     // An experience with no price cannot be booked until it has one; one booked on another site needs none.
     const unpriced = await createProduct(db, { organizationId: 'org', actor: { actorId: 'owner' }, env, product: { kind: 'experience', name: 'Unpriced Walk' } })
     const partner = await createProduct(db, { organizationId: 'org', actor: { actorId: 'owner' }, env, product: { kind: 'experience', name: 'Partner Tour', order_url: 'https://partner.example/tour' } })
-    assert.deepEqual(await suggested(), ['payments.connect:org', `product.readiness:${unpriced.id}`, `product.photo:${free.id}`, `product.photo:${partner.id}`, `product.photo:${unpriced.id}`])
+    assert.deepEqual(await suggested(), ['payments.connect:org', `product.readiness:${unpriced.id}`, `product.photo:${free.id}`, `product.photo:${partner.id}`, `product.photo:${unpriced.id}`, `product.photo:${paid.id}`])
     await updateProduct(db, { organizationId: 'org', actor: { actorId: 'owner' }, env, productId: unpriced.id, patch: { active: false, updated_at: unpriced.updated_at } })
     const photos = [`product.photo:${free.id}`, `product.photo:${partner.id}`, `product.photo:${paid.id}`]
     assert.deepEqual(await suggested(), ['payments.connect:org', ...photos], 'an inactive experience needs neither a price nor photos')
@@ -126,6 +127,7 @@ test('Today suggests Stripe setup until the account is ready, and a price for ea
     app.post('/api/dashboard/connect', connectStartRoute)
     app.post('/api/dashboard/connect/status', connectStatusRoute)
     app.get('/api/dashboard/payments', paymentsRoute)
+    app.get('/api/dashboard/menu', menuRoute)
     app.put('/api/editor/organizations/:organization_id/products/:product_id/booking', bookingConfigRoute)
     const login = await createAuth(env).api.signInEmail({ body: { email: 'owner@example.test', password: 'PayoutsProof123!' }, asResponse: true })
     const token = login.headers.get('set-auth-token')!
@@ -275,6 +277,21 @@ test('Today suggests Stripe setup until the account is ready, and a price for ea
       assert.equal(save.status, 200, await save.text())
 
       assert.equal((await getProduct(db, 'org', paid.id)).booking?.online_payment_required, true, 'ordinary catalog read observes the saved payment setting')
+      // Historical currencies must remain distinct without blocking Insights
+      // on the Menu. This exercises its real authenticated HTTP/D1 boundary.
+      const now = new Date().toISOString()
+      await db.batch([['USD', 1200], ['EUR', 3400]].map(([currency, amount]) => db.prepare(`INSERT INTO payments
+        (id, organization_id, stripe_account_id, livemode, subject_type, currency, amount, captured_amount, price_snapshot_json, created_at, updated_at)
+        VALUES (?, 'org', 'acct_payouts', 0, 'booking', ?, ?, ?, ?, ?, ?)`).bind(`menu-${currency}`, currency, amount, amount, JSON.stringify({ title: 'Wheel Class', quantity: 1, price: { currency, unit_amount: amount } }), now, now)))
+      const menuResponse = await app.request(Object.assign(new Request('https://proof.example/api/dashboard/menu?org=cliff', { headers: app_ }), { runtime: { name: 'cloudflare', cloudflare: { env } } }))
+      assert.equal(menuResponse.status, 200)
+      const menu = await menuResponse.json() as { cards: Array<{ id: string; value: string; bars: number[]; totals: Array<{ currency: string; amount: number }> }> }
+      assert.deepEqual(menu.cards.map(card => card.id), ['earnings', 'insights'])
+      const card = menu.cards[0]!
+      assert.deepEqual(Object.fromEntries(card.totals.map(total => [total.currency, total.amount])), { EUR: 3400, USD: 1200 })
+      assert.match(card.value, /EUR €34\.00/)
+      assert.match(card.value, /USD \$12\.00/)
+      assert.deepEqual(card.bars, [])
     } finally { fetchMock.mock.restore() }
   } finally {
     await runtime.dispose()

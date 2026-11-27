@@ -1,4 +1,4 @@
-import type { DashboardPresentation } from './dashboard-presentation'
+import { dashboardPresentationSchema, type DashboardPresentation } from './dashboard-presentation'
 import {isCurrencyCode} from './currencies'
 import {paymentMoney} from './payment-display'
 
@@ -22,6 +22,10 @@ export function earningsFigure(summary:EarningsSummary):string {
 
 /** What `view=performance` answers: the year by month and one month by what was sold. */
 export interface EarningsPerformance {
+ presentation:DashboardPresentation
+ booking_value_title:string
+ breakdown:Array<{key:string;label:string;display:string}>
+ statistics:Array<{key:string;label:string;display:string}>
  comparison?:{year:number;currency:string;months:Array<{month:string;paid:number;refunded:number}>}
  currency:string
  payouts_connected?:boolean|null
@@ -30,9 +34,11 @@ export interface EarningsPerformance {
  items:Array<{title:string;image_url:string|null;paid:number;count:number}>
 }
 const record=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)
-const earningsMonths=(value:unknown):value is EarningsPerformance['months']=>Array.isArray(value)&&value.length===12&&value.every(row=>record(row)&&typeof row.month==='string'&&/^\d{4}-(0[1-9]|1[0-2])$/.test(row.month)&&Number.isSafeInteger(row.paid)&&Number.isSafeInteger(row.refunded))
+const earningsDetails=(value:unknown)=>Array.isArray(value)&&value.length>0&&value.every(row=>record(row)&&['key','label','display'].every(key=>typeof row[key]==='string'&&row[key].length>0))
+const earningsMonths=(value:unknown):value is EarningsPerformance['months']=>Array.isArray(value)&&value.length===12&&value.every((row,index)=>record(row)&&typeof row.month==='string'&&/^\d{4}-(0[1-9]|1[0-2])$/.test(row.month)&&row.month===`${value[0].month.slice(0,4)}-${String(index+1).padStart(2,'0')}`&&Number.isSafeInteger(row.paid)&&Number.isSafeInteger(row.refunded))
 export function isEarningsPerformance(value:unknown):value is EarningsPerformance {
- return record(value)&&isCurrencyCode(value.currency)
+ return record(value)&&dashboardPresentationSchema.safeParse(value.presentation).success&&isCurrencyCode(value.currency)
+  &&typeof value.booking_value_title==='string'&&earningsDetails(value.breakdown)&&earningsDetails(value.statistics)
   &&(value.payouts_connected==null||typeof value.payouts_connected==='boolean')
   &&Array.isArray(value.channel_reservations)&&value.channel_reservations.every(row=>record(row)&&['airbnb','booking_com','vrbo'].includes(String(row.channel))&&isCurrencyCode(row.currency)&&Number.isSafeInteger(row.amount)&&Number(row.amount)>=0&&Number.isSafeInteger(row.count)&&Number(row.count)>0)
   &&earningsMonths(value.months)
@@ -41,6 +47,13 @@ export function isEarningsPerformance(value:unknown):value is EarningsPerformanc
 }
 
 export interface EarningsOverview { presentation:DashboardPresentation; month:string; performance:EarningsPerformance; payouts:Omit<PayoutsView,'balance'>|null }
+
+export function isEarningsOverview(value: unknown): value is EarningsOverview {
+ return record(value) && dashboardPresentationSchema.safeParse(value.presentation).success && typeof value.month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(value.month)
+  && isEarningsPerformance(value.performance) && value.performance.months.some(row => row.month === value.month) && (value.payouts === null || (record(value.payouts) && typeof value.payouts.configured === 'boolean'
+   && (value.payouts.next_cursor === null || typeof value.payouts.next_cursor === 'string') && Array.isArray(value.payouts.payouts)
+   && value.payouts.payouts.every(row => moneyRow(row) && typeof row.id === 'string' && ['pending','in_transit','paid','failed','canceled'].includes(String(row.status)) && Number.isSafeInteger(row.arrival_date) && Number.isSafeInteger(row.created))))
+}
 
 /** One payment a payout carried, or one line of the transactions list. */
 export interface PayoutItem { gross_amount:number; fee_amount:number; buyer_name:string|null; payment_id:string; title:string; image_url:string|null; amount:number; currency:string; starts_at:string|null; ends_at:string|null; timezone:string|null; name:string|null }
@@ -58,13 +71,13 @@ export function isPayoutDetail(value:unknown):value is PayoutDetail {
   &&(value.failure_message===null||typeof value.failure_message==='string')
 }
 /** Stripe's payout list rows, as the Earnings and Paid screens read them. */
-export interface PayoutRow { id:string; amount:number; currency:string; status:string; arrival_date:number }
+export interface PayoutRow { created:number; id:string; amount:number; currency:string; status:string; arrival_date:number }
 export interface PayoutsView { configured:boolean; balance?:{available:Array<{amount:number;currency:string}>;pending:Array<{amount:number;currency:string}>}|null; payouts:PayoutRow[]; next_cursor:string|null }
 const moneyRow=(value:unknown)=>record(value)&&Number.isSafeInteger(value.amount)&&typeof value.currency==='string'&&isCurrencyCode(value.currency.toUpperCase())
 export function isPayoutsView(value:unknown):value is PayoutsView {
  return record(value)&&typeof value.configured==='boolean'&&Array.isArray(value.payouts)&&(value.next_cursor===null||(typeof value.next_cursor==='string'&&!!value.next_cursor))
   &&(value.configured===false||(record(value.balance)&&Array.isArray(value.balance.available)&&value.balance.available.every(moneyRow)&&Array.isArray(value.balance.pending)&&value.balance.pending.every(moneyRow)
-   &&value.payouts.every(row=>moneyRow(row)&&typeof row.id==='string'&&['pending','in_transit','paid','failed','canceled'].includes(String(row.status))&&Number.isSafeInteger(row.arrival_date))))
+   &&value.payouts.every(row=>moneyRow(row)&&typeof row.id==='string'&&['pending','in_transit','paid','failed','canceled'].includes(String(row.status))&&Number.isSafeInteger(row.arrival_date)&&Number.isSafeInteger(row.created))))
 }
 export function payoutStatusLabel(status:string):string {
  return status==='paid'?'Sent':status==='failed'?'Failed':status==='canceled'?'Cancelled':status==='in_transit'?'On its way':'Expected'
@@ -85,6 +98,30 @@ export function downloadCsv(filename:string,header:string[],rows:Array<Array<str
  // A buyer writes their own name, so text a spreadsheet would run as a formula is kept as text.
  const escape=(cell:string|number)=>`"${(typeof cell==='string'&&/^[=+\-@\t\r]/.test(cell)&&!/^-\d+(?:\.\d+)?$/.test(cell)?`'${cell}`:String(cell)).replace(/"/g,'""')}"`
  const text=[header,...rows].map(row=>row.map(escape).join(',')).join('\n')
+ downloadCsvText(filename,text)
+}
+export function downloadCsvText(filename:string,text:string):void {
  const url=URL.createObjectURL(new Blob([text],{type:'text/csv;charset=utf-8'}))
  const link=document.createElement('a'); link.href=url; link.download=filename; link.click(); URL.revokeObjectURL(url)
+}
+
+/** Agreed booking values by the visit's local month, distinct from collections and payouts. */
+export interface BookingValueReport {
+ presentation:DashboardPresentation
+ title:string
+ bookings_label:string
+ future_label:string
+ empty_label:string
+ note:string
+ year:number
+ unpriced_label:string
+ unpriced_bookings:number
+ reports:Array<{currency:string;months:Array<{month:string;total_minor:number;bookings:number}>;items:Array<{product_id:string;title:string;image_url:string|null;month:string;total_minor:number;bookings:number}>}>
+}
+export function isBookingValueReport(value:unknown):value is BookingValueReport {
+ return record(value)&&dashboardPresentationSchema.safeParse(value.presentation).success&&typeof value.title==='string'&&typeof value.bookings_label==='string'&&typeof value.future_label==='string'&&typeof value.empty_label==='string'&&typeof value.note==='string'
+  &&Number.isInteger(value.year)&&typeof value.unpriced_label==='string'&&Number.isSafeInteger(value.unpriced_bookings)&&Number(value.unpriced_bookings)>=0
+  &&Array.isArray(value.reports)&&value.reports.every(report=>record(report)&&isCurrencyCode(report.currency)&&Array.isArray(report.months)&&report.months.length===12
+   &&report.months.every((row,index)=>record(row)&&row.month===`${value.year}-${String(index+1).padStart(2,'0')}`&&Number.isSafeInteger(row.total_minor)&&Number(row.total_minor)>=0&&Number.isSafeInteger(row.bookings)&&Number(row.bookings)>=0)
+   &&Array.isArray(report.items)&&report.items.every(row=>record(row)&&typeof row.product_id==='string'&&typeof row.title==='string'&&(row.image_url===null||typeof row.image_url==='string')&&typeof row.month==='string'&&Number.isSafeInteger(row.total_minor)&&Number.isSafeInteger(row.bookings)))
 }

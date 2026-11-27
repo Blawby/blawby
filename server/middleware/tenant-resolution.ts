@@ -35,7 +35,7 @@ import { BROWSER_ERROR_PATH } from '~/shared/error-telemetry'
 import { dashboardSessionUserQuery, getAuthSession, type DashboardAuthRead } from '~/server/utils/auth'
 import { dashboardOrganizationFrom, getDashboardSession, dashboardLocationQuery, prepareOrganizationLocations, readDashboardMembership } from '~/server/utils/dashboard-context'
 import { prepareDashboardWorkspaceAccess, readDashboardWorkspaceAccess } from '~/server/utils/dashboard-context-service'
-import { membershipBySlugQuery, BATCH_VIEWER, withViewer, isOrganizationWideRole } from '~/server/utils/member-access'
+import { membershipBySlugQuery, BATCH_VIEWER, withViewer, isOrganizationWideRole, roleAllows } from '~/server/utils/member-access'
 import { prepareToday } from '~/server/domain/today'
 import { staffAccessWritesEnabled } from '~/server/domain/listing-access'
 import { readDashboardTodayDocument } from '~/server/utils/dashboard-today'
@@ -68,6 +68,9 @@ import { placesPresenceQuery } from '~/server/domain/places'
 import { prepareDashboardAgendaDocument } from '~/server/utils/dashboard-agenda-reader'
 import { isValidCalendarDate } from '~/utils/timezone'
 import { parseDate } from '@internationalized/date'
+import { prepareBookingValueReport } from '~/server/domain/payments/earnings'
+import { prepareDashboardMenu } from '~/server/utils/dashboard-menu'
+import { prepareInsightsOverview, prepareStoredInsightsPage, insightsReader } from '~/server/domain/insights'
 import { prepareDashboardEarningsDocument } from '~/server/utils/dashboard-earnings'
 import { PUBLIC_CONFIG_COLUMNS, type PublicConfigRow } from '~/server/utils/organization-config'
 import { publicTenantRedirectQuery, type PublicTenantRedirect } from '~/server/utils/public-redirects'
@@ -478,9 +481,19 @@ function prepareDashboardTenant(event: H3Event, db: D1Database, env: ReturnType<
       kinds: query.kinds === '__all__' ? undefined : query.kinds,
     })
     : null
+  const menu = panel === '/menu' ? prepareDashboardMenu() : null
+  const insightsOverview = panel === '/insights' ? prepareInsightsOverview(db, '7') : null
+  const insightsPage = /^\/insights\/([^/]+)\/([^/]+)$/.exec(panel)
+  const insightsResource = insightsPage ? `/api/dashboard/insights/${insightsPage[1]}/${insightsPage[2]}` : null
+  const insightsDetail = insightsPage && insightsPage[1] !== 'marketing' ? prepareStoredInsightsPage(db, `${insightsPage[1]}/${insightsPage[2]}`, {
+    kind: typeof query.kind === 'string' ? query.kind : undefined, location_id: typeof query.location_id === 'string' ? query.location_id : undefined,
+    start_date: typeof query.start_date === 'string' ? query.start_date : undefined, end_date: typeof query.end_date === 'string' ? query.end_date : undefined,
+  }) : null
+  const bookingValueYear = Number(query.year ?? new Date().getUTCFullYear())
+  const bookingValue = panel === '/earnings/booking-value' ? prepareBookingValueReport({sql: `CASE WHEN ${roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({payments: ['read']}))} THEN ${BATCH_VIEWER.organization} END`}, bookingValueYear) : null
   const earningsMonths = new Set([new Date().toISOString().slice(0, 7)])
   if (panel === '/earnings/performance' && typeof query.month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(query.month)) earningsMonths.add(query.month)
-  const earnings = /^\/earnings(?:\/|$)/.test(panel) ? prepareDashboardEarningsDocument(membership, earningsMonths, /^\/earnings\/payouts(?:\/|$)/.test(panel)) : null
+  const earnings = /^\/earnings(?:\/|$)/.test(panel) && !bookingValue ? prepareDashboardEarningsDocument(membership, earningsMonths, true, panel === '/earnings/performance') : null
   const queries = [
     host, membership,
     ...workspace.queries.map(query => withViewer(membership, query)),
@@ -496,6 +509,10 @@ function prepareDashboardTenant(event: H3Event, db: D1Database, env: ReturnType<
     ...(booking?.queries ?? []),
     ...(calendar ? [calendar, ...agenda?.queries ?? []] : []),
     ...(earnings?.queries ?? []),
+    ...(menu?.queries.map(query => withViewer(membership, query)) ?? []),
+    ...(insightsOverview?.queries.map(query => withViewer(membership, query)) ?? []),
+    ...(insightsDetail?.queries.map(query => withViewer(membership, query)) ?? []),
+    ...(bookingValue?.queries.map(query => withViewer(membership, query)) ?? []),
     ...(website?.queries.map(query => withViewer(membership, query)) ?? []),
     ...(websiteList?.queries.map(query => withViewer(membership, query)) ?? []),
     ...(websiteEditor?.queries.map(query => withViewer(membership, query)) ?? []),
@@ -559,7 +576,11 @@ function prepareDashboardTenant(event: H3Event, db: D1Database, env: ReturnType<
       event.context.dashboardCalendarPresence = { slug, has_places: (panelRows[0]!.results[0] as { has_places: number }).has_places === 1 }
       if (agenda) await agenda.apply(event, panelRows.slice(1), { env, organization })
     }
-    if (earnings && panelRows[2]?.results.length) earnings.apply(event, panelRows, organization)
+    if (earnings) earnings.apply(event, panelRows, organization)
+    if (menu) event.context.dashboardMenuDocument = { slug, value: await menu.read(organization, userId, panelRows) }
+    if (insightsOverview) event.context.dashboardInsightsOverview = { slug, days: '7', value: insightsOverview.read(await insightsReader(organization, userId), await roleAllows({ organizationId: organization.id, role: organization.role, permissions: { task: ['assign'] } }), panelRows) }
+    if (insightsDetail) event.context.dashboardInsightsDetail = { slug, resource: insightsResource, value: insightsDetail.read(await insightsReader(organization, userId), panelRows) }
+    if (bookingValue) event.context.dashboardBookingValue = { slug, year: bookingValueYear, value: bookingValue.read(panelRows.slice(earnings?.queries.length ?? 0), organization.id, organization.vertical) }
     const wholeWorkspace = (viewer as { organization_wide: number }).organization_wide === 1
     if (websiteDocument) {
       const content = new Map<string, unknown>()

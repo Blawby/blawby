@@ -10,7 +10,8 @@
   <div :id="`insights-${pageId.replace('/', '-')}`" class="space-y-8 px-4 pb-12 pt-6 sm:px-8">
     <div class="space-y-4">
       <div class="flex items-center gap-3">
-        <UButton class="md:hidden" icon="i-lucide-menu" color="neutral" variant="ghost" aria-label="Insights pages" @click="openList()" />
+        <NuxtLink :to="`/dashboard/${route.params.org_slug}/insights`" class="text-sm underline">Performance</NuxtLink>
+        <UButton v-if="page?.index" class="md:hidden" icon="i-lucide-menu" color="neutral" variant="ghost" aria-label="Insights pages" @click="openList()" />
         <h1 class="text-2xl font-semibold text-highlighted">{{ title }}</h1>
       </div>
       <p v-if="page?.subtitle" class="text-sm text-muted">{{ page.subtitle }}</p>
@@ -88,31 +89,19 @@
 <script setup lang="ts">
 import AnalyticsTrendChart from '~/components/dashboard/AnalyticsTrendChart.vue'
 import DateRangeFilterPill from '~/components/dashboard/insights/DateRangeFilterPill.vue'
-import { insightsPageSchema, type InsightsIndex, type InsightsPage } from '~/shared/insights'
+import type { InsightsPage } from '~/shared/insights'
 import { insightsListKey } from '~/composables/useInsightsRead'
 
 definePageMeta({ layout: 'dashboard' })
 
 const route = useRoute()
 const router = useRouter()
-const dashboardApi = useDashboardApi()
-const recentOrRead = useInsightsRead()
-const orgSlug = computed(() => String(route.params.org_slug))
+const props = defineProps<{ document: InsightsPage | null; failure?: unknown }>()
+const page = computed(() => props.document)
+const error = computed(() => props.failure)
 const pageId = computed(() => `${String(route.params.section)}/${String(route.params.page)}`)
-const index = useNuxtData<InsightsIndex>(`insights-index:${orgSlug.value}`).data
-const listed = computed(() => index.value?.sections.flatMap(section => section.pages).find(page => page.id === pageId.value) ?? null)
-// A page the list does not offer is not one of this business's pages.
-if (index.value && !listed.value) throw createError({ statusCode: 404, statusMessage: 'Insights page not found', fatal: true })
-const openList = inject(insightsListKey, () => {})
-
-const queryText = (name: string) => typeof route.query[name] === 'string' && route.query[name] ? route.query[name] as string : undefined
-const filters = computed(() => ({ kind: queryText('kind'), location_id: queryText('location_id'), start_date: queryText('start_date'), end_date: queryText('end_date') }))
-const readKey = computed(() => `${orgSlug.value}:${pageId.value}:${filters.value.kind ?? 'all'}:${filters.value.location_id ?? ''}:${filters.value.start_date ?? ''}:${filters.value.end_date ?? ''}`)
-const isPage = (value: unknown): value is InsightsPage => insightsPageSchema.safeParse(value).success
-const { data: page, error } = await useAsyncData(() => `insights:${readKey.value}`, () => recentOrRead(readKey.value,
-  () => dashboardApi<InsightsPage>(`/api/dashboard/insights/${pageId.value}`, { query: filters.value, validate: isPage }), isPage))
-
-const title = computed(() => page.value?.title ?? listed.value?.title ?? '')
+const openList = inject(insightsListKey)!
+const title = computed(() => page.value?.title ?? 'Insights')
 const selected = computed(() => {
   const chartable = (page.value?.metrics ?? []).filter(metric => metric.chartable)
   return chartable.find(metric => metric.key === route.query.metric) ?? chartable[0] ?? null

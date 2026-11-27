@@ -1,6 +1,6 @@
 import { dashboardPresentation } from '~/shared/dashboard-presentation'
 import { HTTPError, type H3Event } from 'nitro'
-import { preparePaymentPerformance, readStripePayouts } from '~/server/domain/payments/earnings'
+import { preparePaymentPerformance, prepareBookingValueReport, readStripePayouts, payoutFilters } from '~/server/domain/payments/earnings'
 import { authorizePayments } from '~/server/domain/payments'
 import { dashboardOrgQueryParam, readDashboardMemberResources, getDashboardContext } from '~/server/utils/dashboard-context'
 import { BATCH_VIEWER, withViewer, roleAllows } from '~/server/utils/member-access'
@@ -20,28 +20,38 @@ export async function readDashboardEarnings(event: H3Event, query: { year?: unkn
   const month = typeof query.month === 'string' ? query.month : now.toISOString().slice(0, 7)
   const preloaded = event.context.dashboardEarnings as { slug: string; periods: Map<string, EarningsPerformance> } | undefined
   const answer = preloaded?.slug === slug ? preloaded.periods.get(month) : undefined
-  if (answer && Number(month.slice(0, 4)) === year && !comparison) {
+  if (answer && Number(month.slice(0, 4)) === year && (!comparison || answer.comparison)) {
     const { organization, userId } = await getDashboardContext(event, { organizationSlug: slug })
     await authorizePayments({ organizationId: organization.id, userId, role: organization.role }, 'read')
     return answer
   }
   const readsPayments = roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ payments: ['read'] }))
   const readsPayouts = roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ payments: ['payouts'] }))
-  const plan = preparePaymentPerformance({ sql: `CASE WHEN ${readsPayments} THEN ${BATCH_VIEWER.organization} END` }, year, month, { sql: readsPayouts }, comparison)
+  const plan = preparePaymentPerformance({ sql: `CASE WHEN ${readsPayments} THEN ${BATCH_VIEWER.organization} END` }, year, month, { sql: readsPayouts }, comparison && Number(month.slice(0, 4)) > 2000)
   const { organization, userId, rows } = await readDashboardMemberResources(event, { slug }, plan.queries)
   await authorizePayments({ organizationId: organization.id, userId, role: organization.role }, 'read')
   return plan.read(rows, organization.id)
 }
 
 /** The Earnings landing page: its monthly summary and recent payouts share one D1 snapshot. */
-export async function readDashboardEarningsOverview(event: H3Event, query: { year?: unknown; month?: unknown }): Promise<EarningsOverview> {
-  const slug = dashboardOrgQueryParam(event)
+export async function readDashboardEarningsOverview(event: H3Event, query: { year?: unknown; month?: unknown }, orgSlug?: string): Promise<EarningsOverview> {
+  const slug = orgSlug ?? dashboardOrgQueryParam(event)
   if (!slug) throw new HTTPError({ statusCode: 400, message: 'Organization is required', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
   const now = new Date(), year = Number(query.year ?? now.getUTCFullYear()), month = typeof query.month === 'string' ? query.month : now.toISOString().slice(0, 7)
   const readsPayments = roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ payments: ['read'] }))
   const readsPayouts = roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ payments: ['payouts'] }))
   const scope = { sql: `CASE WHEN ${readsPayments} THEN ${BATCH_VIEWER.organization} END` }
   const plan = preparePaymentPerformance(scope, year, month, { sql: readsPayouts })
+  const preloaded = event.context.dashboardEarnings as { slug: string; periods: Map<string, EarningsPerformance> } | undefined
+  if (preloaded?.slug === slug && preloaded.periods.has(month)) {
+    const { env, organization, userId } = await getDashboardContext(event, { organizationSlug: slug })
+    const principal = { organizationId: organization.id, userId, role: organization.role }
+    await authorizePayments(principal, 'read')
+    const allowed = await roleAllows({ ...principal, permissions: { payments: ['payouts'] } })
+    const account = event.context.dashboardPayoutAccount as { organizationId: string; account: StripeConnectedAccount | null } | undefined
+    if (allowed && account?.organizationId !== organization.id) throw new HTTPError({ statusCode: 500, message: 'Earnings document is missing the Stripe account lookup' })
+    return { presentation: dashboardPresentation, month, performance: preloaded.periods.get(month)!, payouts: allowed ? await readStripePayouts(env, organization.id, account!.account, undefined, {}, false) : null }
+  }
   const payout = stripeConnectedAccountQuery({ sql: `CASE WHEN ${readsPayouts} THEN ${scope.sql} END` })
   const { organization, userId, env, rows } = await readDashboardMemberResources(event, { slug }, [...plan.queries, payout])
   const principal = { organizationId: organization.id, userId, role: organization.role }
@@ -63,7 +73,8 @@ export async function readDashboardPayoutAccount(event: H3Event) {
   return { ...context, principal, account: stripeConnectedAccountFromRow(context.rows[0]?.results[0]) }
 }
 
-export async function readDashboardPayoutsDocument(event: H3Event, orgSlug: string, after?: unknown) {
+export async function readDashboardPayoutsDocument(event: H3Event, orgSlug: string, query: Record<string, unknown>) {
+  const after = query.after
   if (after !== undefined && (typeof after !== 'string' || !after)) throw new HTTPError({ statusCode: 400, statusMessage: 'Valid page cursor is required' })
   const { env, organization, userId } = await getDashboardContext(event, { organizationSlug: orgSlug })
   const principal = { organizationId: organization.id, userId, role: organization.role }
@@ -71,10 +82,10 @@ export async function readDashboardPayoutsDocument(event: H3Event, orgSlug: stri
   await authorizePayments(principal, 'payouts')
   const payout = event.context.dashboardPayoutAccount as { organizationId: string; account: StripeConnectedAccount | null } | undefined
   if (!payout || payout.organizationId !== organization.id) throw new HTTPError({ statusCode: 500, message: 'Earnings document is missing the Stripe account lookup' })
-  return timeRequestPhase(event, 'stripe_payouts', () => readStripePayouts(env, organization.id, payout.account, after))
+  return timeRequestPhase(event, 'stripe_payouts', () => readStripePayouts(env, organization.id, payout.account, after, payoutFilters(query)))
 }
 
-export function prepareDashboardEarningsDocument(membership: BatchQuery, months: ReadonlySet<string>, includePayouts: boolean) {
+export function prepareDashboardEarningsDocument(membership: BatchQuery, months: ReadonlySet<string>, includePayouts: boolean, comparison = false) {
   const readsPayments = roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ payments: ['read'] }))
   const readsPayouts = roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ payments: ['payouts'] }))
   const organization = { sql: `CASE WHEN ${BATCH_VIEWER.organizationWide} = 1 AND ${readsPayments} THEN ${BATCH_VIEWER.organization} END` }
@@ -82,7 +93,7 @@ export function prepareDashboardEarningsDocument(membership: BatchQuery, months:
     sql: `CASE WHEN ${readsPayouts} THEN ${organization.sql} END`,
   }) : null
   const reads = [...months].map(month => {
-    return { month, ...preparePaymentPerformance(organization, Number(month.slice(0, 4)), month, { sql: readsPayouts }) }
+    return { month, ...preparePaymentPerformance(organization, Number(month.slice(0, 4)), month, { sql: readsPayouts }, comparison && Number(month.slice(0, 4)) > 2000) }
   })
   return {
     queries: [...reads.flatMap(plan => plan.queries), ...(payout ? [payout] : [])].map(query => withViewer(membership, query)),
@@ -97,4 +108,21 @@ export function prepareDashboardEarningsDocument(membership: BatchQuery, months:
       event.context.dashboardEarnings = { slug: organization.slug, periods }
     },
   }
+}
+
+export async function readDashboardBookingValue(event: H3Event, query: { year?: unknown }, orgSlug?: string) {
+  const slug = orgSlug ?? dashboardOrgQueryParam(event)
+  if (!slug) throw new HTTPError({ statusCode: 400, message: 'Organization is required', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
+  const year = Number(query.year ?? new Date().getUTCFullYear())
+  const allowed = roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ payments: ['read'] }))
+  const plan = prepareBookingValueReport({ sql: `CASE WHEN ${allowed} THEN ${BATCH_VIEWER.organization} END` }, year)
+  const cached = event.context.dashboardBookingValue as {slug:string;year:number;value:unknown}|undefined
+  if (cached?.slug === slug && cached.year === year) {
+    const {organization,userId} = await getDashboardContext(event,{organizationSlug:slug})
+    await authorizePayments({organizationId:organization.id,userId,role:organization.role},'read')
+    return cached.value
+  }
+  const {organization,userId,rows} = await readDashboardMemberResources(event,{slug},plan.queries)
+  await authorizePayments({organizationId:organization.id,userId,role:organization.role},'read')
+  return plan.read(rows,organization.id,organization.vertical)
 }

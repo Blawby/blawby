@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Miniflare } from 'miniflare'
 import type { CloudflareEnv } from '../../server/utils/auth.ts'
-import { memberAccessPrincipal } from '../../server/utils/member-access.ts'
+import { memberAccessPrincipal, membershipBySlugQuery, withViewer } from '../../server/utils/member-access.ts'
+import { executeBatch } from '../../server/db/index.ts'
+import { stayCalendarQueries } from '../../server/domain/stays.ts'
 import { readPlacesCalendar, setPlaceDates, type PlaceDay } from '../../server/domain/places.ts'
 import { localDateAt } from '../../utils/timezone.ts'
 import { readPublicProductAvailability } from '../../server/utils/public-session-booking.ts'
@@ -104,6 +106,16 @@ test('the places calendar reads each location, experience and consultation with 
   try {
     const calendar = await readPlacesCalendar(db, owner, { from: FROM, to: TO })
     assert.equal(calendar.manage, true)
+    // The combined calendar reuses this plan: include_cancelled must keep the
+    // cancelled table booking already present in the canonical booked records.
+    const records = async (cancelled: boolean) => {
+      const rows = await executeBatch(db, stayCalendarQueries({ from: FROM, to: TO, productId: null, cancelled }).map(query => withViewer(membershipBySlugQuery('ember', OWNER), query)), { operation: 'Read combined calendar records' })
+      return rows[3]!.results as Array<{ id: string; status: string }>
+    }
+    assert.deepEqual((await records(false)).map(record => record.id).sort(), ['b1', 'b2', 'r1', 'r2', 'r4'])
+    const includingCancelled = await records(true)
+    assert.deepEqual(includingCancelled.map(record => record.id).sort(), ['b1', 'b2', 'r1', 'r2', 'r3', 'r4'])
+    assert.equal(includingCancelled.find(record => record.id === 'r3')?.status, 'cancelled')
     assert.deepEqual(calendar.places.map(entry => [entry.place.kind, entry.place.id, entry.place.name, entry.place.detail, entry.place.slug, entry.place.provider]), [
       ['location', 'brooklyn', 'Brooklyn', '77 Dean St, Brooklyn', 'brooklyn', null],
       ['location', 'williamsburg', 'Williamsburg', '77 Dean St, Brooklyn', 'williamsburg', null],

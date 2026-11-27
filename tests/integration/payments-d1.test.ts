@@ -12,7 +12,7 @@ import { bindDatabaseEvents } from '../../server/db/index.ts'
 import { claimSessionCapacity, listBookableSessions, setProductBookingConfig } from '../../server/utils/availability.ts'
 import { createProductBooking, quoteTimedBooking } from '../../server/domain/product-bookings.ts'
 import publicBookingRoute from '../../server/api/public/products/[slug]/book.post.ts'
-import { paymentPayoutExport, payoutFilters, paymentPerformance, paymentTransactionDestination  } from '../../server/domain/payments/earnings.ts'
+import { paymentPayoutExport, payoutFilters, paymentPerformance, readStripePayouts, paymentTransactionDestination  } from '../../server/domain/payments/earnings.ts'
 import { projectStripeConnectedAccount, reserveStripeConnectedAccount, getStripeConnectedAccount } from '../../server/utils/stripe-connect.ts'
 import { H3Event } from 'h3'
 import { ingestStripeFeeReport, stripeFeeMinor, stripeFeeScaled } from '../../server/domain/payments/costs.ts'
@@ -459,6 +459,7 @@ test('MCP financial reads return bounded reports and authenticated detail links 
   assert.deepEqual({configured:usage.configured,pricing:usage.pricing,source:usage.source},{configured:false,pricing:null,source:'Stripe'})
   const originalFetch = globalThis.fetch
   const payoutReads:string[]=[]
+  let upcomingScenario = false
   const fetchMock = t.mock.method(globalThis,'fetch',async (request,init) => {
    const url = new URL(request instanceof Request?request.url:String(request))
    if(url.origin!=='https://api.stripe.com')return originalFetch(request,init)
@@ -466,6 +467,10 @@ test('MCP financial reads return bounded reports and authenticated detail links 
    assert.equal(new Headers(init?.headers).get('stripe-account'),'acct_seller')
    if(url.pathname==='/v1/balance')return Response.json({object:'balance',livemode:false,available:[{currency:'usd',amount:9000,source_types:{card:9000}}],pending:[],connect_reserved:[{currency:'usd',amount:500}],metadata:{private_bank_account:'private-bank-value'}})
    assert.equal(url.pathname,'/v1/payouts')
+   if (upcomingScenario) {
+    assert.equal(url.searchParams.has('status'), false)
+    return Response.json({ object: 'list', has_more: false, data: ['pending', 'in_transit', 'paid'].map((status, index) => ({ id: `po_status_${status}`, object: 'payout', livemode: false, amount: (index + 1) * 100, currency: 'usd', status, arrival_date: 1900000000, created: 1899990000 })) })
+   }
    if(url.searchParams.get('status')==='paid'){
     assert.equal(url.searchParams.get('arrival_date[gte]'),'1893456000')
     assert.equal(url.searchParams.get('arrival_date[lt]'),'1924992000')
@@ -494,6 +499,17 @@ test('MCP financial reads return bounded reports and authenticated detail links 
    assert.equal(csv.trim().split('\r\n').length,3)
    assert.match(csv,/"90.00","USD","paid","po_export_first"/)
    assert.match(csv,/"12345","JPY","paid","po_export_last"/)
+   upcomingScenario = true
+   const account = await getStripeConnectedAccount(db, ORG)
+   const upcomingFilter = payoutFilters({ status: 'upcoming' })
+   const upcoming = await readStripePayouts(env, ORG, account, undefined, upcomingFilter)
+   assert.deepEqual(upcoming.payouts.map(row => [row.id, row.status]), [['po_status_pending', 'pending'], ['po_status_in_transit', 'in_transit']])
+   const upcomingCsv = await paymentPayoutExport(env, principal, account, upcomingFilter)
+   assert.equal(upcomingCsv.trim().split('\r\n').length, 3)
+   assert.match(upcomingCsv, /"1.00","USD","pending","po_status_pending"/)
+   assert.match(upcomingCsv, /"2.00","USD","in_transit","po_status_in_transit"/)
+   assert.doesNotMatch(upcomingCsv, /po_status_paid/)
+
 
   } finally { fetchMock.mock.restore() }
   for(const value of [listed,detail,usage,payouts])assert.doesNotMatch(JSON.stringify(value),/private-|acct_seller|buyer_user_id|stripe_account_id|price_snapshot_json|idempotency_key|created_by|source_types|connect_reserved/u)

@@ -221,9 +221,10 @@ test('Today shows every booking type as one card for its own business, with the 
       const { title, cards } = await today(org, 'today')
       // The bistro's tables are not a menu: it still has its first dish to add.
       const dish = org === 'bistro' ? [['product.create:bistro', 'Add your first dish', 'Start your menu', '/dashboard/bistro/products/new?kind=dish']] : []
-      const photoProducts = org === 'law' ? [estate.product] : org === 'studio' ? [pottery.product] : org === 'inn' ? [home] : []
+      const photoProducts = org === 'studio' ? [pottery.product] : org === 'inn' ? [home] : []
       const photos = [
         [`business_location.photo:${org}-site`, `Add photos of “${org} office”`, 'Help people see what to expect', `/dashboard/${org}/locations/main/photos`],
+        ...(org === 'law' ? [[`product.description:${estate.product.id}`, `Describe “${estate.product.name}”`, 'Help people decide whether it’s right for them', `/dashboard/law/products/${estate.product.id}/description`]] : []),
         ...photoProducts.map(product => [`product.photo:${product.id}`, `Add photos of “${product.name}”`, 'Help people see what to expect', `/dashboard/${org}/products/${product.id}/photo`]),
       ]
       assert.deepEqual({ title, cards: cards.map(card => [card.id, card.headline, card.action.title, card.to]) },

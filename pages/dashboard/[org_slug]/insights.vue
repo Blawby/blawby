@@ -7,6 +7,8 @@
   -->
   <UDashboardPanel id="organization-insights" :ui="{ body: 'p-0 sm:p-0 gap-0' }">
     <template #body>
+      <InsightsOverview v-if="!current" />
+      <template v-else>
       <DefineList>
         <UAlert v-if="error" color="error" variant="soft" title="Insights could not be loaded" :description="getErrorMessage(error, 'Insights request failed')" />
         <nav v-else aria-label="Insights pages" class="space-y-3" data-testid="insights-pages">
@@ -29,13 +31,13 @@
           </div>
         </nav>
       </DefineList>
-      <div class="grid min-h-full md:grid-cols-[16rem_minmax(0,1fr)]">
-        <aside class="hidden border-e border-default px-3 py-6 md:block">
-          <h1 class="px-3 pb-4 text-2xl font-semibold text-highlighted">Insights</h1>
+      <div class="grid min-h-full" :class="sections.length ? 'md:grid-cols-[16rem_minmax(0,1fr)]' : undefined">
+        <aside v-if="sections.length" class="hidden border-e border-default px-3 py-6 md:block">
+          <NuxtLink :to="`/dashboard/${route.params.org_slug}/insights`" class="mb-4 block px-3 text-2xl font-semibold text-highlighted">Performance</NuxtLink>
           <ReuseList />
         </aside>
         <div class="min-w-0">
-          <NuxtPage />
+          <NuxtPage :document="document" :failure="error" />
         </div>
       </div>
       <USlideover v-model:open="listOpen" side="left" title="Insights" :ui="{ content: 'max-w-xs' }">
@@ -43,13 +45,15 @@
           <ReuseList />
         </template>
       </USlideover>
+      </template>
     </template>
   </UDashboardPanel>
 </template>
 
 <script setup lang="ts">
+import InsightsOverview from '~/components/dashboard/InsightsOverview.vue'
 import { createReusableTemplate } from '@vueuse/core'
-import { insightsIndexSchema, type InsightsIndex, type InsightsPageId } from '~/shared/insights'
+import { insightsPageSchema, type InsightsPage, type InsightsPageId } from '~/shared/insights'
 import { insightsListKey } from '~/composables/useInsightsRead'
 
 definePageMeta({ layout: 'dashboard', tab: 'menu', back: 'menu' })
@@ -58,27 +62,32 @@ const [DefineList, ReuseList] = createReusableTemplate()
 const route = useRoute()
 const dashboardApi = useDashboardApi()
 const recentOrRead = useInsightsRead()
-const isIndex = (value: unknown): value is InsightsIndex => insightsIndexSchema.safeParse(value).success
-
-const { data, error } = await useLazyAsyncData(
-  () => `insights-index:${String(route.params.org_slug)}`,
-  () => recentOrRead(`index:${String(route.params.org_slug)}`, () => dashboardApi<InsightsIndex>('/api/dashboard/insights', { validate: isIndex }), isIndex),
+const current = computed(() => route.params.section && route.params.page ? `${String(route.params.section)}/${String(route.params.page)}` : null)
+const queryText = (name: string) => typeof route.query[name] === 'string' && route.query[name] ? route.query[name] as string : undefined
+const filters = computed(() => ({ kind: queryText('kind'), location_id: queryText('location_id'), start_date: queryText('start_date'), end_date: queryText('end_date') }))
+const readKey = computed(() => `${String(route.params.org_slug)}:${current.value}:${JSON.stringify(filters.value)}`)
+const isPage = (value: unknown): value is InsightsPage => insightsPageSchema.safeParse(value).success
+const { data, error, status } = await useAsyncData(
+  () => `insights-detail:${readKey.value}`,
+  async () => {
+    const key = readKey.value
+    const page = await recentOrRead(key, () => dashboardApi<InsightsPage>(`/api/dashboard/insights/${current.value}`, { query: filters.value, validate: isPage }), isPage)
+    return { key, page }
+  },
+  { enabled: () => Boolean(current.value), watch: [current] },
 )
+const document = computed(() => status.value === 'success' && data.value?.key === readKey.value ? data.value.page : null)
 
 const listOpen = ref(false)
 provide(insightsListKey, () => { listOpen.value = true })
 
-const current = computed(() => route.params.section && route.params.page ? `${String(route.params.section)}/${String(route.params.page)}` : null)
-const sections = computed(() => data.value?.sections ?? [])
+
+const sections = computed(() => document.value?.index?.sections ?? [])
 
 /** A page keeps the date range; the offering chosen and the number shown belong to the page left. */
 function pageLink(id: InsightsPageId) {
   return { path: `/dashboard/${String(route.params.org_slug)}/insights/${id}`, query: { start_date: route.query.start_date, end_date: route.query.end_date } }
 }
-
-// Insights opens on its first page, as Airbnb's Performance does.
-if (!current.value) await navigateTo(pageLink('quality/overall-rating'), { replace: true })
-watch(current, (page) => { if (!page) void navigateTo(pageLink('quality/overall-rating'), { replace: true }) })
 
 useSeoMeta({ title: 'Insights', robots: 'noindex, nofollow' })
 </script>

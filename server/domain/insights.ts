@@ -88,16 +88,20 @@ export function prepareInsightsIndex(organization: InsightsScope = { sql: BATCH_
   return {
     queries: [businessQuery(organization)], read(reader: InsightsReader, results: D1Result[]): InsightsIndex {
       const { booked } = business(rowsOf(results[0])[0]!)
-      const pages = INSIGHTS_PAGES.filter(page => (reader.analytics || page.id === 'quality/overall-rating') && pageShown(page, booked))
-      return insightsIndexSchema.parse({
-        sections: [...new Set(pages.map(page => page.section))].map(section => ({
-          id: section,
-          title: sectionTitle(section, booked, 'all'),
-          pages: pages.filter(page => page.section === section).map(page => ({ id: page.id, title: pageTitle(page.id, covered(page, booked), 'all') })),
-        })),
-      })
+      return insightsIndex(reader, booked)
     }
   }
+}
+
+function insightsIndex(reader: InsightsReader, booked: InsightsKind[]): InsightsIndex {
+  const pages = INSIGHTS_PAGES.filter(page => (reader.analytics || page.id === 'quality/overall-rating') && pageShown(page, booked))
+  return insightsIndexSchema.parse({
+    sections: [...new Set(pages.map(page => page.section))].map(section => ({
+      id: section,
+      title: sectionTitle(section, booked, 'all'),
+      pages: pages.filter(page => page.section === section).map(page => ({ id: page.id, title: pageTitle(page.id, covered(page, booked), 'all') })),
+    })),
+  })
 }
 
 export async function readInsightsIndex(db: DbClient, reader: InsightsReader): Promise<InsightsIndex> {
@@ -181,10 +185,15 @@ export function prepareInsightsOverview(db: DbClient, requestedDays: string | un
       const quality = reads.find(result => result.definition.id === 'quality/overall-rating')!.read
       return insightsOverviewSchema.parse({
         presentation: dashboardPresentation,
+        index: insightsIndex(reader, current.booked),
         range: { start_date: range.startDate, end_date: range.endDate, label: `${formatCalendarDate(range.startDate, 'en', { month: 'short', day: 'numeric', year: 'numeric' })} – ${formatCalendarDate(range.endDate, 'en', { month: 'short', day: 'numeric', year: 'numeric' })}` },
         summary: [metric('rates/occupancy-rate', 'nights_booked'), metric('rates/bookings'), metric('rates/nightly-rate', 'income'), metric('rates/average-value', 'income'), metric('quality/overall-rating', 'five_star')].filter(Boolean),
         sections: ['quality', 'rates', 'conversion'].map(section => ({
           id: section, title: sectionTitle(section as InsightsPageDefinition['section'], current.booked, 'all'),
+          ...(section === 'quality' && quality.list?.kind === 'reviews' ? { rating_counts: [
+            { label: '5 stars', count: quality.list.reviews.filter(review => review.rating === 5).length },
+            { label: 'Below 5 stars', count: quality.list.reviews.filter(review => review.rating < 5).length },
+          ] } : {}),
           metrics: reads.filter(result => result.definition.section === section).flatMap(result => section === 'quality'
             ? result.read.metrics.map(value => metric(result.definition.id, value.key)!) : [metric(result.definition.id)!])
         })).filter(section => section.metrics.length),
@@ -364,6 +373,7 @@ function formatInsightsPage(context: PageContext, read: PageRead): InsightsPage 
   const show = (format: Format) => formatter(format, read.currency ?? null)
   const list = read.list
   return insightsPageSchema.parse({
+    index: definition.section === 'marketing' ? null : insightsIndex(context.reader, booked),
     title: pageTitle(definition.id, kinds, kind),
     subtitle: read.subtitle ?? null,
     note: hasMenu && (definition.section === 'rates' || definition.id === 'conversion/booking-conversion')
@@ -391,7 +401,7 @@ function formatInsightsPage(context: PageContext, read: PageRead): InsightsPage 
 /** A number's chart: five ticks from zero to a round top, the unit written on the bottom and top tick only, and each day as its bar reads. */
 function chart(metric: Metric, show: (value: number) => string) {
   const top = Math.max(0, ...metric.daily!.filter((value): value is number => value !== null))
-  const maximum = top <= 4 ? 4 : Math.ceil(top / 4) * 4
+  const maximum = metric.format === 'rating' ? 5 : top <= 4 ? 4 : Math.ceil(top / 4) * 4
   const label = metric.label.toLowerCase()
   const bare = metric.format === 'nights' || metric.format === 'days' ? count : show
   return {
@@ -584,11 +594,11 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => PageRea
       queries,
       read(results: Row[][]): PageRead {
         const [homes, held, closed] = results
-        // A home's night is open from the day it was listed, unless the calendar closed it.
+        // A recorded stay establishes availability even when imported before the home was created here.
         const booked = new Set(held!.map(row => `${row.product_id} ${row.date}`))
         const blocked = new Set(closed!.map(row => `${row.product_id} ${row.date}`).filter(key => !booked.has(key)))
         const nights = homes!.flatMap(row => context.dates
-          .filter(date => date >= localDateAt(new Date(String(row.created_at)), context.reader.timezone))
+          .filter(date => booked.has(`${row.id} ${date}`) || date >= localDateAt(new Date(String(row.created_at)), context.reader.timezone))
           .map(date => ({ product_id: String(row.id), product_name: String(row.name), date, key: `${row.id} ${date}` })))
         const open = nights.filter(night => !blocked.has(night.key))
         const day = days(context.dates)
@@ -734,6 +744,9 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => PageRea
     const prepared = bookingsWithIncome(context);
     return {
       queries: prepared.queries, read(results: Row[][]): PageRead {
+        const booking = singular(pageTitle('rates/bookings', context.business.booked, context.kind))
+        const averageLabel = `Average ${booking.toLowerCase()} value`
+        const incomeLabel = `${booking} income`
         const { bookings } = prepared.read(results)
         const received = (row: typeof bookings[number]) => (row.online_amount ?? 0) + (row.offline_amount ?? 0)
         const income = (group: typeof bookings) => group.reduce((sum, row) => sum + received(row), 0)
@@ -742,11 +755,11 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => PageRea
         return {
           currency: insightsCurrency(bookings.flatMap(row => row.currencies), context.reader.defaultCurrency),
           metrics: [
-            { key: 'average_value', label: 'Average booking value', format: 'money', value: value(bookings), daily: day.each(bookings, startDay, value) },
-            { key: 'income', label: 'Booking income', format: 'money', value: income(bookings), daily: day.each(bookings, startDay, income) },
+            { key: 'average_value', label: averageLabel, format: 'money', value: value(bookings), daily: day.each(bookings, startDay, value) },
+            { key: 'income', label: incomeLabel, format: 'money', value: income(bookings), daily: day.each(bookings, startDay, income) },
           ],
           list: {
-            kind: 'rows', heading: offeringsWord(context.business.booked, context.kind), columns: [{ label: 'Average booking value', format: 'money' }, { label: 'Booking income', format: 'money' }],
+            kind: 'rows', heading: offeringsWord(context.business.booked, context.kind), columns: [{ label: averageLabel, format: 'money' }, { label: incomeLabel, format: 'money' }],
             rows: byOffering(bookings, group => [value(group), income(group)])
           },
         }
@@ -833,9 +846,9 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => PageRea
         const offering = singular(offeringsWord(context.business.booked, context.kind))
         return {
           metrics: [
-            { key: 'conversion', label: 'Booking conversion', format: 'percent', value: percent(sum(all, 'bookings'), sum(all, 'views')), daily: day.each(all, row => row.date, group => percent(sum(group, 'bookings'), sum(group, 'views'))) },
+            { key: 'conversion', label: pageTitle('conversion/booking-conversion', context.business.booked, context.kind), format: 'percent', value: percent(sum(all, 'bookings'), sum(all, 'views')), daily: day.each(all, row => row.date, group => percent(sum(group, 'bookings'), sum(group, 'views'))) },
             { key: 'views', label: `${offering} page views`, format: 'count', value: sum(all, 'views'), daily: day.sum(all, row => row.date, row => row.views) },
-            { key: 'bookings', label: 'Bookings', format: 'count', value: sum(all, 'bookings'), daily: day.sum(all, row => row.date, row => row.bookings) },
+            { key: 'bookings', label: pageTitle('rates/bookings', context.business.booked, context.kind), format: 'count', value: sum(all, 'bookings'), daily: day.sum(all, row => row.date, row => row.bookings) },
             ...clicks.map((click): Metric => {
               const keys = click.events.map(clickKey)
               const daily = day.sum(clicked!.filter(row => keys.includes(String(row.key))), row => String(row.date), row => num(row.clicks))
@@ -843,7 +856,7 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => PageRea
             }),
           ],
           list: {
-            kind: 'rows', heading: offeringsWord(context.business.booked, context.kind), columns: [{ label: 'Booking conversion', format: 'percent' }, { label: 'Page views', format: 'count' }, { label: 'Bookings', format: 'count' }],
+            kind: 'rows', heading: offeringsWord(context.business.booked, context.kind), columns: [{ label: pageTitle('conversion/booking-conversion', context.business.booked, context.kind), format: 'percent' }, { label: 'Page views', format: 'count' }, { label: pageTitle('rates/bookings', context.business.booked, context.kind), format: 'count' }],
             rows: byOffering(all, group => [percent(sum(group, 'bookings'), sum(group, 'views')), sum(group, 'views'), sum(group, 'bookings')])
           },
         }

@@ -8,28 +8,26 @@
     -->
     <UAlert v-if="cardsError" color="error" variant="soft" :title="cardsError" data-testid="dashboard-menu-error" />
 
-    <div v-if="cards.length" class="grid grid-cols-2 gap-4">
-      <UCard
+    <div v-if="cards.length" class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,160px),1fr))] gap-3">
+      <DashboardSurface
         v-for="card in cards"
         :key="card.testId"
-        :as="NuxtLink"
-        prefetch-on="interaction"
-        :to="card.to"
-        variant="subtle"
-        class="flex aspect-square flex-col transition-colors hover:bg-elevated"
-        :ui="{ body: 'flex flex-1 flex-col' }"
+        as="div"
+        :presentation="menu?.presentation ?? dashboardPresentation"
+        class="relative flex min-h-46 min-w-0 flex-col gap-1"
         :data-testid="card.testId"
       >
-        <p class="text-base font-semibold text-highlighted">{{ card.label }}</p>
+        <NuxtLink :to="card.to" prefetch-on="interaction" class="font-semibold after:absolute after:inset-0 after:rounded-2xl">{{ card.label }}</NuxtLink>
         <p class="mt-1 text-sm text-muted">{{ card.subline }}</p>
-        <p v-if="card.figure" class="mt-auto text-4xl font-semibold tracking-tight text-highlighted">{{ card.figure }}</p>
+        <p v-if="card.figure" class="mt-auto break-words text-[clamp(1.25rem,5vw,2rem)] font-semibold tracking-tight text-highlighted">{{ card.figure }}</p>
         <!-- Airbnb stacks the listings' photos in the card's corner; the organization's places, or the account's past visits. -->
-        <span v-else-if="card.photos.length" class="mt-auto flex items-center">
+        <span v-if="card.photos.length" class="mt-auto flex items-center">
           <img v-for="(photo, index) in card.photos.slice(0, 3)" :key="photo" :src="photo" alt="" class="size-12 rounded-xl border-2 border-elevated object-cover" :class="index ? '-ml-3' : ''">
           <span v-if="card.photos.length > 3" class="-ml-3 flex size-12 items-center justify-center rounded-xl border-2 border-elevated bg-default text-sm font-semibold text-highlighted">+{{ card.photos.length - 3 }}</span>
         </span>
-        <UIcon v-else :name="card.icon" class="mt-auto size-7 text-muted" />
-      </UCard>
+        <div v-else-if="card.bars.length" class="mt-auto flex h-10 items-end gap-1" aria-hidden="true"><span v-for="(amount, index) in card.bars" :key="index" class="min-w-0 flex-1 rounded-t-sm" :style="{ height: `${Math.max(1, amount / Math.max(1, ...card.bars) * 100)}%`, background: menu?.presentation.light.accent }" /></div>
+        <UIcon v-else-if="!card.figure" :name="card.icon" class="mt-auto size-7 text-muted" />
+      </DashboardSurface>
     </div>
 
     <!-- Airbnb's "Create a new listing": the first thing the plan lacks, offered once, to someone who can take it. -->
@@ -65,14 +63,13 @@
 </template>
 
 <script setup lang="ts">
-import { NuxtLink } from '#components'
+import DashboardSurface from '~/components/dashboard/DashboardSurface.vue'
+import { dashboardPresentation } from '~/shared/dashboard-presentation'
+import { dashboardMenuSchema, type DashboardMenu } from '~/shared/dashboard-menu'
 import EditorNavigationList from '~/components/dashboard/EditorNavigationList.vue'
 import OfferCard from '~/components/dashboard/OfferCard.vue'
 import { planOffers } from '~/shared/offers'
 import { dashboardFetch } from '~/composables/dashboardFetch'
-import type { DashboardLocation } from '~/composables/useDashboardOrganization'
-import { earningsFigure, isEarningsSummary, type EarningsSummary } from '~/shared/earnings-display'
-import { formatCalendarDate } from '~/utils/timezone'
 import { isAccountActivityResponse, type AccountActivityResponse } from '~/shared/account-activity'
 import { readActiveWebsiteDraft } from '~/composables/useOnboardingDraft'
 
@@ -86,46 +83,18 @@ const offer = computed(() => dashboard.organization.value && dashboard.canUpdate
 // The shell's organization, whichever route it is drawn on — Account settings included.
 const orgBase = computed(() => organization.value ? `/dashboard/${encodeURIComponent(organization.value.slug)}` : null)
 const inOrganization = computed(() => Boolean(orgBase.value))
-const monthLabel = formatCalendarDate(new Date().toISOString().slice(0, 10), 'en', { month: 'long', year: 'numeric' })
 const setup = useAsyncData('personal-menu-website-setup', readActiveWebsiteDraft, { enabled: personal })
 const resumeAction = computed(() => setup.data.value?.resume_action)
 const organizationSettings = useOrganizationSettingsNavigation(organization, scopeModel, resumeAction)
 const { groups, activeItem } = organizationSettings
 await Promise.all([organizationSettings.ready, setup])
-// Only the actual Menu loads Earnings. Search reuses its navigation and
-// permission checks without reading the payments summary.
-const { data: earnings, error: earningsError } = await useAsyncData(
-  () => `menu-earnings:${organizationSettings.permissions.value?.userId ?? ''}:${organization.value?.id ?? ''}`,
-  async (_app, { signal }) => {
-    const target = organization.value
-    const permissions = organizationSettings.permissions.value
-    if (!target || !permissions?.payments) return null
-    const now = new Date()
-    const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString()
-    const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString()
-    return {
-      ...await dashboardFetch<EarningsSummary>('/api/dashboard/payments', { orgSlug: target.slug }, { query: { from, to }, signal, validate: isEarningsSummary }),
-      organizationId: target.id,
-      userId: permissions.userId,
-    }
-  },
-  { watch: [organizationSettings.permissions] },
-)
-const currentEarnings = computed(() => {
-  const loaded = earnings.value
-  const permissions = organizationSettings.permissions.value
-  return permissions?.payments && loaded?.organizationId === permissions.organizationId && loaded?.userId === permissions.userId ? loaded : null
-})
-// The pictures in the cards' corners: the organization's places, or the visits the account has made.
-type LocationPhotos = { success: true; locations: DashboardLocation[] }
-const isLocationPhotos = (value: unknown): value is LocationPhotos => isRecord(value) && value.success === true && Array.isArray(value.locations) && value.locations.every(row => isRecord(row) && typeof row.id === 'string' && (row.picture_url === null || typeof row.picture_url === 'string'))
-const { data: places, error: placesError } = await useAsyncData(
-  () => `menu-places:${orgBase.value}`,
+// Menu cards, ratings and chart context arrive in one authorized D1 batch.
+const { data: menu, error: menuError, status: menuStatus } = await useAsyncData(
+  () => `dashboard-menu:${organization.value?.id ?? ''}`,
   async (_app, { signal }) => {
     const target = organization.value
     if (!target) return null
-    const response = await dashboardFetch<LocationPhotos>('/api/dashboard/locations', { orgSlug: target.slug }, { query: { organization: 'true' }, signal, validate: isLocationPhotos })
-    return { ...response, organizationId: target.id }
+    return { ...await dashboardFetch<DashboardMenu>('/api/dashboard/menu', { orgSlug: target.slug }, { signal, validate: (value): value is DashboardMenu => dashboardMenuSchema.safeParse(value).success }), organizationId: target.id }
   },
 )
 const { data: activity, error: activityError } = await useAsyncData(
@@ -134,21 +103,17 @@ const { data: activity, error: activityError } = await useAsyncData(
 )
 // A card whose figure or photos could not be read says so, never an empty card standing in for one.
 const cardsError = computed(() => {
-  const error = organizationSettings.error.value ?? setup.error.value ?? earningsError.value ?? placesError.value ?? activityError.value
+  const error = organizationSettings.error.value ?? setup.error.value ?? menuError.value ?? activityError.value
   return error ? getErrorMessage(error, 'The Menu could not be loaded.') : null
 })
-const placePhotos = computed(() => places.value?.organizationId === organization.value?.id ? places.value?.locations.map(row => row.picture_url).filter((url): url is string => !!url) ?? [] : [])
 const visitPhotos = computed(() => (activity.value?.activities ?? []).filter(item => item.image_url && (item.status === 'cancelled' || (item.ends_at && Date.parse(item.ends_at) < Date.now()) || item.kind === 'payment')).map(item => item.image_url as string))
 const cards = computed(() => personal.value
   ? [
-      { to: '/dashboard/account/activity', label: 'Past activity', subline: 'Visits and purchases', icon: 'i-lucide-history', figure: '', photos: visitPhotos.value, testId: 'dashboard-menu-past-activity' },
-      { to: '/dashboard/account/profile/payments', label: 'Payments', subline: 'Payments and refunds', icon: 'i-lucide-credit-card', figure: '', photos: [] as string[], testId: 'dashboard-menu-payments' },
+      { to: '/dashboard/account/activity', label: 'Past activity', subline: 'Visits and purchases', icon: 'i-lucide-history', figure: '', photos: visitPhotos.value, bars: [] as number[], testId: 'dashboard-menu-past-activity' },
+      { to: '/dashboard/account/profile/payments', label: 'Payments', subline: 'Payments and refunds', icon: 'i-lucide-credit-card', figure: '', photos: [] as string[], bars: [] as number[], testId: 'dashboard-menu-payments' },
     ]
   : inOrganization.value
-    ? [
-        ...(currentEarnings.value ? [{ to: `${orgBase.value}/earnings`, label: 'Earnings', subline: monthLabel, icon: 'i-lucide-banknote', figure: earningsFigure(currentEarnings.value), photos: [] as string[], testId: 'dashboard-menu-earnings' }] : []),
-        { to: `${orgBase.value}/insights`, label: 'Insights', subline: 'Ratings, bookings and views', icon: 'i-lucide-chart-no-axes-column', figure: '', photos: placePhotos.value, testId: 'dashboard-menu-insights' },
-      ]
+    ? (menuStatus.value === 'success' && menu.value && menu.value.organizationId === organization.value?.id ? menu.value.cards : []).map(card => ({ to: `${orgBase.value}/${card.id}`, label: card.title, subline: card.detail, icon: card.id === 'earnings' ? 'i-lucide-chart-no-axes-column' : 'i-lucide-star', figure: card.value, photos: card.photos, bars: card.bars, testId: `dashboard-menu-${card.id}` }))
     : [])
 
 // Airbnb's "Switch to hosting" / "Switch to travelling" is a row above Log out, not a picker.

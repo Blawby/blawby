@@ -108,6 +108,10 @@ leave old and new paths operating in parallel.
 Prefer fewer concepts, fewer names, fewer state representations, and fewer
 execution paths.
 
+Speed is essential. Read a screen’s D1 data in one batch and one round trip,
+including its summary cards and supporting context. Reuse query plans and
+decoders; do not fan out into one D1 read per card or metric.
+
 An issue, plan or change that adds a table, column, event family, versioned
 contract, reconciliation or backfill job, or release gate must state the
 user-visible defect it fixes and the existing mechanism it checked first — a

@@ -21,6 +21,7 @@ export function earningsFigure(summary:EarningsSummary):string {
 
 /** What `view=performance` answers: the year by month and one month by what was sold. */
 export interface EarningsPerformance {
+ comparison?:{year:number;currency:string;months:Array<{month:string;paid:number;refunded:number}>}
  currency:string
  payouts_connected?:boolean|null
  channel_reservations:Array<{channel:string;currency:string;amount:number;count:number}>
@@ -28,23 +29,28 @@ export interface EarningsPerformance {
  items:Array<{title:string;image_url:string|null;paid:number;count:number}>
 }
 const record=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)
+const earningsMonths=(value:unknown):value is EarningsPerformance['months']=>Array.isArray(value)&&value.length===12&&value.every(row=>record(row)&&typeof row.month==='string'&&/^\d{4}-(0[1-9]|1[0-2])$/.test(row.month)&&Number.isSafeInteger(row.paid)&&Number.isSafeInteger(row.refunded))
 export function isEarningsPerformance(value:unknown):value is EarningsPerformance {
  return record(value)&&isCurrencyCode(value.currency)
   &&(value.payouts_connected==null||typeof value.payouts_connected==='boolean')
   &&Array.isArray(value.channel_reservations)&&value.channel_reservations.every(row=>record(row)&&['airbnb','booking_com','vrbo'].includes(String(row.channel))&&isCurrencyCode(row.currency)&&Number.isSafeInteger(row.amount)&&Number(row.amount)>=0&&Number.isSafeInteger(row.count)&&Number(row.count)>0)
-  &&Array.isArray(value.months)&&value.months.length===12&&value.months.every(row=>record(row)&&typeof row.month==='string'&&/^\d{4}-\d{2}$/.test(row.month)&&Number.isSafeInteger(row.paid)&&Number.isSafeInteger(row.refunded))
+  &&earningsMonths(value.months)
+  &&(value.comparison===undefined||(record(value.comparison)&&Number.isSafeInteger(value.comparison.year)&&isCurrencyCode(value.comparison.currency)&&earningsMonths(value.comparison.months)))
   &&Array.isArray(value.items)&&value.items.every(row=>record(row)&&typeof row.title==='string'&&(row.image_url===null||typeof row.image_url==='string')&&Number.isSafeInteger(row.paid)&&Number.isSafeInteger(row.count))
 }
 
+export interface EarningsOverview { month:string; performance:EarningsPerformance; payouts:PayoutsView|null }
+
 /** One payment a payout carried, or one line of the transactions list. */
-export interface PayoutItem { payment_id:string; title:string; image_url:string|null; amount:number; currency:string; starts_at:string|null; ends_at:string|null; timezone:string|null; name:string|null }
+export interface PayoutItem { gross_amount:number; fee_amount:number; buyer_name:string|null; payment_id:string; title:string; image_url:string|null; amount:number; currency:string; starts_at:string|null; ends_at:string|null; timezone:string|null; name:string|null }
 export function isPayoutItem(value:unknown):value is PayoutItem {
  return record(value)&&typeof value.payment_id==='string'&&typeof value.title==='string'&&(value.image_url===null||typeof value.image_url==='string')&&Number.isSafeInteger(value.amount)&&isCurrencyCode(value.currency)
-  &&[value.starts_at,value.ends_at,value.timezone,value.name].every(field=>field===null||typeof field==='string')
+  &&Number.isSafeInteger(value.gross_amount)&&Number.isSafeInteger(value.fee_amount)&&Number(value.gross_amount)-Number(value.fee_amount)===value.amount
+  &&[value.starts_at,value.ends_at,value.timezone,value.name,value.buyer_name].every(field=>field===null||typeof field==='string')
 }
-export interface PayoutDetail { id:string; amount:number; currency:string; status:string; arrival_date:number; bank:{bank_name:string|null;last4:string}|null; items:PayoutItem[]; failure_code:string|null; failure_message:string|null }
+export interface PayoutDetail { created:number; id:string; amount:number; currency:string; status:string; arrival_date:number; bank:{bank_name:string|null;last4:string}|null; items:PayoutItem[]; failure_code:string|null; failure_message:string|null }
 export function isPayoutDetail(value:unknown):value is PayoutDetail {
- return record(value)&&typeof value.id==='string'&&Number.isSafeInteger(value.amount)&&isCurrencyCode(value.currency)&&typeof value.status==='string'&&Number.isSafeInteger(value.arrival_date)
+ return record(value)&&typeof value.id==='string'&&Number.isSafeInteger(value.amount)&&isCurrencyCode(value.currency)&&typeof value.status==='string'&&Number.isSafeInteger(value.arrival_date)&&Number.isSafeInteger(value.created)
   &&(value.bank===null||(record(value.bank)&&(value.bank.bank_name===null||typeof value.bank.bank_name==='string')&&typeof value.bank.last4==='string'))
   &&Array.isArray(value.items)&&value.items.every(isPayoutItem)
   &&(value.failure_code===null||typeof value.failure_code==='string')
@@ -52,13 +58,12 @@ export function isPayoutDetail(value:unknown):value is PayoutDetail {
 }
 /** Stripe's payout list rows, as the Earnings and Paid screens read them. */
 export interface PayoutRow { id:string; amount:number; currency:string; status:string; arrival_date:number }
-export interface PayoutsView { configured:boolean; balance?:{available:Array<{amount:number;currency:string}>;pending:Array<{amount:number;currency:string}>}; payouts:PayoutRow[]; next_cursor:string|null; items?:Record<string,PayoutItem[]> }
+export interface PayoutsView { configured:boolean; balance?:{available:Array<{amount:number;currency:string}>;pending:Array<{amount:number;currency:string}>}|null; payouts:PayoutRow[]; next_cursor:string|null }
 const moneyRow=(value:unknown)=>record(value)&&Number.isSafeInteger(value.amount)&&typeof value.currency==='string'&&isCurrencyCode(value.currency.toUpperCase())
 export function isPayoutsView(value:unknown):value is PayoutsView {
  return record(value)&&typeof value.configured==='boolean'&&Array.isArray(value.payouts)&&(value.next_cursor===null||(typeof value.next_cursor==='string'&&!!value.next_cursor))
   &&(value.configured===false||(record(value.balance)&&Array.isArray(value.balance.available)&&value.balance.available.every(moneyRow)&&Array.isArray(value.balance.pending)&&value.balance.pending.every(moneyRow)
    &&value.payouts.every(row=>moneyRow(row)&&typeof row.id==='string'&&['pending','in_transit','paid','failed','canceled'].includes(String(row.status))&&Number.isSafeInteger(row.arrival_date))))
-  &&(value.items===undefined||(record(value.items)&&Object.values(value.items).every(list=>Array.isArray(list)&&list.every(isPayoutItem))))
 }
 export function payoutStatusLabel(status:string):string {
  return status==='paid'?'Sent':status==='failed'?'Failed':status==='canceled'?'Cancelled':status==='in_transit'?'On its way':'Expected'

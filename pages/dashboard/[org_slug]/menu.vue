@@ -13,7 +13,7 @@
     Airbnb's does too.
   -->
   <!-- A menu is a column, not the page: alone on a wide screen it keeps a phone's measure. -->
-  <DashboardIndexPanel id="organization-settings" title="Menu" column="leaf">
+  <DashboardIndexPanel id="organization-settings" title="Menu" column="leaf" class="dashboard-themed" :style="dashboardThemeStyle(dashboardPresentation)">
     <template #right>
       <UButton
         icon="i-lucide-search"
@@ -30,6 +30,7 @@
 </template>
 
 <script setup lang="ts">
+import { dashboardPresentation, dashboardThemeStyle } from '~/shared/dashboard-presentation'
 import DashboardMenuContent from '~/lib/components/workspace/dashboard/DashboardMenuContent.vue'
 import { dashboardSearchOpenKey } from '~/lib/components/workspace/dashboard/dashboardPanelContext'
 

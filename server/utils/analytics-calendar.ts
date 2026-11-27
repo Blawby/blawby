@@ -21,7 +21,7 @@ export function parseAnalyticsRange(input: {
   endDate?: string
   timeZone: string
   now: Date
-}): { startDate: string; endDate: string; dates: string[]; previousStartDate: string; previousEndDate: string } {
+}, maximumDays = 365): { startDate: string; endDate: string; dates: string[]; previousStartDate: string; previousEndDate: string } {
   const today = localDateAt(input.now, input.timeZone)
   const endDate = input.endDate ?? today
   if (!isValidCalendarDate(endDate)) {
@@ -32,8 +32,9 @@ export function parseAnalyticsRange(input: {
     throw new HTTPError({ statusCode: 400, statusMessage: 'startDate must be a valid YYYY-MM-DD date' })
   }
   if (startDate > endDate) throw new HTTPError({ statusCode: 400, statusMessage: 'startDate must not be after endDate' })
+  const length = (Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000 + 1
+  if (length > maximumDays) throw new HTTPError({ statusCode: 400, statusMessage: 'Date range exceeds the 365-day maximum' })
   const dates = enumerateLocalDates(startDate, endDate)
-  if (dates.length > 365) throw new HTTPError({ statusCode: 400, statusMessage: 'Date range exceeds the 365-day maximum' })
   return {
     startDate,
     endDate,

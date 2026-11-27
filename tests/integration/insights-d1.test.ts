@@ -10,7 +10,7 @@ import { executeGuestThreadOperation } from '../../server/domain/guest-threads/o
 import { listBookableSessions } from '../../server/utils/availability.ts'
 import { createStay, setStayNights } from '../../server/domain/stays.ts'
 import { createProduct } from '../../server/utils/product-management.ts'
-import { readInsightsIndex, readInsightsPage, type InsightsReader } from '../../server/domain/insights.ts'
+import { readInsightsIndex, readInsightsPage, readInsightsOverview, type InsightsReader } from '../../server/domain/insights.ts'
 import { handleAnalyticsTools } from '../../server/utils/mcp-tools/analytics.ts'
 import { addLocalDays, localDateAt, localDateTimeToInstant } from '../../utils/timezone.ts'
 import { createTables } from './support/table-product.ts'
@@ -108,6 +108,21 @@ test('Insights reads a restaurant from visit to payment: sources, bookings, valu
       ['Bookings & rates', ['Reservations', 'Cancellation rate', 'Party size', 'Average value', 'Income by channel']],
       ['Conversion', ['Booking conversion', 'Booking lead time', 'Returning diners', 'Page views', 'Top pages', 'Sources']], ['Marketing', ['Instagram', 'Google Ads']]])
 
+    for (const length of ['7', '30', '365']) {
+      const overview = await readInsightsOverview(db as never, reader, length, true)
+      assert.deepEqual(overview.sections.map(section => section.title), ['Quality', 'Bookings & rates', 'Conversion'])
+      assert.equal(overview.sections[1]!.metrics[0]!.label, 'Reservations')
+      assert.equal(overview.sections[2]!.metrics.at(-1)!.label, 'Returning diners')
+      for (const metric of [...overview.summary, ...overview.sections.flatMap(section => section.metrics)]) {
+        const detail = await readInsightsPage(db as never, reader, metric.page, overview.range, env)
+        assert.equal(metric.display, detail.metrics.find(value => value.key === metric.key)!.display)
+      }
+    }
+    const staffOverview = await readInsightsOverview(db as never, { ...reader, analytics: false }, '7', false)
+    assert.deepEqual(staffOverview.sections.map(section => section.id), ['quality'])
+    assert.deepEqual(staffOverview.opportunities, [])
+    await assert.rejects(readInsightsOverview(db as never, reader, '8', false), (error: { statusCode?: number }) => error.statusCode === 400)
+
     const bookings = await read('rates/bookings')
     assert.equal(bookings.title, 'Reservations')
     assert.deepEqual(metrics(bookings), { confirmed: '2', requested: '3', confirmed_share: '66.7%' })
@@ -203,6 +218,13 @@ test('Insights reads a home: occupancy, length of stay and nightly rate, and who
 
     const reader: InsightsReader = { organizationId: 'org-stays', slug: 'retreat', timezone: TZ, defaultCurrency: 'USD', userId: 'stays-owner', analytics: true }
     const read = (page: string) => readInsightsPage(db as never, reader, page, { start_date: today, end_date: addLocalDays(today, 19) }, env)
+    const overview = await readInsightsOverview(db as never, reader, '30', true)
+    assert.equal(overview.sections[1]!.title, 'Occupancy & rates')
+    assert.deepEqual(overview.sections[1]!.metrics.map(metric => metric.page), ['rates/occupancy-rate', 'rates/cancellation-rate', 'rates/length-of-stay', 'rates/nightly-rate'])
+    for (const metric of overview.summary) {
+      const detail = await readInsightsPage(db as never, reader, metric.page, overview.range, env)
+      assert.equal(metric.display, detail.metrics.find(value => value.key === metric.key)!.display)
+    }
     const occupancy = await read('rates/occupancy-rate')
     assert.equal((await readInsightsIndex(db as never, reader)).sections[1]!.title, 'Occupancy & rates')
     // 20 nights, 2 closed: 5 of 18 open nights booked.

@@ -151,6 +151,17 @@ export const insightsIndexSchema = z.object({
 })
 export type InsightsIndex = z.infer<typeof insightsIndexSchema>
 
+const overviewMetric = z.object({ page: z.string(), key: z.string(), label: text, display: text })
+/** Performance's overview uses the same reads and words as its metric pages. */
+export const insightsOverviewSchema = z.object({
+  range: z.object({ start_date: date, end_date: date, label: text }),
+  summary: z.array(overviewMetric),
+  sections: z.array(z.object({ id: text, title: text, metrics: z.array(overviewMetric) })),
+  recent_issues: z.array(z.object({ id: text, author: text, line: text, rating: z.number(), content: text.nullable() })),
+  opportunities: z.array(z.object({ id: text, title: text, detail: text, path: text })),
+})
+export type InsightsOverview = z.infer<typeof insightsOverviewSchema>
+
 const option = z.object({ value: z.string(), label: text })
 
 /**

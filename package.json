@@ -25,7 +25,7 @@
     "contracts:write": "CONTRACTS_WRITE=1 yarn contracts",
     "test:unit": "node --experimental-strip-types --import ./tests/unit/support/register-aliases.mjs --test tests/unit/**/*.test.ts",
     "test:unit:file": "node --experimental-strip-types --import ./tests/unit/support/register-aliases.mjs --test",
-    "test:d1": "node --experimental-strip-types --import ./tests/unit/support/register-aliases.mjs --test tests/integration/*-d1.test.ts",
+    "test:d1": "node --experimental-strip-types --import ./tests/unit/support/register-aliases.mjs --test --test-concurrency=1 tests/integration/*-d1.test.ts",
     "test:migrations": "node --experimental-strip-types --test tests/integration/database-baseline.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:local": "playwright test",

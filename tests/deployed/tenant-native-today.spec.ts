@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { z } from 'zod'
+import { insightsIndexSchema, insightsOverviewSchema, insightsPageSchema } from '../../shared/insights'
+import { isEarningsPerformance } from '../../shared/earnings-display'
 import { isThreadListResponse } from '../../lib/components/workspace/messages/guest-thread-client'
 
 const text = z.string()
@@ -119,4 +121,48 @@ test('native Today and Upcoming support the shipped and candidate iOS builds', a
       expect.soft(invalidFields, `iOS build ${build} cannot decode ${range}`).toEqual([])
     }
   }))
+})
+
+
+test('native Performance and Earnings preserve their metric values in one D1 round trip', async ({ baseURL }) => {
+  test.setTimeout(90_000)
+  if (!baseURL) throw new Error('Set PLAYWRIGHT_PREVIEW_URL for the deployed environment')
+  const origin = new URL(baseURL).origin
+  const email = process.env.CANARY_LOGIN_EMAIL, password = process.env.CANARY_LOGIN_PASSWORD
+  if (!email || !password) throw new Error('Configure the deployed canary login')
+  const signIn = await fetch(new URL('/api/auth/sign-in/email', origin), {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
+    body: JSON.stringify({ email, password, rememberMe: false }), redirect: 'error', signal: AbortSignal.timeout(12_000),
+  })
+  expect(signIn.status).toBe(200)
+  const token = signIn.headers.get('set-auth-token')
+  if (!token) throw new Error('Better Auth did not issue a native bearer token')
+  const read = async (path: string, query: Record<string, string> = {}) => {
+    const url = new URL(path, origin)
+    url.search = new URLSearchParams({ org: 'saltleaf-stays-demo', ...query }).toString()
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(12_000) })
+    expect(response.status, path).toBe(200)
+    expect(response.headers.get('x-d1-round-trip-count'), path).toBe('1')
+    return response.json() as Promise<unknown>
+  }
+  const index = insightsIndexSchema.parse(await read('/api/dashboard/insights'))
+  const overview = insightsOverviewSchema.parse(await read('/api/dashboard/insights/overview', { days: '30' }))
+  expect(overview.sections.map(section => section.id)).toEqual(expect.arrayContaining(['quality', 'rates', 'conversion']))
+  const available = new Set<string>(index.sections.flatMap(section => section.pages.map(page => page.id)))
+  for (const pageId of new Set(overview.sections.flatMap(section => section.metrics.map(metric => metric.page)))) {
+    expect(available.has(pageId), pageId).toBe(true)
+    const detail = insightsPageSchema.parse(await read(`/api/dashboard/insights/${pageId}`, { start_date: overview.range.start_date, end_date: overview.range.end_date }))
+    for (const metric of [...overview.summary, ...overview.sections.flatMap(section => section.metrics)].filter(metric => metric.page === pageId)) {
+      expect(detail.metrics.find(value => value.key === metric.key)?.display, `${pageId}/${metric.key}`).toBe(metric.display)
+    }
+  }
+  const month = new Date().toISOString().slice(0, 7)
+  const landing = await read('/api/dashboard/payments', { view: 'overview', year: month.slice(0, 4), month }) as { month: string; performance: unknown; payouts: unknown }
+  expect(landing.month).toBe(month)
+  expect(isEarningsPerformance(landing.performance)).toBe(true)
+  const earnings = await read('/api/dashboard/payments', { view: 'performance', year: month.slice(0, 4), month, comparison: 'previous_year' })
+  expect(isEarningsPerformance(earnings)).toBe(true)
+  if (!isEarningsPerformance(earnings)) throw new Error('Invalid earnings response')
+  expect(earnings.comparison?.year).toBe(Number(month.slice(0, 4)) - 1)
+  expect(earnings.comparison?.months).toHaveLength(12)
 })

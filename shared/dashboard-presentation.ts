@@ -14,3 +14,9 @@ export const dashboardPresentation = dashboardPresentationSchema.parse({
   dark: { background: '#161616', card: '#222222', text: '#F7F7F7', secondary: '#B0B0B0', border: '#404040', accent: '#FF5A96' },
 })
 export type DashboardPresentation = z.infer<typeof dashboardPresentationSchema>
+
+/** A dense operational grid: header controls share one toolbar above pinned dates. */
+export const calendarPresentation = {
+  title: 'All homes', settings_label: 'Calendar settings', row_height: 48, home_column_width: 172,
+  day_column_width: 64, day_header_height: 40, filter_control_height: 44, theme: dashboardPresentation,
+}

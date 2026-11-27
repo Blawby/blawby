@@ -528,10 +528,14 @@ function prepareStayHomesRead(organizationId: string | { sql: string }, productI
   } }
 }
 
-export function prepareStayHomeDocument(productId: string) {
+export function prepareStayHomesDocument(productId: string | null) {
   const scope = { sql: `(${roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ operations: ['update'] }))}
     OR ${stayHomeMemberScope('c', BATCH_VIEWER.member, BATCH_VIEWER.role!)})`, params: [] }
-  const plan = prepareStayHomesRead({ sql: BATCH_VIEWER.organization }, productId, scope)
+  return prepareStayHomesRead({ sql: BATCH_VIEWER.organization }, productId, scope)
+}
+
+export function prepareStayHomeDocument(productId: string) {
+  const plan = prepareStayHomesDocument(productId)
   return { queries: plan.queries, read(rows: D1Result[]) {
     const [home] = plan.read(rows)
     if (!home) fail(404, 'HOME_NOT_FOUND', 'That place to stay is not in this organization')
@@ -1389,7 +1393,7 @@ const STAY_NIGHT_PRICE_SQL = `(SELECT pr.unit_amount FROM product_variants v JOI
 export async function readStayCalendar(db: DbClient, access: StayAccess, input: { productId?: string; from: unknown; to: unknown }): Promise<{ from: string; to: string } & ReturnType<typeof stayCalendarOf>> {
   const { from, to } = range(input)
   const viewer: BatchQuery = { query: 'SELECT ? AS organization_id, ? AS user_id, ? AS member_id, ? AS role, ? AS organization_wide', params: [access.organizationId, access.actorId, access.manage ? null : access.memberId ?? null, access.manage ? '' : access.role ?? 'member', access.manage ? 1 : 0] }
-  const calendar = stayCalendarOf(await executeBatch(db, stayCalendarQueries(viewer, { from, to, productId: input.productId ?? null }), { operation: 'Read homes calendar' }), access.manage, { from, to })
+  const calendar = stayCalendarOf(await executeBatch(db, stayCalendarQueries({ from, to, productId: input.productId ?? null }).map(query => withViewer(viewer, query)), { operation: 'Read homes calendar' }), access.manage, { from, to })
   if (input.productId && !calendar.homes.length) fail(404, 'HOME_NOT_FOUND', 'That place to stay is not in this organization')
   return { from, to, ...calendar }
 }
@@ -1429,7 +1433,7 @@ export interface StayCalendarStay {
  * and the nights of [from, to), each statement taking its homes from the same
  * visible-homes subquery.
  */
-export function stayCalendarQueries(membership: BatchQuery, input: { from: string; to: string; productId: string | null }): BatchQuery[] {
+export function stayCalendarQueries(input: { from: string; to: string; productId: string | null }): BatchQuery[] {
   const organization: BatchQuery = { query: BATCH_VIEWER.organization, params: [] }
   const scope = { sql: `(${BATCH_VIEWER.organizationWide} = 1 OR (${roleMatchesSql(BATCH_VIEWER.role!, assignedOperationsRoles)} AND EXISTS (
     SELECT 1 FROM product_booking_configs looked_after WHERE looked_after.organization_id = c.organization_id
@@ -1439,10 +1443,10 @@ export function stayCalendarQueries(membership: BatchQuery, input: { from: strin
     ${input.productId ? 'AND c.product_id = ?' : ''} AND ${scope.sql}`, params: input.productId ? [input.productId] : [] }
   // The calendar keeps the stays of the homes it shows, so it reads every booked record of the business.
   return [
-    ...stayHomeQueries(organization, input.productId, scope).map(query => withViewer(membership, query)),
-    withViewer(membership, mediaPlacementsQuery({ organizationId: { sql: organization.query }, ownerType: 'product', owners: { sql: homes.query, params: homes.params } })),
-    withViewer(membership, bookedRecordsInRange(BATCH_VIEWER, { ...input, includeAssignedStays: true, includeCalendarGrants: true, includePayments: true })),
-    ...homeNightsQueries(organization, homes, input.from, input.to, true).map(query => withViewer(membership, query)),
+    ...stayHomeQueries(organization, input.productId, scope),
+    mediaPlacementsQuery({ organizationId: { sql: organization.query }, ownerType: 'product', owners: { sql: homes.query, params: homes.params } }),
+    bookedRecordsInRange(BATCH_VIEWER, { ...input, includeAssignedStays: true, includeCalendarGrants: true, includePayments: true }),
+    ...homeNightsQueries(organization, homes, input.from, input.to, true),
   ]
 }
 

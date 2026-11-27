@@ -87,14 +87,16 @@ const KIND_LABELS = { experience: 'Experience', service: 'Consultation' } as con
  * membership. Each row says whether the reader is assigned to it; the role
  * decides afterwards whether that matters.
  */
-export function placesCalendarQueries(organization: BatchQuery, userId: string, window: { from: string; to: string }, only?: { kind: PlaceKind; id: string }): BatchQuery[] {
+export function placesCalendarQueries(organization: BatchQuery, userId: string | { sql: string }, window: { from: string; to: string }, only?: { kind: PlaceKind; id: string }): BatchQuery[] {
   const org = organization
+  const user = typeof userId === 'string' ? '?' : userId.sql
+  const userParams = typeof userId === 'string' ? [userId] : []
 
   const products: BatchQuery = {
     query: `SELECT p.id FROM products p JOIN product_booking_configs c ON c.organization_id = p.organization_id AND c.product_id = p.id
-      WHERE p.organization_id = ${org.query} AND ${assignedPlaceSql('p')} AND ${only?.kind === 'location' ? "p.kind = 'table' AND p.id IN (SELECT product_id FROM product_locations WHERE location_id = ?)"
+      WHERE p.organization_id = ${org.query} AND ${assignedPlaceSql('p', false, user)} AND ${only?.kind === 'location' ? "p.kind = 'table' AND p.id IN (SELECT product_id FROM product_locations WHERE location_id = ?)"
         : only ? "p.kind IN ('experience', 'service') AND p.id = ?" : "p.kind IN ('experience', 'service', 'table')"}`,
-    params: [...org.params!, userId, ...(only ? [only.id] : [])],
+    params: [...org.params!, ...userParams, ...(only ? [only.id] : [])],
   }
   return [...placesIdentityQueries(org, userId, only), ...slotReadQueries({ organization: org, products, ...instants(window), scope: 'editor', now: new Date().toISOString() })]
 }

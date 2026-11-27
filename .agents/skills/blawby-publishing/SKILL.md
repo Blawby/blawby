@@ -116,6 +116,51 @@ When an email broadcast to the Product News list is desired:
 - An explicit broadcast must check recipient preferences and excluded test addresses.
   A stored claim or provider ID is not proof of receipt; verify actual provider status.
 
+## Package for performance
+
+Read what performed before deciding the package, and say which numbers the
+choice rests on. Sources: Instagram views and reach per post on the platform's
+Insights → Instagram page (`/api/dashboard/insights/marketing/instagram?org=platform`),
+YouTube Studio's content list for views, Search Console (`query_search_console`
+on `platform`) for the queries blawby.com already shows for, and Insights → Top
+pages and Sources for what visitors read and where they came from.
+
+What the numbers showed (read 2026-11-27):
+- The best Instagram post is a 10-second vertical reel with a hook and a real
+  customer's proof ("Apparently, ChatGPT has good taste": Kikuzuki in ChatGPT's
+  answer), at 256 views and 175 reached. Full-length 16:9 feature films posted
+  as reels did 131 and 20.
+- YouTube feature films titled with the feature name got 7–9 views. How-to
+  titles did better (6–13), and every video lacked a custom thumbnail,
+  chapters, subtitles and a playlist.
+- Search Console shows blawby.com at position 1 for long, question-shaped
+  queries ("which reservation systems handle both nightly stays and long-term
+  bookings?"). Use those questions as FAQ items and headings.
+- Social sends little traffic (Facebook 9 and Instagram 5 of 413 visits in
+  three months), so a post must work on the platform itself, not only as a
+  link.
+
+Every launch ships this package:
+
+| Piece | Requirement |
+| --- | --- |
+| Long film on YouTube | Title leads with the searched problem, then the product: "How to Manage Long-Term Rentals: Leases, Deposits & Monthly Rent \| Blawby" (under 100 characters). Description opens with two sentences that answer the problem, then the article link, chapters at each scene start from `index.html`, a demo-data note, the music credit and three hashtags. Custom 1280×720 thumbnail: three to five words on white, the key screen on the right, the shield, no wordmark. English subtitles from the narration timings. Add it to the channel's playlist. |
+| Vertical short (9:16, 20–40 s) | Cut from the film's strongest three or four beats, opening on its hook line. Crop around the phone and pad a white band on top for burned-in captions (people watch muted). Lay the music bed fresh across the cut. Post it as the YouTube Short, the Instagram Reel and the Facebook video. Never post the 16:9 film as a reel. |
+| Article | Answer-first summary in its first 40–60 words, the YouTube embed, one real screen per section cropped around the phone, an FAQ built from Search Console's question queries, and a CTA with UTM tags. The cover must be text-free: the site's social card prints the title over it. |
+| Captions per channel | Instagram: a hook line, three short paragraphs, "link in bio", up to five specific hashtags. Facebook: the problem in two lines, a bulleted list and the article link with `utm_source=facebook`. Discord: a title, bullets, and the guide and video links. One `create_post` per channel, so each caption fits its channel. |
+
+Checks before posting: read the public article at 390 px with headless
+Playwright and confirm the status, title, meta description, og:image (view the
+generated card), JSON-LD types (`BlogPosting`, `VideoObject`, `FAQPage`) and
+that every image loads.
+
+YouTube Studio's upload and details dialogs render only in a visible window.
+Un-minimize your own window, do the step, and minimize it again. Files go in
+through a `DataTransfer` on the dialog's `input[type=file]`, as base64 read by
+AppleScript; blawby.com's CSP blocks fetching from localhost. Description links
+stay unclickable until the channel completes YouTube's one-time phone
+verification (owner action).
+
 ## Publish and distribute through MCP
 
 1. **Verify organization context:** Read `get_workspace_context` and explicitly
@@ -142,7 +187,7 @@ When an email broadcast to the Product News list is desired:
 5. **Tailor destinations:** Website announcements can link to the canonical article.
    Facebook can carry the useful destination link. For Instagram, do not promise a
    clickable caption URL; use the verified profile-link destination or a clear domain/next step.
-   A short actual demo suits a Reel; a readable image or supported carousel can suit a concise explanation.
+   Use the vertical short from the package as the Reel and the Facebook video; a readable image or carousel suits a concise explanation.
 6. **Publish social targets:** Call `publish_post` with **exactly** the authorized targets:
    `organization` for the website and selected provider IDs/revisions for social. Continue the
    same post/container when processing; reconcile an unknown outcome with
@@ -152,6 +197,15 @@ When an email broadcast to the Product News list is desired:
    on the selected account and inspect the returned public links. Confirm caption, media,
    and destination. Record article/post IDs, per-channel outcomes, and permalinks in the
    campaign log.
+
+## Measure and learn
+
+Write `PUBLISHED.md` in the campaign folder: every link and ID, plus the
+baseline it will be compared against. Seven days later, read the same sources:
+reel views and reach, YouTube views and impressions click-through, article
+views and Sources, and new Search Console queries. Add a dated line to "What
+the numbers showed" above, and change the package when a result contradicts it.
+Keep what wins, and drop what doesn't.
 
 ## Example: bookings and payments
 

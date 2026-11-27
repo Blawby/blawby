@@ -113,7 +113,8 @@ export function sectionTitle(section: InsightsPageDefinition['section'], booked:
   if (section === 'quality') return 'Quality'
   if (section === 'conversion') return 'Conversion'
   if (section === 'marketing') return 'Marketing'
-  return only(wordingKinds(booked, kind), 'stay') ? 'Occupancy & rates' : 'Bookings & rates'
+  const kinds = wordingKinds(booked, kind)
+  return only(kinds, 'stay') ? 'Occupancy & rates' : only(kinds, 'service') ? 'Consultations & rates' : only(kinds, 'table') ? 'Reservations & rates' : 'Bookings & rates'
 }
 
 export function pageTitle(id: InsightsPageId, booked: readonly InsightsKind[], kind: InsightsKindFilter): string {
@@ -128,8 +129,8 @@ export function pageTitle(id: InsightsPageId, booked: readonly InsightsKind[], k
     case 'rates/nightly-rate': return 'Nightly rate'
     case 'rates/average-value': return 'Average value'
     case 'rates/income-by-channel': return 'Income by channel'
-    case 'conversion/booking-conversion': return 'Booking conversion'
-    case 'conversion/lead-time': return 'Booking lead time'
+    case 'conversion/booking-conversion': return only(kinds, 'service') ? 'Consultation conversion' : only(kinds, 'table') ? 'Reservation conversion' : 'Booking conversion'
+    case 'conversion/lead-time': return only(kinds, 'service') ? 'Consultation lead time' : only(kinds, 'table') ? 'Reservation lead time' : 'Booking lead time'
     case 'conversion/returning': return `Returning ${bookerWord(booked, kind)}`
     case 'conversion/page-views': return 'Page views'
     case 'conversion/top-pages': return 'Top pages'
@@ -155,12 +156,13 @@ export type InsightsIndex = z.infer<typeof insightsIndexSchema>
 const overviewMetric = z.object({ page: z.string(), key: z.string(), label: text, display: text })
 /** Performance's overview uses the same reads and words as its metric pages. */
 export const insightsOverviewSchema = z.object({
+  index: insightsIndexSchema,
   presentation: dashboardPresentationSchema,
   range: z.object({ start_date: date, end_date: date, label: text }),
   summary: z.array(overviewMetric),
-  sections: z.array(z.object({ id: text, title: text, metrics: z.array(overviewMetric) })),
+  sections: z.array(z.object({ id: text, title: text, metrics: z.array(overviewMetric), rating_counts: z.array(z.object({ label: text, count: z.number().int().nonnegative() })).optional() })),
   recent_issues: z.array(z.object({ id: text, author: text, line: text, rating: z.number(), content: text.nullable() })),
-  opportunities: z.array(z.object({ id: text, title: text, detail: text, path: text })),
+  opportunities: z.array(z.object({ id: text, title: text, detail: text, path: text, progress: z.object({ completed: z.number().int().nonnegative(), total: z.number().int().positive(), label: text }).optional() })),
 })
 export type InsightsOverview = z.infer<typeof insightsOverviewSchema>
 
@@ -172,6 +174,8 @@ const option = z.object({ value: z.string(), label: text })
  * their raw values for drawing.
  */
 export const insightsPageSchema = z.object({
+  /** Stored metric pages include navigation from their business snapshot. Provider pages return to Performance. */
+  index: insightsIndexSchema.nullable(),
   title: text,
   /** What the numbers cover when it is not every booking, such as "Website bookings". */
   subtitle: text.nullable(),

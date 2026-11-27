@@ -288,7 +288,7 @@ async function dashboardPlacesCalendar(event: H3Event, window: BookingWindow, or
 async function dashboardHomesCalendar(event: H3Event, window: BookingWindow, orgSlug?: string, includeHomes = false) {
   const slug = orgSlug ?? dashboardOrgQueryParam(event)
   if (!slug) throw new HTTPError({ statusCode: 400, message: 'Organization is required', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
-  const queries = stayCalendarQueries({ from: window.from, to: window.to, productId: window.productId ?? null })
+  const queries = stayCalendarQueries({ from: window.from, to: window.to, productId: window.productId ?? null, cancelled: window.unit !== 'nights' && window.includeCancelled })
   const context = includeHomes ? prepareStayHomesDocument(null) : null
   const unique: BatchQuery[] = [], byQuery = new Map<string, number>()
   const positions = [...queries, ...(context?.queries ?? [])].map(query => {
@@ -304,7 +304,7 @@ async function dashboardHomesCalendar(event: H3Event, window: BookingWindow, org
   if (window.productId && !calendar.homes.length) throw new HTTPError({ statusCode: 404, message: 'That place to stay is not in this organization', data: { code: 'HOME_NOT_FOUND' } })
   const homes = calendar.homes.map(entry => ({ ...entry, nights: entry.nights.map(dashboardCalendarNight) }))
   return { from: window.from, to: window.to,
-    bookings: window.unit === 'nights' ? calendar.stays : [...timedBookings(rows[3]!.results as BookedRecordInRange[], window), ...calendar.stays],
+    bookings: window.unit === 'nights' ? calendar.stays : [...timedBookings((rows[3]!.results as BookedRecordInRange[]).filter(record => !window.locationId || record.location_id === window.locationId), window), ...calendar.stays],
     homes, places: [], manage: access.manage, presentation: calendarPresentation,
     ...(context ? { home_context: { homes: context.read(rows.slice(queries.length)), manage: access.manage } } : {}),
   }

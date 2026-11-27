@@ -1,12 +1,13 @@
 import { definePlugin } from 'nitro'
 
 import { isPrivateSeoPath, resolveRuntimeSeoConfig } from '~/server/utils/seo-policy'
-import type { TenantType } from '~/utils/tenant-routing'
+import { TENANT_TYPES, type TenantType } from '~/utils/tenant-routing'
 
 export default definePlugin((nitroApp) => {
   nitroApp.hooks.hook('site-config:init', ({ event, siteConfig }) => {
     const requestURL = event.url
-    if (isPrivateSeoPath(requestURL.pathname)) return
+    const isPlatform = event.context.tenantType === TENANT_TYPES.PLATFORM
+    if (isPrivateSeoPath(requestURL.pathname, { isPlatform })) return
 
     const organization = event.context.organization as { name?: string | null; subdomain?: string } | undefined
 

@@ -160,6 +160,22 @@ test('native Performance and Earnings preserve their metric values in one D1 rou
       expect(detail.metrics.find(value => value.key === metric.key)?.display, `${pageId}/${metric.key}`).toBe(metric.display)
     }
   }
+  const from = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10)
+  const to = new Date(Date.now() + 31 * 86_400_000).toISOString().slice(0, 10)
+  const grid = z.object({
+    from: z.string(), to: z.string(), presentation: z.object({ day_header_height: z.number(), settings_label: z.string() }),
+    homes: z.array(z.object({ home: z.object({ product_id: z.string() }), nights: z.array(z.object({ date: z.string() })) })),
+    home_context: z.object({ homes: z.array(z.object({ product_id: z.string() }).passthrough()), manage: z.boolean() }),
+  }).parse(await read('/api/dashboard/bookings/calendar', { unit: 'nights', from, to, include_homes: 'true' }))
+  expect(grid.from).toBe(from)
+  expect(grid.to).toBe(to)
+  expect(grid.home_context.homes.length).toBeGreaterThan(0)
+  expect(grid.homes.map(entry => entry.home.product_id)).toEqual(grid.home_context.homes.map(home => home.product_id))
+  for (const entry of grid.homes) expect(entry.nights).toHaveLength(45)
+  for (const home of grid.home_context.homes) {
+    const record = await read(`/api/dashboard/stay-homes/${home.product_id}`) as { home: unknown }
+    expect(home).toEqual(record.home)
+  }
   const month = new Date().toISOString().slice(0, 7)
   const landing = await read('/api/dashboard/payments', { view: 'overview', year: month.slice(0, 4), month }) as { month: string; performance: unknown; payouts: unknown }
   expect(landing.month).toBe(month)

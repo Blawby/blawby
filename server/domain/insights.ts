@@ -132,6 +132,8 @@ export function prepareInsightsOverview(db: DbClient, requestedDays: string | un
   const broadRange = { ...queryRange, startDate: addLocalDays(queryRange.startDate, -1), endDate: addLocalDays(utc, 1) }
   const setup = setupQueries(scope.opportunitiesOrganization, { now })
   let resolvedReader: InsightsReader | undefined
+  const queries = [businessQuery(scope.organization), ...setup]
+  const positions = new Map<string, number>()
   const plans = INSIGHTS_PAGES.filter(page => page.section !== 'marketing'
     && !['conversion/page-views', 'conversion/top-pages', 'conversion/sources', 'rates/income-by-channel'].includes(page.id)).map(definition => {
       const context: PageContext = {
@@ -141,10 +143,19 @@ export function prepareInsightsOverview(db: DbClient, requestedDays: string | un
         definition, kind: 'all', locationId: null, dates: queryRange.dates, range: broadRange,
         window: { from: localDateBounds(broadRange.startDate, 'UTC').start, until: localDateBounds(broadRange.endDate, 'UTC').end }, business: { booked: [], hasMenu: false, locations: [] }
       }
-      return { definition, context, plan: PAGE_READS[definition.id as InsightsStoredPageId](context) }
+      const plan = PAGE_READS[definition.id as InsightsStoredPageId](context)
+      const indices = plan.queries.map(query => {
+        const key = JSON.stringify([query.query, query.params ?? []])
+        const existing = positions.get(key)
+        if (existing !== undefined) return existing
+        const index = queries.push(query) - 1
+        positions.set(key, index)
+        return index
+      })
+      return { definition, context, plan, indices }
     })
   return {
-    queries: [businessQuery(scope.organization), ...setup, ...plans.flatMap(({ plan }) => plan.queries)],
+    queries,
     read(reader: InsightsReader, showOpportunities: boolean, results: D1Result[]) {
       resolvedReader = reader
       const rows = results.map(rowsOf)
@@ -153,10 +164,8 @@ export function prepareInsightsOverview(db: DbClient, requestedDays: string | un
       const current = business(rows[0]![0]!)
       const opportunities = showOpportunities ? setupViews(rows[1]!, rows[2]!, rows[3]!) : null
       if (showOpportunities && !opportunities) throw new HTTPError({ statusCode: 404, message: 'Organization not found' })
-      let offset = 1 + setup.length
-      const reads = plans.flatMap(({ definition, context, plan }) => {
-        const values = rows.slice(offset, offset + plan.queries.length)
-        offset += plan.queries.length
+      const reads = plans.flatMap(({ definition, context, plan, indices }) => {
+        const values = indices.map(index => rows[index]!)
         context.business = current
         context.range = range
         context.dates = range.dates

@@ -488,7 +488,7 @@ test('MCP financial reads return bounded reports and authenticated detail links 
    const report=await paymentPerformance(db as never,principal,2026,'2026-10',true)
    assert.deepEqual(report.months.find(month=>month.month==='2026-10'),{month:'2026-10',paid:10000,refunded:1000})
    assert.equal(report.comparison!.year,2025)
-   assert.equal(report.comparison!.months.reduce((sum,month)=>sum+month.paid+month.refunded,0),0)
+   assert.deepEqual(report.comparison!.months,Array.from({length:12},(_,index)=>({month:`2025-${String(index+1).padStart(2,'0')}`,paid:0,refunded:0})))
    const exported=await paymentPayoutExport(env,principal,await getStripeConnectedAccount(db,ORG),payoutFilters({status:'paid',arrival_from:'2030-01-01',arrival_to:'2030-12-31'}))
    const csv=await new Response(exported).text()
    assert.equal(csv.trim().split('\r\n').length,3)

@@ -58,13 +58,12 @@ export function isPayoutDetail(value:unknown):value is PayoutDetail {
 }
 /** Stripe's payout list rows, as the Earnings and Paid screens read them. */
 export interface PayoutRow { id:string; amount:number; currency:string; status:string; arrival_date:number }
-export interface PayoutsView { configured:boolean; balance?:{available:Array<{amount:number;currency:string}>;pending:Array<{amount:number;currency:string}>}|null; payouts:PayoutRow[]; next_cursor:string|null; items?:Record<string,PayoutItem[]> }
+export interface PayoutsView { configured:boolean; balance?:{available:Array<{amount:number;currency:string}>;pending:Array<{amount:number;currency:string}>}|null; payouts:PayoutRow[]; next_cursor:string|null }
 const moneyRow=(value:unknown)=>record(value)&&Number.isSafeInteger(value.amount)&&typeof value.currency==='string'&&isCurrencyCode(value.currency.toUpperCase())
 export function isPayoutsView(value:unknown):value is PayoutsView {
  return record(value)&&typeof value.configured==='boolean'&&Array.isArray(value.payouts)&&(value.next_cursor===null||(typeof value.next_cursor==='string'&&!!value.next_cursor))
   &&(value.configured===false||(record(value.balance)&&Array.isArray(value.balance.available)&&value.balance.available.every(moneyRow)&&Array.isArray(value.balance.pending)&&value.balance.pending.every(moneyRow)
    &&value.payouts.every(row=>moneyRow(row)&&typeof row.id==='string'&&['pending','in_transit','paid','failed','canceled'].includes(String(row.status))&&Number.isSafeInteger(row.arrival_date))))
-  &&(value.items===undefined||(record(value.items)&&Object.values(value.items).every(list=>Array.isArray(list)&&list.every(isPayoutItem))))
 }
 export function payoutStatusLabel(status:string):string {
  return status==='paid'?'Sent':status==='failed'?'Failed':status==='canceled'?'Cancelled':status==='in_transit'?'On its way':'Expected'

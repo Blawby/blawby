@@ -148,7 +148,8 @@ test('Today suggests Stripe setup until the account is ready, and a price for ea
       defaults: { responsibilities: { fees_collector: 'application', losses_collector: 'stripe' } }, configuration: { merchant: { capabilities: { card_payments: { status: 'pending', status_details: [] } } } },
       requirements: { entries: [{ awaiting_action_from: 'user', minimum_deadline: { status: 'currently_due' }, description: 'Provide a bank account for payouts', errors: [] }] } }
     const payoutCalls: string[] = []
-    const automatic = { id: 'po_auto', object: 'payout', automatic: true, livemode: false, amount: 4800, arrival_date: 1_790_000_000,
+    let exportFailure: 'first' | 'later' | null = null
+    const automatic = { id: 'po_auto', object: 'payout', automatic: true, livemode: false, amount: 4800, created: 1_789_900_000, arrival_date: 1_790_000_000,
       currency: 'usd', destination: 'ba_paid', status: 'paid' }
     const manual = { ...automatic, id: 'po_manual', automatic: false }
     const originalFetch = globalThis.fetch
@@ -169,7 +170,10 @@ test('Today suggests Stripe setup until the account is ready, and a price for ea
       if (method === 'GET' && ['/v1/balance', '/v1/payouts', '/v1/payouts/po_auto', '/v1/balance_transactions', '/v1/accounts/acct_payouts/external_accounts/ba_paid'].includes(url.pathname)) {
         payoutCalls.push(url.pathname)
         if (url.pathname === '/v1/balance') return Response.json({ object: 'balance', livemode: false, available: [], pending: [] })
-        if (url.pathname === '/v1/payouts') return Response.json({ object: 'list', data: [automatic, manual], has_more: false })
+        if (url.pathname === '/v1/payouts') {
+          if (exportFailure && (exportFailure === 'first' || url.searchParams.has('starting_after'))) return Response.json({ error: { type: 'invalid_request_error', message: 'Export page rejected', code: 'invalid_request' } }, { status: 400 })
+          return Response.json({ object: 'list', data: [automatic, manual], has_more: exportFailure === 'later' })
+        }
         if (url.pathname === '/v1/payouts/po_auto') return Response.json(automatic)
         if (url.pathname === '/v1/balance_transactions') {
           assert.equal(url.searchParams.get('payout'), automatic.id)
@@ -242,17 +246,25 @@ test('Today suggests Stripe setup until the account is ready, and a price for ea
         assert.equal(response.status, 200, await response.clone().text())
         return await response.json() as Record<string, unknown>
       }
-      const payouts = await earnings('view=payouts&with_items=1')
+      const payouts = await earnings('view=payouts')
       assert.deepEqual(payouts.payouts, [automatic, manual])
-      assert.deepEqual(payouts.items, { po_auto: [], po_manual: [] })
-      assert.deepEqual(payoutCalls.splice(0).sort(), ['/v1/balance', '/v1/balance_transactions', '/v1/payouts'])
+      assert.deepEqual(payoutCalls.splice(0).sort(), ['/v1/balance', '/v1/payouts'])
 
       assert.deepEqual(await earnings('view=payout&payout_id=po_auto'), {
-        id: automatic.id, amount: 4800, currency: 'USD', status: 'paid', arrival_date: automatic.arrival_date,
+        id: automatic.id, amount: 4800, currency: 'USD', status: 'paid', created: automatic.created, arrival_date: automatic.arrival_date,
         bank: { bank_name: 'Fixture Bank', last4: '9021' }, items: [],
         failure_code: null, failure_message: null,
       })
       assert.deepEqual(payoutCalls.sort(), ['/v1/accounts/acct_payouts/external_accounts/ba_paid', '/v1/balance_transactions', '/v1/payouts/po_auto'])
+      for (const page of ['first', 'later'] as const) {
+        exportFailure = page
+        const response = await app.request(Object.assign(new Request('https://proof.example/api/dashboard/payments?org=cliff&view=payout_export', { headers: { cookie } }), { runtime: { name: 'cloudflare', cloudflare: { env } } }))
+        assert.equal(response.status, 400, `the ${page} Stripe page rejection fails the whole export with its provider status`)
+        assert.match(response.headers.get('content-type')!, /application\/json/)
+        assert.doesNotMatch(await response.text(), /Created date|po_auto|po_manual/)
+      }
+      exportFailure = null
+
 
       const save = await app.request(Object.assign(new Request(`https://proof.example/api/editor/organizations/org/products/${paid.id}/booking`, {
         method: 'PUT', headers: { 'content-type': 'application/json', ...app_ }, body: JSON.stringify({ online_payment_required: true }),

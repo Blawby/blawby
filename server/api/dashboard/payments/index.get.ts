@@ -19,7 +19,7 @@ export default defineHandler(async event=>{
    if(typeof query.payout_id!=='string'||!query.payout_id)throw new HTTPError({statusCode:400,statusMessage:'Payout is required'})
    return jsonResponse(await paymentPayoutDetail(db,env,principal,account,query.payout_id))
   }
-  return jsonResponse(await paymentPayouts(db,env,principal,account,typeof query.after==='string'?query.after:undefined,query.with_items==='1',filters))
+  return jsonResponse(await paymentPayouts(env,principal,account,typeof query.after==='string'?query.after:undefined,filters))
  }
  const {db,env,organization,userId}=await getDashboardContext(event,{})
  const principal={organizationId:organization.id,userId,role:organization.role}

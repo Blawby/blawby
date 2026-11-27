@@ -148,6 +148,8 @@ test('native Performance and Earnings preserve their metric values in one D1 rou
   const index = insightsIndexSchema.parse(await read('/api/dashboard/insights'))
   const overview = insightsOverviewSchema.parse(await read('/api/dashboard/insights/overview', { days: '30' }))
   expect(overview.sections.map(section => section.id)).toEqual(expect.arrayContaining(['quality', 'rates', 'conversion']))
+  expect(overview.summary.map(metric => `${metric.page}/${metric.key}`)).toEqual(['rates/occupancy-rate/nights_booked', 'rates/nightly-rate/income', 'quality/overall-rating/five_star'])
+  expect(overview.sections.flatMap(section => section.metrics.map(metric => metric.page))).toEqual(expect.arrayContaining(['quality/overall-rating', 'rates/occupancy-rate', 'rates/nightly-rate', 'conversion/booking-conversion', 'conversion/lead-time', 'conversion/returning']))
   const available = new Set<string>(index.sections.flatMap(section => section.pages.map(page => page.id)))
   for (const pageId of new Set(overview.sections.flatMap(section => section.metrics.map(metric => metric.page)))) {
     expect(available.has(pageId), pageId).toBe(true)
@@ -160,9 +162,11 @@ test('native Performance and Earnings preserve their metric values in one D1 rou
   const landing = await read('/api/dashboard/payments', { view: 'overview', year: month.slice(0, 4), month }) as { month: string; performance: unknown; payouts: unknown }
   expect(landing.month).toBe(month)
   expect(isEarningsPerformance(landing.performance)).toBe(true)
+  if (!isEarningsPerformance(landing.performance)) throw new Error('Invalid earnings landing response')
   const earnings = await read('/api/dashboard/payments', { view: 'performance', year: month.slice(0, 4), month, comparison: 'previous_year' })
   expect(isEarningsPerformance(earnings)).toBe(true)
   if (!isEarningsPerformance(earnings)) throw new Error('Invalid earnings response')
+  expect(earnings.months.find(row => row.month === month)).toEqual(landing.performance.months.find(row => row.month === month))
   expect(earnings.comparison?.year).toBe(Number(month.slice(0, 4)) - 1)
   expect(earnings.comparison?.months).toHaveLength(12)
 })

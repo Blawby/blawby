@@ -216,36 +216,24 @@ export async function paymentPayoutExport(env: CloudflareEnv, principal: Financi
   await authorizePayments(principal, 'payouts')
   if (!account?.stripe_account_id) throw new HTTPError({ statusCode: 409, message: 'Connect Stripe before exporting payouts', data: { code: 'STRIPE_ACCOUNT_REQUIRED', field: 'stripe_account_id' } })
   const stripe = paymentsStripe(env, account.livemode)
-  const options = { stripeAccount: account.stripe_account_id }, encoder = new TextEncoder()
+  const options = { stripeAccount: account.stripe_account_id }
   const line = (cells: string[]) => cells.map(cell => {
     const escaped = /^[=+@\-\t\r]/.test(cell) ? `'${cell}` : cell
     return `"${escaped.replaceAll('"', '""')}"`
   }).join(',') + '\r\n'
-  async function* csv() {
-    yield encoder.encode(line(['Created date', 'Arrival date', 'Amount', 'Currency', 'Status', 'Payout ID']))
-    for await (const payout of stripe.payouts.list({ ...filters, limit: 100 }, options)) {
-      if (payout.livemode !== account!.livemode) throw new Error('Stripe payout mode does not match connected account')
-      const currency = payout.currency.toUpperCase(), digits = currencyFractionDigits(currency)
-      yield encoder.encode(line([new Date(payout.created * 1000).toISOString().slice(0, 10), new Date(payout.arrival_date * 1000).toISOString().slice(0, 10),
+  const rows = [line(['Created date', 'Arrival date', 'Amount', 'Currency', 'Status', 'Payout ID'])]
+  for await (const payout of stripe.payouts.list({ ...filters, limit: 100 }, options)) {
+    if (payout.livemode !== account.livemode) throw new Error('Stripe payout mode does not match connected account')
+    const currency = payout.currency.toUpperCase(), digits = currencyFractionDigits(currency)
+    rows.push(line([new Date(payout.created * 1000).toISOString().slice(0, 10), new Date(payout.arrival_date * 1000).toISOString().slice(0, 10),
       (payout.amount / 10 ** digits).toFixed(digits), currency, payout.status, payout.id]))
-    }
   }
-  const iterator = csv()
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) { const next = await iterator.next(); if (next.done) controller.close(); else controller.enqueue(next.value) },
-    async cancel() { await iterator.return(undefined) },
-  })
+  return rows.join('')
 }
 
-export async function paymentPayouts(db: DbClient, env: CloudflareEnv, principal: FinancialPrincipal, account: StripeConnectedAccount | null, after?: string, withItems = false, filters: Stripe.PayoutListParams = {}) {
+export async function paymentPayouts(env: CloudflareEnv, principal: FinancialPrincipal, account: StripeConnectedAccount | null, after?: string, filters: Stripe.PayoutListParams = {}) {
   await authorizePayments(principal, 'payouts')
-  const page = await readStripePayouts(env, principal.organizationId, account, after, filters)
-  if (!withItems || !account?.stripe_account_id) return page
-  const stripe = paymentsStripe(env, account.livemode)
-  const options = { stripeAccount: account.stripe_account_id }
-  const paid = page.payouts.filter(row => row.status === 'paid').slice(0, 3)
-  const items = await Promise.all(paid.map(row => payoutItems(db, stripe, options, principal.organizationId, row)))
-  return { ...page, items: Object.fromEntries(paid.map((row, index) => [row.id, items[index]!])) }
+  return readStripePayouts(env, principal.organizationId, account, after, filters)
 }
 
 export async function readStripePayouts(env: CloudflareEnv, organizationId: string, account: StripeConnectedAccount | null, after?: string, filters: Stripe.PayoutListParams = {}) {

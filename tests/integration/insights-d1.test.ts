@@ -110,6 +110,8 @@ test('Insights reads a restaurant from visit to payment: sources, bookings, valu
 
     for (const length of ['7', '30', '365']) {
       const overview = await readInsightsOverview(db as never, reader, length, true)
+      assert.equal((Date.parse(overview.range.end_date) - Date.parse(overview.range.start_date)) / 86_400_000 + 1, Number(length))
+      assert.deepEqual(overview.summary.map(metric => [metric.page, metric.key]), [['rates/bookings', 'confirmed'], ['rates/average-value', 'income'], ['quality/overall-rating', 'five_star']])
       assert.deepEqual(overview.sections.map(section => section.title), ['Quality', 'Bookings & rates', 'Conversion'])
       assert.equal(overview.sections[1]!.metrics[0]!.label, 'Reservations')
       assert.equal(overview.sections[2]!.metrics.at(-1)!.label, 'Returning diners')
@@ -121,7 +123,7 @@ test('Insights reads a restaurant from visit to payment: sources, bookings, valu
     const staffOverview = await readInsightsOverview(db as never, { ...reader, analytics: false }, '7', false)
     assert.deepEqual(staffOverview.sections.map(section => section.id), ['quality'])
     assert.deepEqual(staffOverview.opportunities, [])
-    await assert.rejects(readInsightsOverview(db as never, reader, '8', false), (error: { statusCode?: number }) => error.statusCode === 400)
+    await assert.rejects(readInsightsOverview(db as never, reader, '8', false), (error: { statusCode?: number; data?: { code?: string; field?: string } }) => error.statusCode === 400 && error.data?.code === 'INVALID_FILTER' && error.data?.field === 'days')
 
     const bookings = await read('rates/bookings')
     assert.equal(bookings.title, 'Reservations')
@@ -219,6 +221,8 @@ test('Insights reads a home: occupancy, length of stay and nightly rate, and who
     const reader: InsightsReader = { organizationId: 'org-stays', slug: 'retreat', timezone: TZ, defaultCurrency: 'USD', userId: 'stays-owner', analytics: true }
     const read = (page: string) => readInsightsPage(db as never, reader, page, { start_date: today, end_date: addLocalDays(today, 19) }, env)
     const overview = await readInsightsOverview(db as never, reader, '30', true)
+    assert.equal((Date.parse(overview.range.end_date) - Date.parse(overview.range.start_date)) / 86_400_000 + 1, 30)
+    assert.deepEqual(overview.summary.map(metric => [metric.page, metric.key]), [['rates/occupancy-rate', 'nights_booked'], ['rates/nightly-rate', 'income'], ['quality/overall-rating', 'five_star']])
     assert.equal(overview.sections[1]!.title, 'Occupancy & rates')
     assert.deepEqual(overview.sections[1]!.metrics.map(metric => metric.page), ['rates/occupancy-rate', 'rates/cancellation-rate', 'rates/length-of-stay', 'rates/nightly-rate'])
     for (const metric of overview.summary) {

@@ -161,6 +161,14 @@ AppleScript; blawby.com's CSP blocks fetching from localhost. Description links
 stay unclickable until the channel completes YouTube's one-time phone
 verification (owner action).
 
+Subtitles: on the video's Subtitles page, open the language picker through
+`ytcp-form-language-input ytcp-dropdown-trigger`, choose English and Confirm.
+The row's actions appear only after `mouseover` and `mouseenter` events are
+dispatched on its `ytgn-video-translation-hover-cell`. Choose **Duplicate and
+edit**, then Continue, then the editor's Options → **Upload file** → **With
+timing**. Put the SRT on the dialog's file input and Publish. YouTube's
+automatic captions spell the brand "Blobby", so always replace them.
+
 ## Publish and distribute through MCP
 
 1. **Verify organization context:** Read `get_workspace_context` and explicitly

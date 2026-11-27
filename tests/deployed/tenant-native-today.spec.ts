@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test'
 import { z } from 'zod'
 import { insightsIndexSchema, insightsOverviewSchema, insightsPageSchema } from '../../shared/insights'
+import { paymentMoney } from '../../shared/payment-display'
+import { dashboardPresentationSchema } from '../../shared/dashboard-presentation'
 import { isEarningsPerformance } from '../../shared/earnings-display'
 import { isThreadListResponse } from '../../lib/components/workspace/messages/guest-thread-client'
 
@@ -169,4 +171,34 @@ test('native Performance and Earnings preserve their metric values in one D1 rou
   expect(earnings.months.find(row => row.month === month)).toEqual(landing.performance.months.find(row => row.month === month))
   expect(earnings.comparison?.year).toBe(Number(month.slice(0, 4)) - 1)
   expect(earnings.comparison?.months).toHaveLength(12)
+  const membershipsResponse = await fetch(new URL('/api/auth/organization/list', origin), { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(12_000) })
+  expect(membershipsResponse.status).toBe(200)
+  const memberships = z.array(z.object({ id: z.string(), slug: z.string() })).parse(await membershipsResponse.json())
+  // The whole Menu must use one batch and agree with the canonical financial report.
+  for (const org of ['saltleaf-stays-demo', 'cedar-legal-demo', 'ember-slice-demo']) {
+    const menu = z.object({ title: z.string(), presentation: dashboardPresentationSchema,
+      cards: z.array(z.object({ id: z.string(), title: z.string(), value: z.string(), detail: z.string(), bars: z.array(z.number()), amount: z.number().optional(), currency: z.string().optional(), month: z.string().optional() })),
+      insights: insightsIndexSchema,
+    }).parse(await read('/api/dashboard/menu', { org }))
+    expect(menu.cards.map(card => card.id)).toEqual(['earnings', 'insights'])
+    expect(menu.insights.sections.find(section => section.id === 'quality')?.pages.map(page => page.id)).toContain('quality/overall-rating')
+    const organization = memberships.find(value => value.slug === org)
+    if (!organization) throw new Error(`Missing review workspace ${org}`)
+    const records = z.object({ reviews: z.array(z.object({ rating: z.number(), status: z.string(), booking_id: z.string().nullable() })) }).parse(await read(`/api/editor/organizations/${organization.id}/reviews`, { org }))
+    const eligible = records.reviews.filter(review => review.booking_id !== null ? review.status !== 'rejected' : review.status === 'approved')
+    const rating = eligible.length ? (Math.round(eligible.reduce((sum, review) => sum + review.rating, 0) / eligible.length * 100) / 100).toFixed(2) : null
+    expect(menu.cards[1]!.value).toBe(rating === null ? 'No ratings yet' : `★ ${rating}`)
+    expect(menu.cards[1]!.detail).toBe(`${eligible.length} ${eligible.length === 1 ? 'review' : 'reviews'}`)
+
+    const card = menu.cards[0]!
+    const report = await read('/api/dashboard/payments', { org, view: 'performance', year: month.slice(0, 4), month })
+    if (!isEarningsPerformance(report)) throw new Error('Invalid menu comparison report')
+    const current = report.months.find(row => row.month === month)!
+    expect(card.amount).toBe(current.paid - current.refunded)
+    expect(card.value).toBe(paymentMoney(current.paid - current.refunded, report.currency))
+    expect(card.currency).toBe(report.currency)
+    expect(card.bars).toEqual(report.months.map(row => row.paid - row.refunded))
+    expect(menu.presentation).toEqual(overview.presentation)
+  }
+
 })

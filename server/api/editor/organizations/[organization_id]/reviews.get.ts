@@ -10,7 +10,7 @@ export default defineHandler(async event => {
   if (!organizationId) throw new HTTPError({ statusCode: 400, message: 'Organization ID required' })
   const locationId = getQuery(event).location_id
   if (locationId !== undefined && typeof locationId !== 'string') throw new HTTPError({ statusCode: 400, message: 'Invalid location scope' })
-  const plan = prepareOrganizationReviews({ sql: BATCH_VIEWER.organization }, { locationId: typeof locationId === 'string' ? locationId.trim() : null })
+  const plan = prepareOrganizationReviews({ sql: BATCH_VIEWER.organization }, typeof locationId === 'string' ? { locationId: locationId.trim() } : {})
   const { db, env, organization, rows } = await readDashboardMemberResources(event, organizationId, plan.queries)
   await assertOrganizationWideAccess(db, memberAccessPrincipal(organization, { env, event }))
   return jsonResponse({ reviews: plan.read(rows, organization.id) })

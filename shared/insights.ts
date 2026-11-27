@@ -1,3 +1,4 @@
+import { dashboardPresentationSchema } from './dashboard-presentation'
 import { z } from 'zod'
 
 /**
@@ -154,6 +155,7 @@ export type InsightsIndex = z.infer<typeof insightsIndexSchema>
 const overviewMetric = z.object({ page: z.string(), key: z.string(), label: text, display: text })
 /** Performance's overview uses the same reads and words as its metric pages. */
 export const insightsOverviewSchema = z.object({
+  presentation: dashboardPresentationSchema,
   range: z.object({ start_date: date, end_date: date, label: text }),
   summary: z.array(overviewMetric),
   sections: z.array(z.object({ id: text, title: text, metrics: z.array(overviewMetric) })),

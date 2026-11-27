@@ -1,3 +1,4 @@
+import type { DashboardPresentation } from './dashboard-presentation'
 import {isCurrencyCode} from './currencies'
 import {paymentMoney} from './payment-display'
 
@@ -39,7 +40,7 @@ export function isEarningsPerformance(value:unknown):value is EarningsPerformanc
   &&Array.isArray(value.items)&&value.items.every(row=>record(row)&&typeof row.title==='string'&&(row.image_url===null||typeof row.image_url==='string')&&Number.isSafeInteger(row.paid)&&Number.isSafeInteger(row.count))
 }
 
-export interface EarningsOverview { month:string; performance:EarningsPerformance; payouts:PayoutsView|null }
+export interface EarningsOverview { presentation:DashboardPresentation; month:string; performance:EarningsPerformance; payouts:PayoutsView|null }
 
 /** One payment a payout carried, or one line of the transactions list. */
 export interface PayoutItem { gross_amount:number; fee_amount:number; buyer_name:string|null; payment_id:string; title:string; image_url:string|null; amount:number; currency:string; starts_at:string|null; ends_at:string|null; timezone:string|null; name:string|null }

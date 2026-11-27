@@ -1,3 +1,4 @@
+import { dashboardPresentation } from '~/shared/dashboard-presentation'
 import { HTTPError } from 'nitro'
 import { executeBatch, type BatchQuery, type DbClient } from '~/server/db'
 import type { CloudflareEnv } from '~/server/utils/auth'
@@ -179,6 +180,7 @@ export function prepareInsightsOverview(db: DbClient, requestedDays: string | un
       }
       const quality = reads.find(result => result.definition.id === 'quality/overall-rating')!.read
       return insightsOverviewSchema.parse({
+        presentation: dashboardPresentation,
         range: { start_date: range.startDate, end_date: range.endDate, label: `${formatCalendarDate(range.startDate, 'en', { month: 'short', day: 'numeric', year: 'numeric' })} – ${formatCalendarDate(range.endDate, 'en', { month: 'short', day: 'numeric', year: 'numeric' })}` },
         summary: [metric('rates/occupancy-rate', 'nights_booked'), metric('rates/bookings'), metric('rates/nightly-rate', 'income'), metric('rates/average-value', 'income'), metric('quality/overall-rating', 'five_star')].filter(Boolean),
         sections: ['quality', 'rates', 'conversion'].map(section => ({
@@ -491,6 +493,8 @@ async function readStoredPage(context: PageContext): Promise<PageRead> {
 }
 
 /** A review's state when it is not published. */
+export const insightsReviewEligibility = "((r.booking_id IS NOT NULL AND r.status <> 'rejected') OR (r.booking_id IS NULL AND r.status = 'approved'))"
+
 const REVIEW_STATUS = { pending: 'Awaiting review', rejected: 'Not published', private: 'Private' } as const
 
 interface PageReadPlan { queries: BatchQuery[]; read: (rows: Row[][]) => PageRead }
@@ -509,7 +513,7 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => PageRea
         LEFT JOIN products p ON p.organization_id = r.organization_id AND p.id = r.product_id
         LEFT JOIN business_locations bl ON bl.organization_id = r.organization_id AND bl.id = r.location_id
         WHERE r.organization_id = ${context.organization.sql} AND ${written} >= ? AND ${written} < ?
-          AND ((r.booking_id IS NOT NULL AND r.status <> 'rejected') OR (r.booking_id IS NULL AND r.status = 'approved'))
+          AND ${insightsReviewEligibility}
           ${kinds ? 'AND p.kind IN (SELECT value FROM json_each(?))' : ''}
           ${context.locationId ? 'AND r.location_id = ?' : ''}
           ${scope ? `AND ${scope.sql}` : ''}

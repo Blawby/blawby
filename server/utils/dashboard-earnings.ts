@@ -1,3 +1,4 @@
+import { dashboardPresentation } from '~/shared/dashboard-presentation'
 import { HTTPError, type H3Event } from 'nitro'
 import { preparePaymentPerformance, readStripePayouts } from '~/server/domain/payments/earnings'
 import { authorizePayments } from '~/server/domain/payments'
@@ -47,7 +48,7 @@ export async function readDashboardEarningsOverview(event: H3Event, query: { yea
   await authorizePayments(principal, 'read')
   const performance = plan.read(rows.slice(0, plan.queries.length), organization.id)
   const canReadPayouts = await roleAllows({ ...principal, permissions: { payments: ['payouts'] } })
-  return { month, performance, payouts: canReadPayouts ? await readStripePayouts(env, organization.id, stripeConnectedAccountFromRow(rows.at(-1)?.results[0])) : null }
+  return { presentation: dashboardPresentation, month, performance, payouts: canReadPayouts ? await readStripePayouts(env, organization.id, stripeConnectedAccountFromRow(rows.at(-1)?.results[0])) : null }
 }
 
 export async function readDashboardPayoutAccount(event: H3Event) {

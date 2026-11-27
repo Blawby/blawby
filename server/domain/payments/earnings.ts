@@ -112,12 +112,7 @@ export function preparePaymentPerformance(
   const periodParams = [...orgParams, `${monthStart}T00:00:00.000Z`, next]
   const imagesFor = (ownerType: 'product' | 'business_location', selection: string) =>
     mediaPlacementsQuery({ organizationId: organization, ownerType, includeOrganizationFallback: false, owners: { sql: selection, params: periodParams } })
-  const yearQuery = (value: number): BatchQuery => ({
-    query: `SELECT strftime('%Y-%m', created_at) AS month, currency, SUM(captured_amount) AS paid, SUM(refunded_amount) AS refunded
-      FROM payments WHERE organization_id = ${org} AND created_at >= ? AND created_at < ? GROUP BY 1, 2 ORDER BY 1`,
-    params: [...orgParams, `${value}-01-01T00:00:00.000Z`, `${value + 1}-01-01T00:00:00.000Z`],
-  })
-  const queries = [yearQuery(year),
+  const queries = [paymentMonthsQuery(organization, year),
   {
     query: `SELECT p.id, p.location_id, p.price_snapshot_json, p.captured_amount, p.refunded_amount,
         b.id AS booking_id, b.product_id ${period}`, params: periodParams
@@ -130,12 +125,12 @@ export function preparePaymentPerformance(
   channelReservationAmountQuery(organization, monthStart, monthEnd),
   imagesFor('product', `SELECT b.product_id ${period} AND b.product_id IS NOT NULL`),
   imagesFor('business_location', `SELECT p.location_id ${period} AND b.id IS NULL AND json_type(p.price_snapshot_json, '$.stay') IS NOT NULL`),
-  ...(comparison ? [yearQuery(year - 1)] : []),
+  ...(comparison ? [paymentMonthsQuery(organization, year - 1)] : []),
   ]
   return { queries, read }
 
   function read([yearResult, monthResult, organizationResult, channel, productMedia, locationMedia, comparisonResult]: D1Result[], organizationId: string): EarningsPerformance {
-    const { currencies, months } = monthly(yearResult!, year)
+    const { currencies, months } = paymentMonths(yearResult!, year)
     const payments = monthResult!.results as Array<Pick<Payment, 'id' | 'location_id' | 'price_snapshot_json' | 'captured_amount' | 'refunded_amount'>
       & { booking_id: string | null; product_id: string | null }>
     const productIds = payments.flatMap(payment => payment.product_id ? [payment.product_id] : [])
@@ -172,22 +167,10 @@ export function preparePaymentPerformance(
     const currency = currencies[0] ?? account?.default_currency
     if (!currency) throw new HTTPError({ statusCode: 404, statusMessage: 'Organization not found' })
     const channel_reservations = channelReservationAmounts(channel!, monthStart, monthEnd)
-    const previous = comparisonResult ? monthly(comparisonResult, year - 1) : null
+    const previous = comparisonResult ? paymentMonths(comparisonResult, year - 1) : null
     const compared = previous ? { year: year - 1, currency: previous.currencies[0] ?? account!.default_currency, months: previous.months } : null
     return { ...(compared ? { comparison: compared } : {}), currency, payouts_connected: account?.payouts_connected == null ? null : account.payouts_connected === 1, months, items: [...byTitle.values()].sort((a, b) => b.paid - a.paid), channel_reservations }
   }
-  function monthly(result: D1Result, periodYear: number) {
-    const rows = result.results as Array<{ month: string; currency: string; paid: number; refunded: number }>
-    const currencies = [...new Set(rows.map(row => row.currency))]
-    if (currencies.length > 1) throw new HTTPError({ statusCode: 409, statusMessage: 'Earnings in more than one currency cannot be charted together', data: { code: 'MULTIPLE_EARNINGS_CURRENCIES', field: 'currency' } })
-    const months = Array.from({ length: 12 }, (_, index) => {
-      const key = `${periodYear}-${String(index + 1).padStart(2, '0')}`
-      const row = rows.find(entry => entry.month === key)
-      return { month: key, paid: row?.paid ?? 0, refunded: row?.refunded ?? 0 }
-    })
-    return { currencies, months }
-  }
-
 }
 
 /** Stripe owns date/status filtering and pagination; the app sends UTC calendar days. */
@@ -334,4 +317,20 @@ export async function paymentTransactions(db: DbClient, principal: FinancialPrin
       }
     }),
   }
+}
+
+export function paymentMonths(result: D1Result, periodYear: number) {
+  const rows = result.results as Array<{ month: string; currency: string; paid: number; refunded: number }>
+  const currencies = [...new Set(rows.map(row => row.currency))]
+  if (currencies.length > 1) throw new HTTPError({ statusCode: 409, statusMessage: 'Earnings in more than one currency cannot be charted together', data: { code: 'MULTIPLE_EARNINGS_CURRENCIES', field: 'currency' } })
+  const months = Array.from({ length: 12 }, (_, index) => {
+    const key = `${periodYear}-${String(index + 1).padStart(2, '0')}`
+    const row = rows.find(entry => entry.month === key)
+    return { month: key, paid: row?.paid ?? 0, refunded: row?.refunded ?? 0 }
+  })
+  return { currencies, months }
+}
+
+export function paymentMonthsQuery(organization: string | { sql: string }, year: number): BatchQuery {
+  return { query: `SELECT strftime('%Y-%m', created_at) AS month, currency, SUM(captured_amount) AS paid, SUM(refunded_amount) AS refunded FROM payments WHERE organization_id = ${typeof organization === 'string' ? '?' : organization.sql} AND created_at >= ? AND created_at < ? GROUP BY 1, 2 ORDER BY 1`, params: [...(typeof organization === 'string' ? [organization] : []), `${year}-01-01T00:00:00.000Z`, `${year + 1}-01-01T00:00:00.000Z`] }
 }

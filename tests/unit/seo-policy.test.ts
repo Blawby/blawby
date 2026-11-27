@@ -72,4 +72,12 @@ test('isPrivateSeoPath accurately identifies non-indexable application and admin
   assert.equal(isPrivateSeoPath('/'), false)
   assert.equal(isPrivateSeoPath('/blog'), false)
   assert.equal(isPrivateSeoPath('/docs/guide'), false)
+
+  // Auth routes are private by default / on tenants, but indexable on platform
+  assert.equal(isPrivateSeoPath('/login'), true)
+  assert.equal(isPrivateSeoPath('/signup'), true)
+  assert.equal(isPrivateSeoPath('/login', { isPlatform: false }), true)
+  assert.equal(isPrivateSeoPath('/signup', { isPlatform: false }), true)
+  assert.equal(isPrivateSeoPath('/login', { isPlatform: true }), false)
+  assert.equal(isPrivateSeoPath('/signup', { isPlatform: true }), false)
 })

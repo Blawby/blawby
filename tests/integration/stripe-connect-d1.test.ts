@@ -246,6 +246,9 @@ test('Today suggests Stripe setup until the account is ready, and a price for ea
         assert.equal(response.status, 200, await response.clone().text())
         return await response.json() as Record<string, unknown>
       }
+      const overview = await earnings('view=overview&year=2026&month=2026-11')
+      assert.deepEqual((overview.payouts as { payouts: unknown[] }).payouts, [automatic, manual])
+      assert.deepEqual(payoutCalls.splice(0), ['/v1/payouts'], 'The landing page reads payout previews without a balance it does not display')
       const payouts = await earnings('view=payouts')
       assert.deepEqual(payouts.payouts, [automatic, manual])
       assert.deepEqual(payoutCalls.splice(0).sort(), ['/v1/balance', '/v1/payouts'])

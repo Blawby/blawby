@@ -605,7 +605,7 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => PageRea
         const rate = (group: typeof nights) => percent(group.filter(night => booked.has(night.key)).length, group.filter(night => !blocked.has(night.key)).length)
         return {
           metrics: [
-            { key: 'occupancy', label: 'Average occupancy rate', format: 'percent', value: rate(nights), daily: day.each(nights, night => night.date, rate) },
+            { key: 'occupancy', label: 'Occupancy rate', format: 'percent', value: rate(nights), daily: day.each(nights, night => night.date, rate) },
             { key: 'nights_booked', label: 'Nights booked', format: 'nights', value: open.filter(night => booked.has(night.key)).length, daily: day.sum(open, night => night.date, night => booked.has(night.key) ? 1 : 0) },
             { key: 'nights_blocked', label: 'Nights blocked', format: 'nights', value: nights.length - open.length, daily: day.sum(nights, night => night.date, night => blocked.has(night.key) ? 1 : 0) },
           ],
@@ -679,11 +679,11 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => PageRea
         const longest = (group: BookingRow[]) => group.length ? Math.max(...group.map(nightsOf)) : null
         return {
           metrics: [
-            { key: 'average_nights', label: 'Average length of stay', format: 'nights', value: mean(stays), daily: day.each(stays, startDay, mean) },
+            { key: 'average_nights', label: 'Length of stay', format: 'nights', value: mean(stays), daily: day.each(stays, startDay, mean) },
             { key: 'longest', label: 'Longest stay', format: 'nights', value: longest(stays), daily: day.each(stays, startDay, longest) },
           ],
           list: {
-            kind: 'rows', heading: 'Homes', columns: [{ label: 'Average length of stay', format: 'nights' }, { label: 'Stays', format: 'count' }],
+            kind: 'rows', heading: 'Homes', columns: [{ label: 'Length of stay', format: 'nights' }, { label: 'Stays', format: 'count' }],
             rows: byOffering(stays, group => [mean(group), group.length])
           },
         }
@@ -703,11 +703,11 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => PageRea
         const largest = (group: BookingRow[]) => group.length ? Math.max(...group.map(row => row.party_size)) : null
         return {
           metrics: [
-            { key: 'average_party', label: 'Average party size', format: 'people', value: mean(bookings), daily: day.each(bookings, startDay, mean) },
+            { key: 'average_party', label: 'Party size', format: 'people', value: mean(bookings), daily: day.each(bookings, startDay, mean) },
             { key: 'largest_party', label: 'Largest party', format: 'people', value: largest(bookings), daily: day.each(bookings, startDay, largest) },
           ],
           list: {
-            kind: 'rows', heading: offeringsWord(context.business.booked, context.kind), columns: [{ label: 'Average party size', format: 'people' }, { label: 'Bookings', format: 'count' }],
+            kind: 'rows', heading: offeringsWord(context.business.booked, context.kind), columns: [{ label: 'Party size', format: 'people' }, { label: 'Bookings', format: 'count' }],
             rows: byOffering(bookings, group => [mean(group), group.length])
           },
         }
@@ -728,11 +728,11 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => PageRea
         return {
           currency: insightsCurrency(stays.map(row => row.currency!), context.reader.defaultCurrency),
           metrics: [
-            { key: 'nightly_rate', label: 'Average nightly rate', format: 'money', value: nightly(stays), daily: day.each(stays, startDay, nightly) },
+            { key: 'nightly_rate', label: 'Nightly rate', format: 'money', value: nightly(stays), daily: day.each(stays, startDay, nightly) },
             { key: 'income', label: 'Booking value', format: 'money', value: income(stays), daily: day.each(stays, startDay, income) },
           ],
           list: {
-            kind: 'rows', heading: 'Homes', columns: [{ label: 'Average nightly rate', format: 'money' }, { label: 'Booking value', format: 'money' }],
+            kind: 'rows', heading: 'Homes', columns: [{ label: 'Nightly rate', format: 'money' }, { label: 'Booking value', format: 'money' }],
             rows: byOffering(stays, group => [nightly(group), income(group)])
           },
         }
@@ -879,11 +879,11 @@ const PAGE_READS: Record<InsightsStoredPageId, (context: PageContext) => PageRea
         return {
           subtitle: 'Website bookings',
           metrics: [
-            { key: 'average_lead', label: 'Average lead time', format: 'days', value: mean(bookings), daily: day.each(bookings, receivedDay(context), mean) },
+            { key: 'average_lead', label: 'Lead time', format: 'days', value: mean(bookings), daily: day.each(bookings, receivedDay(context), mean) },
             { key: 'within_3_days', label: 'Booked within 3 days', format: 'percent', value: soon(bookings), daily: day.each(bookings, receivedDay(context), soon) },
           ],
           list: {
-            kind: 'rows', heading: offeringsWord(context.business.booked, context.kind), columns: [{ label: 'Average lead time', format: 'days' }, { label: 'Bookings', format: 'count' }],
+            kind: 'rows', heading: offeringsWord(context.business.booked, context.kind), columns: [{ label: 'Lead time', format: 'days' }, { label: 'Bookings', format: 'count' }],
             rows: byOffering(bookings, group => [mean(group), group.length])
           },
         }

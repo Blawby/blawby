@@ -12,7 +12,7 @@ import { createStay, setStayNights } from '../../server/domain/stays.ts'
 import { createProduct } from '../../server/utils/product-management.ts'
 import { readInsightsIndex, readInsightsPage, readInsightsOverview, type InsightsReader } from '../../server/domain/insights.ts'
 import { handleAnalyticsTools } from '../../server/utils/mcp-tools/analytics.ts'
-import { addLocalDays, localDateAt, localDateTimeToInstant } from '../../utils/timezone.ts'
+import { addLocalDays, localDateAt, localDateTimeToInstant, localNow } from '../../utils/timezone.ts'
 import { createTables } from './support/table-product.ts'
 import { buyStay } from './support/stay-checkout.ts'
 import { captureEvents } from './support/events.ts'
@@ -56,12 +56,14 @@ test('Insights reads a restaurant from visit to payment: sources, bookings, valu
       ...['loc-beach', 'loc-town'].map(id => db.prepare(`INSERT INTO business_locations (id, organization_id, slug, title, status, timezone, opening_hours, created_at, updated_at) VALUES (?, 'org-tables', ?, ?, 'active', ?, ?, ?, ?)`)
         .bind(id, id, id === 'loc-beach' ? 'Beach' : 'Town', TZ, open, now, now)),
     ])
+    // Keep publication's first seating ahead of the write, including runs crossing a half-hour.
+    const seatingTime = `${String((Number(localNow(TZ).time.slice(0, 2)) + 2) % 24).padStart(2, '0')}:00`
     const tables = Object.fromEntries(await Promise.all(['loc-beach', 'loc-town'].map(async locationId => [locationId, await createTables(db, env, {
-      organizationId: 'org-tables', locationId, actorId: 'tables-owner', memberId: 'm-tables-owner', name: `Tables ${locationId}`, durationMinutes: 120, seats: 10, open: '18:00', lastSeating: '21:00', currency: 'THB' })])))
+      organizationId: 'org-tables', locationId, actorId: 'tables-owner', memberId: 'm-tables-owner', name: `Tables ${locationId}`, durationMinutes: 120, seats: 10, open: seatingTime, lastSeating: seatingTime, currency: 'THB' })])))
     const today = localDateAt(new Date(), TZ)
     const dinnerDate = addLocalDays(today, 2)
     const seating = async (locationId: string) => {
-      const at = localDateTimeToInstant(dinnerDate, '19:00', TZ, 'reject').toISOString()
+      const at = localDateTimeToInstant(dinnerDate, seatingTime, TZ, 'reject').toISOString()
       const [found] = await listBookableSessions(db, { env, organizationId: 'org-tables', productId: tables[locationId]!.id, fromInstant: at, toInstant: new Date(Date.parse(at) + 60_000).toISOString() })
       assert.equal(found?.starts_at, at)
       return found!.id
@@ -234,7 +236,7 @@ test('Insights reads a home: occupancy, length of stay and nightly rate, and who
     // 20 nights, 2 closed: 5 of 18 open nights booked.
     assert.deepEqual(metrics(occupancy), { occupancy: '27.8%', nights_booked: '5 nights', nights_blocked: '2 nights' })
     const chart = occupancy.series.charts.occupancy!
-    assert.deepEqual([chart.points[15], chart.points[5]], [{ value: null, display: 'No average occupancy rate' }, { value: 100, display: '100% average occupancy rate' }])
+    assert.deepEqual([chart.points[15], chart.points[5]], [{ value: null, display: 'No occupancy rate' }, { value: 100, display: '100% occupancy rate' }])
     assert.deepEqual(chart.axis.map(tick => tick.label), ['0%', '25%', '50%', '75%', '100%'])
     assert.deepEqual(rows(occupancy), [['Cabin', '27.8%', '5 nights']])
     assert.deepEqual(metrics(await read('rates/length-of-stay')), { average_nights: '2.5 nights', longest: '3 nights' })

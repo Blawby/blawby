@@ -13,7 +13,6 @@
           <dl class="my-5 space-y-3 text-sm"><div v-for="row in data.performance.breakdown.slice(0, 2)" :key="row.key" class="flex flex-wrap justify-between gap-2"><dt class="text-muted">{{ row.label }}</dt><dd class="font-medium">{{ row.display }}</dd></div></dl>
           <UButton block color="neutral" variant="soft" label="View all details" :to="`${level.path.value}/performance`" />
         </DashboardSurface>
-        <ChannelReservationSummary v-if="dashboard.hasFeature('stays')" :rows="data.performance.channel_reservations" :month="monthName" />
         <template v-if="data.payouts?.configured">
           <section v-for="group in payoutGroups" :key="group.title" class="space-y-4">
             <h2 class="text-xl font-semibold">{{ group.title }}</h2>
@@ -25,7 +24,7 @@
           </section>
         </template>
         <p v-else-if="data.performance.payouts_connected === false" class="text-sm text-muted">Connect Stripe in Payments &amp; payouts to receive online payments.</p>
-        <section class="space-y-4"><h2 class="text-xl font-semibold">Reports</h2><NuxtLink :to="`${level.path.value}/booking-value`" class="flex items-center justify-between py-3 font-medium underline">{{ data.performance.booking_value_title }}<UIcon name="i-lucide-chevron-right" /></NuxtLink><NuxtLink :to="`${level.path.value}/transactions`" class="flex items-center justify-between py-3 font-medium underline">Transactions and payment history<UIcon name="i-lucide-chevron-right" /></NuxtLink><NuxtLink v-if="data.payouts?.configured" :to="`${level.path.value}/payouts`" class="flex items-center justify-between py-3 font-medium underline">Payout history and CSV export<UIcon name="i-lucide-chevron-right" /></NuxtLink></section>
+        <section class="space-y-4"><h2 class="text-xl font-semibold">Reports</h2><NuxtLink :to="`${level.path.value}/booking-value`" class="flex items-center justify-between py-3 font-medium underline">{{ data.performance.booking_value_title }}<UIcon name="i-lucide-chevron-right" /></NuxtLink><NuxtLink :to="`${level.path.value}/performance`" class="flex items-center justify-between py-3 font-medium underline">Monthly earnings report<UIcon name="i-lucide-chevron-right" /></NuxtLink><NuxtLink :to="`${level.path.value}/transactions`" class="flex items-center justify-between py-3 font-medium underline">Transactions and payment history<UIcon name="i-lucide-chevron-right" /></NuxtLink><NuxtLink v-if="data.payouts?.configured" :to="`${level.path.value}/payouts`" class="flex items-center justify-between py-3 font-medium underline">Payout history and CSV export<UIcon name="i-lucide-chevron-right" /></NuxtLink></section>
       </template>
       <PaymentsHelp />
     </div>
@@ -35,7 +34,6 @@
 <script setup lang="ts">
 import { dashboardThemeStyle } from '~/shared/dashboard-presentation'
 import PaymentsHelp from '~/components/dashboard/PaymentsHelp.vue'
-import ChannelReservationSummary from '~/components/dashboard/ChannelReservationSummary.vue'
 import DashboardSurface from '~/components/dashboard/DashboardSurface.vue'
 import EarningsBars from '~/components/dashboard/EarningsBars.vue'
 import { paymentMoney } from '~/shared/payment-display'
@@ -43,7 +41,7 @@ import { isEarningsOverview, payoutDate, payoutStatusLabel, type EarningsOvervie
 import { formatCalendarDate } from '~/utils/timezone'
 definePageMeta({ layout: 'dashboard', tab: 'menu', back: 'menu' })
 useSeoMeta({ title: 'Earnings | Blawby', robots: 'noindex, nofollow' })
-const route = useRoute(), dashboard = useDashboardOrganization(), api = useDashboardApi(), level = useRouteLevel()
+const route = useRoute(), api = useDashboardApi(), level = useRouteLevel()
 const showingBookingValue = computed(() => route.path.endsWith('/earnings/booking-value'))
 const { data, error } = await useAsyncData(() => `earnings-overview:${route.params.org_slug}:${showingBookingValue.value}`, () => showingBookingValue.value ? Promise.resolve(null) : api<EarningsOverview>('/api/dashboard/payments', { query: { view: 'overview' }, validate: isEarningsOverview }))
 const selected = computed(() => data.value?.performance.months.find(row => row.month === data.value?.month))

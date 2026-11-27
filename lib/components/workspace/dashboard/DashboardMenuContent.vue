@@ -8,24 +8,24 @@
     -->
     <UAlert v-if="cardsError" color="error" variant="soft" :title="cardsError" data-testid="dashboard-menu-error" />
 
-    <div v-if="cards.length" class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,160px),1fr))] gap-3">
+    <div v-if="cards.length" class="flex flex-wrap gap-3">
       <DashboardSurface
         v-for="card in cards"
         :key="card.testId"
         as="div"
         :presentation="menu?.presentation ?? dashboardPresentation"
-        class="relative flex min-h-46 min-w-0 flex-col gap-1"
+        class="relative flex min-h-46 min-w-min max-w-full flex-[1_1_160px] flex-col gap-1"
         :data-testid="card.testId"
       >
         <NuxtLink :to="card.to" prefetch-on="interaction" class="font-semibold after:absolute after:inset-0 after:rounded-2xl">{{ card.label }}</NuxtLink>
         <p class="mt-1 text-sm text-muted">{{ card.subline }}</p>
-        <p v-if="card.figure" class="mt-auto break-words text-[clamp(1.25rem,5vw,2rem)] font-semibold tracking-tight text-highlighted">{{ card.figure }}</p>
+        <p v-if="card.figure" class="mt-auto break-normal font-semibold tracking-tight text-highlighted" :style="{ fontSize: `${(menu?.presentation ?? dashboardPresentation).value_size}px` }">{{ card.figure }}</p>
         <!-- Airbnb stacks the listings' photos in the card's corner; the organization's places, or the account's past visits. -->
         <span v-if="card.photos.length" class="mt-auto flex items-center">
           <img v-for="(photo, index) in card.photos.slice(0, 3)" :key="photo" :src="photo" alt="" class="size-12 rounded-xl border-2 border-elevated object-cover" :class="index ? '-ml-3' : ''">
           <span v-if="card.photos.length > 3" class="-ml-3 flex size-12 items-center justify-center rounded-xl border-2 border-elevated bg-default text-sm font-semibold text-highlighted">+{{ card.photos.length - 3 }}</span>
         </span>
-        <div v-else-if="card.bars.length" class="mt-auto flex h-10 items-end gap-1" aria-hidden="true"><span v-for="(amount, index) in card.bars" :key="index" class="min-w-0 flex-1 rounded-t-sm" :style="{ height: `${Math.max(1, amount / Math.max(1, ...card.bars) * 100)}%`, background: menu?.presentation.light.accent }" /></div>
+        <div v-else-if="card.bars.length" class="mt-auto flex h-10 items-end gap-1" aria-hidden="true"><span v-for="(amount, index) in card.bars" :key="index" class="min-w-0 flex-1 rounded-t-sm" :style="{ height: `${Math.max(1, amount / Math.max(1, ...card.bars) * 100)}%`, background: 'var(--surface-accent)' }" /></div>
         <UIcon v-else-if="!card.figure" :name="card.icon" class="mt-auto size-7 text-muted" />
       </DashboardSurface>
     </div>

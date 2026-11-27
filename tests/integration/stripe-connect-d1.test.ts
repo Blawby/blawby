@@ -119,7 +119,7 @@ test('Today suggests Stripe setup until the account is ready, and a price for ea
     // An experience with no price cannot be booked until it has one; one booked on another site needs none.
     const unpriced = await createProduct(db, { organizationId: 'org', actor: { actorId: 'owner' }, env, product: { kind: 'experience', name: 'Unpriced Walk' } })
     const partner = await createProduct(db, { organizationId: 'org', actor: { actorId: 'owner' }, env, product: { kind: 'experience', name: 'Partner Tour', order_url: 'https://partner.example/tour' } })
-    assert.deepEqual(await suggested(), ['payments.connect:org', `product.readiness:${unpriced.id}`, `product.photo:${free.id}`, `product.photo:${partner.id}`, `product.photo:${unpriced.id}`])
+    assert.deepEqual(await suggested(), ['payments.connect:org', `product.readiness:${unpriced.id}`, `product.photo:${free.id}`, `product.photo:${partner.id}`, `product.photo:${unpriced.id}`, `product.photo:${paid.id}`])
     await updateProduct(db, { organizationId: 'org', actor: { actorId: 'owner' }, env, productId: unpriced.id, patch: { active: false, updated_at: unpriced.updated_at } })
     const photos = [`product.photo:${free.id}`, `product.photo:${partner.id}`, `product.photo:${paid.id}`]
     assert.deepEqual(await suggested(), ['payments.connect:org', ...photos], 'an inactive experience needs neither a price nor photos')

@@ -219,14 +219,14 @@ export async function paymentPayouts(env: CloudflareEnv, principal: FinancialPri
   return readStripePayouts(env, principal.organizationId, account, after, filters)
 }
 
-export async function readStripePayouts(env: CloudflareEnv, organizationId: string, account: StripeConnectedAccount | null, after?: string, filters: Stripe.PayoutListParams = {}) {
-  if (!account?.stripe_account_id) return { organization_id: organizationId, configured: false, balance: null, payouts: [], next_cursor: null, source: 'Stripe account not connected', refreshed_at: null }
+export async function readStripePayouts(env: CloudflareEnv, organizationId: string, account: StripeConnectedAccount | null, after?: string, filters: Stripe.PayoutListParams = {}, includeBalance = true) {
+  if (!account?.stripe_account_id) return { organization_id: organizationId, configured: false, ...(includeBalance ? { balance: null } : {}), payouts: [], next_cursor: null, source: 'Stripe account not connected', refreshed_at: null }
   const stripe = paymentsStripe(env, account.livemode), options = { stripeAccount: account.stripe_account_id }
-  const [balance, payouts] = await Promise.all([stripe.balance.retrieve({}, options), stripe.payouts.list({ ...filters, limit: 50, ...(after ? { starting_after: after } : {}) }, options)])
-  if (balance.livemode !== account.livemode || payouts.data.some(row => row.livemode !== account.livemode)) throw new Error('Stripe payout mode does not match connected account')
+  const [balance, payouts] = await Promise.all([includeBalance ? stripe.balance.retrieve({}, options) : undefined, stripe.payouts.list({ ...filters, limit: 50, ...(after ? { starting_after: after } : {}) }, options)])
+  if ((includeBalance && (!balance || balance.livemode !== account.livemode)) || payouts.data.some(row => row.livemode !== account.livemode)) throw new Error('Stripe payout mode does not match connected account')
   const nextCursor = payouts.has_more ? payouts.data.at(-1)?.id : null
   if (nextCursor === undefined || nextCursor === '') throw new Error('Stripe payout list is missing its next cursor')
-  return { organization_id: organizationId, configured: true, balance, payouts: payouts.data, next_cursor: nextCursor, source: 'Stripe', refreshed_at: new Date().toISOString() }
+  return { organization_id: organizationId, configured: true, ...(includeBalance ? { balance } : {}), payouts: payouts.data, next_cursor: nextCursor, source: 'Stripe', refreshed_at: new Date().toISOString() }
 }
 
 /**

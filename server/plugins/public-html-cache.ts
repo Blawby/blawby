@@ -4,6 +4,7 @@ import { isNonIndexableHost, isPrivateSeoPath } from '~/server/utils/seo-policy'
 import { hostnameOf, isNonProductionHost } from '~/server/utils/tenant-hosts'
 import { PREVIEW_COOKIE_NAME, PREVIEW_TOKEN_QUERY } from '~/server/utils/preview-token'
 import { isDemoHost, isDemoOrganization } from '~/shared/demo'
+import { TENANT_TYPES } from '~/utils/tenant-routing'
 
 const PRODUCTION_CACHE_CONTROL = 'public, s-maxage=60, stale-while-revalidate=300, max-age=0'
 const NON_PRODUCTION_CACHE_CONTROL = 'private, no-store, max-age=0'
@@ -19,7 +20,8 @@ export default definePlugin((nitroApp) => {
     // request and by the preview cookie on every request after it.
     const cookies = request.headers.get('cookie') ?? ''
     const isPreviewRequest = url.searchParams.has(PREVIEW_TOKEN_QUERY) || cookies.includes(`${PREVIEW_COOKIE_NAME}=`)
-    const privatePath = isPrivateSeoPath(pathname) || isPreviewRequest
+    const isPlatform = (event as { context?: { tenantType?: string } }).context?.tenantType === TENANT_TYPES.PLATFORM
+    const privatePath = isPrivateSeoPath(pathname, { isPlatform }) || isPreviewRequest
     const requestHost = hostnameOf(request.headers.get('host') || '')
     const organization = (event as { context?: { organization?: { subdomain?: string } } }).context?.organization
     const isDemo = isDemoHost(url.hostname) || isDemoHost(requestHost) || isDemoOrganization(organization)

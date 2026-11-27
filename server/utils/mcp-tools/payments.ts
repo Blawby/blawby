@@ -1,6 +1,7 @@
 import { HTTPError } from 'nitro'
 import { NOT_HANDLED, type McpExecutorContext } from './execution'
 import { authorizePayments, listPayments, paymentSummary, readPaymentDetails } from '~/server/domain/payments'
+import { getStripeConnectedAccount } from '~/server/utils/stripe-connect'
 import { paymentPayouts, paymentTransactions } from '~/server/domain/payments/earnings'
 import { dashboardOrigin } from '~/server/utils/dashboard-notification-links'
 import { isRecord } from '~/server/utils/type-guards'
@@ -95,7 +96,7 @@ export async function handlePaymentsTools(ctx: McpExecutorContext): Promise<unkn
       }
     }
     case 'get_payment_payouts': {
-      const result = await paymentPayouts(db, env, principal, typeof args.after === 'string' ? args.after : undefined)
+      const result = await paymentPayouts(env, principal, await getStripeConnectedAccount(db, organizationId), typeof args.after === 'string' ? args.after : undefined)
       return {
         organization_id: organizationId, configured: result.configured, source: result.source, refreshed_at: result.refreshed_at, next_cursor: result.next_cursor,
         dashboard_url: dashboard('/earnings/payouts'),

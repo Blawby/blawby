@@ -1,3 +1,4 @@
+import { calendarPresentation } from '~/shared/dashboard-presentation'
 import { listingGrantSql } from '~/server/domain/listing-access'
 import { assignedOperationsRoles, roleMatchesSql, rolesAllowing } from '~/utils/organization-access'
 import type { H3Event } from 'nitro'
@@ -5,14 +6,14 @@ import { HTTPError } from 'nitro'
 import { getRouterParam } from 'nitro/h3'
 import { executeBatch, queryFirst, type BatchQuery } from '~/server/db'
 import { agreementQueries, bookingAgreementFromRows } from '~/server/domain/agreements'
-import { dashboardMemberQuery, dashboardOrgQueryParam, getDashboardMemberContext, getDashboardSession } from '~/server/utils/dashboard-context'
-import { cloudflareEnv, readRequiredBody } from '~/server/utils/api-response'
-import { assignedMemberSql, BATCH_VIEWER, joinedMemberPrincipal, memberAccessPrincipal, membershipBySlugQuery, roleAllows, withViewer } from '~/server/utils/member-access'
+import { dashboardMemberQuery, dashboardOrgQueryParam, getDashboardMemberContext, readDashboardMemberResources } from '~/server/utils/dashboard-context'
+import { readRequiredBody } from '~/server/utils/api-response'
+import { assignedMemberSql, BATCH_VIEWER, memberAccessPrincipal, membershipBySlugQuery, roleAllows, withViewer } from '~/server/utils/member-access'
 import { bookedRecordsInRange, type BookedRecordInRange } from '~/server/domain/product-bookings'
 import { BOOKING_RECORDS_SQL, bookingDay, guestRequestMappingQuery, guestRequestQuery, requestActions, threadOperationalRecordFromRow, threadOperationalRecordQuery, validateGuestRequest, type BookedRecord } from '~/server/domain/requests'
 import { guestReplyAccountQuery, guestReplyDestination, type GuestReplyAccount } from '~/server/domain/guest-threads/operations'
 import { pendingStayChangesFromRows, pendingStayChangesQuery } from '~/server/domain/guest-threads/stay-change-requests'
-import { calendarStays, canReleaseStayNights, dashboardStayEditQueries, prepareStayReservationHome, stayAccessFor, stayCalendarOf, stayCalendarQueries, stayDetailFrom, stayDetailQuery, stayDetailSelection, type StayHome, type StayNight, type StayReservationHome } from '~/server/domain/stays'
+import { calendarStays, canReleaseStayNights, dashboardStayEditQueries, prepareStayReservationHome, prepareStayHomesDocument, stayAccessFor, stayCalendarOf, stayCalendarQueries, stayDetailFrom, stayDetailQuery, stayDetailSelection, type StayHome, type StayNight, type StayReservationHome } from '~/server/domain/stays'
 import { guestThreadChannelQuery, parseGuestThreadChannel, type GuestThreadChannelRow } from '~/server/domain/guest-threads/channel-messages'
 import { sourceLocaleFromRows, sourceLocaleQuery } from '~/server/utils/localization'
 import { placesCalendarOf, placesCalendarQueries, placesPresenceQuery, placesWindow } from '~/server/domain/places'
@@ -270,58 +271,50 @@ export async function dashboardBookingSearch(event: H3Event, query: { q?: unknow
  * organization through that slug.
  */
 async function dashboardPlacesCalendar(event: H3Event, window: BookingWindow, orgSlug?: string) {
-  const env = cloudflareEnv(event)
-  const session = await getDashboardSession(event, env)
-  if (!session?.user?.id) throw new HTTPError({ statusCode: 401, message: 'Authentication required', data: { code: 'UNAUTHORIZED', field: 'session' } })
   const slug = orgSlug ?? dashboardOrgQueryParam(event)
-  if (!slug) throw new HTTPError({ statusCode: 404, message: 'Organization not found', data: { code: 'ORGANIZATION_NOT_FOUND', field: 'org' } })
-  const userId = session.user.id
-  const organization = { query: '(SELECT id FROM organization WHERE slug = ?)', params: [slug] }
+  if (!slug) throw new HTTPError({ statusCode: 400, message: 'Organization is required', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
   const days = placesWindow(window)
-  const membership = membershipBySlugQuery(slug, userId)
-  const [memberResult, records, ...places] = await executeBatch(env.DB, [
-    membership,
-    withViewer(membership, bookedRecordsInRange(BATCH_VIEWER, { ...window, cancelled: window.includeCancelled, includeCalendarGrants: true })),
-    ...placesCalendarQueries(organization, userId, days),
-  ], { operation: 'Read host calendar' })
-  const member = memberResult?.results[0] as { organization_id: string; member_id: string; role: string } | undefined
-  if (!member) throw new HTTPError({ statusCode: 404, message: 'Not found or access denied', data: { code: 'ORGANIZATION_NOT_FOUND', field: 'org' } })
-  const principal = joinedMemberPrincipal({ organizationId: member.organization_id, memberId: member.member_id, role: member.role, userId }, { env, event })
+  const { env, organization, rows: [records, ...places] } = await readDashboardMemberResources(event, { slug }, [
+    bookedRecordsInRange(BATCH_VIEWER, { ...window, cancelled: window.includeCancelled, includeCalendarGrants: true }),
+    ...placesCalendarQueries({ query: BATCH_VIEWER.organization, params: [] }, { sql: BATCH_VIEWER.user }, days),
+  ])
+  const principal = memberAccessPrincipal(organization, { env, event })
   await stayAccessFor(principal)
   const calendar = await placesCalendarOf(principal, days, places)
   return { from: window.from, to: window.to, bookings: timedBookings(records!.results as BookedRecordInRange[], window), homes: [], places: calendar.places, manage: calendar.manage }
 }
 
-/**
- * The host Calendar's homes: one D1 round trip after the session, as its
- * places are. The membership leads the batch; homes, prices, stays and nights
- * follow, each reading the homes the viewer may see.
- */
-async function dashboardHomesCalendar(event: H3Event, window: BookingWindow, orgSlug?: string) {
-  const env = cloudflareEnv(event)
-  const session = await getDashboardSession(event, env)
-  if (!session?.user?.id) throw new HTTPError({ statusCode: 401, message: 'Authentication required', data: { code: 'UNAUTHORIZED', field: 'session' } })
+/** The calendar's records, optional full home context and Better Auth session share one batch. */
+async function dashboardHomesCalendar(event: H3Event, window: BookingWindow, orgSlug?: string, includeHomes = false) {
   const slug = orgSlug ?? dashboardOrgQueryParam(event)
-  if (!slug) throw new HTTPError({ statusCode: 404, message: 'Organization not found', data: { code: 'ORGANIZATION_NOT_FOUND', field: 'org' } })
-  const userId = session.user.id
-  const membership = membershipBySlugQuery(slug, userId)
-  const [memberResult, ...rest] = await executeBatch(env.DB, [membership, ...stayCalendarQueries(membership, { from: window.from, to: window.to, productId: window.productId ?? null })], { operation: 'Read homes calendar' })
-  const member = memberResult?.results[0] as { organization_id: string; member_id: string; role: string } | undefined
-  if (!member) throw new HTTPError({ statusCode: 404, message: 'Not found or access denied', data: { code: 'ORGANIZATION_NOT_FOUND', field: 'org' } })
-  const access = await stayAccessFor(joinedMemberPrincipal({ organizationId: member.organization_id, memberId: member.member_id, role: member.role, userId }, { env, event }))
-  const calendar = stayCalendarOf(rest, access.manage, window)
+  if (!slug) throw new HTTPError({ statusCode: 400, message: 'Organization is required', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
+  const queries = stayCalendarQueries({ from: window.from, to: window.to, productId: window.productId ?? null })
+  const context = includeHomes ? prepareStayHomesDocument(null) : null
+  const unique: BatchQuery[] = [], byQuery = new Map<string, number>()
+  const positions = [...queries, ...(context?.queries ?? [])].map(query => {
+    const key = JSON.stringify([query.query, query.params])
+    let index = byQuery.get(key)
+    if (index === undefined) { index = unique.length; byQuery.set(key, index); unique.push(query) }
+    return index
+  })
+  const { env, organization, rows: results } = await readDashboardMemberResources(event, { slug }, unique)
+  const rows = positions.map(index => results[index]!)
+  const access = await stayAccessFor(memberAccessPrincipal(organization, { env, event }))
+  const calendar = stayCalendarOf(rows.slice(0, queries.length), access.manage, window)
   if (window.productId && !calendar.homes.length) throw new HTTPError({ statusCode: 404, message: 'That place to stay is not in this organization', data: { code: 'HOME_NOT_FOUND' } })
   const homes = calendar.homes.map(entry => ({ ...entry, nights: entry.nights.map(dashboardCalendarNight) }))
-  return { from: window.from, to: window.to, bookings: calendar.stays, homes, places: [], manage: access.manage }
+  return { from: window.from, to: window.to,
+    bookings: window.unit === 'nights' ? calendar.stays : [...timedBookings(rows[3]!.results as BookedRecordInRange[], window), ...calendar.stays],
+    homes, places: [], manage: access.manage, presentation: calendarPresentation,
+    ...(context ? { home_context: { homes: context.read(rows.slice(queries.length)), manage: access.manage } } : {}),
+  }
 }
 
-export async function dashboardBookingCalendar(event: H3Event, query: BookingListQuery, orgSlug?: string) {
+export async function dashboardBookingCalendar(event: H3Event, query: BookingListQuery & { include_homes?: unknown }, orgSlug?: string) {
   const window = bookingListWindow(query)
+  if (query.include_homes !== undefined && query.include_homes !== 'true') throw new HTTPError({ statusCode: 400, message: 'include_homes must be true', data: { code: 'INVALID_CALENDAR_CONTEXT', field: 'include_homes' } })
   if (window.unit === 'slot') return dashboardPlacesCalendar(event, window, orgSlug)
-  if (window.unit === 'nights') return dashboardHomesCalendar(event, window, orgSlug)
-  // Without a unit: the homes calendar, and the timed bookings beside its stays.
-  const [homes, timed] = await Promise.all([dashboardHomesCalendar(event, window), dashboardBookingsContext(event).then(async context => timedBookings(await readBookedRecords(context, window), window))])
-  return { ...homes, bookings: [...timed, ...homes.bookings] }
+  return dashboardHomesCalendar(event, window, orgSlug, query.include_homes === 'true')
 }
 
 export async function readCalendarPlacePresence(event: H3Event, orgSlug?: string) {

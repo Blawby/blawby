@@ -3,12 +3,24 @@ import {getQuery} from 'nitro/h3'
 import {getDashboardContext} from '~/server/utils/dashboard-context'
 import {jsonResponse} from '~/server/utils/api-response'
 import {listPayments,paymentSummary,readPaymentDetails,authorizePayments} from '~/server/domain/payments'
-import {paymentPayoutDetail,paymentPayouts,paymentTransactionDestination,paymentTransactions} from '~/server/domain/payments/earnings'
-import { readDashboardEarnings } from '~/server/utils/dashboard-earnings'
+import {paymentPayoutExport,payoutFilters,paymentPayoutDetail,paymentPayouts,paymentTransactionDestination,paymentTransactions} from '~/server/domain/payments/earnings'
+import { readDashboardEarnings, readDashboardEarningsOverview, readDashboardPayoutAccount } from '~/server/utils/dashboard-earnings'
 import {queryAll,queryFirst} from '~/server/db'
 export default defineHandler(async event=>{
  const query=getQuery(event)
+ if(query.view==='overview')return jsonResponse(await readDashboardEarningsOverview(event,query),{headers:{'cache-control':'private, no-store'}})
  if(query.view==='performance' && typeof query.payment_id!=='string' && (query.after===undefined || (typeof query.after==='string' && query.after))) return jsonResponse(await readDashboardEarnings(event,query))
+ if(query.view==='payouts'||query.view==='payout'||query.view==='payout_export'){
+  if(query.after!==undefined&&(typeof query.after!=='string'||!query.after))throw new HTTPError({statusCode:400,statusMessage:'Valid page cursor is required'})
+  const filters=payoutFilters(query)
+  const {db,env,principal,account}=await readDashboardPayoutAccount(event)
+  if(query.view==='payout_export')return new Response(await paymentPayoutExport(env,principal,account,filters),{headers:{'content-type':'text/csv; charset=utf-8','content-disposition':'attachment; filename="payouts.csv"','cache-control':'private, no-store'}})
+  if(query.view==='payout'){
+   if(typeof query.payout_id!=='string'||!query.payout_id)throw new HTTPError({statusCode:400,statusMessage:'Payout is required'})
+   return jsonResponse(await paymentPayoutDetail(db,env,principal,account,query.payout_id))
+  }
+  return jsonResponse(await paymentPayouts(env,principal,account,typeof query.after==='string'?query.after:undefined,filters))
+ }
  const {db,env,organization,userId}=await getDashboardContext(event,{})
  const principal={organizationId:organization.id,userId,role:organization.role}
  const now=new Date(),from=typeof query.from==='string'?query.from:new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),1)).toISOString(),to=typeof query.to==='string'?query.to:now.toISOString()
@@ -18,11 +30,6 @@ export default defineHandler(async event=>{
  if(typeof query.payment_id==='string'){
   if(query.view==='destination')return jsonResponse(await paymentTransactionDestination(db,organization.id,organization.slug,query.payment_id))
   return jsonResponse(await readPaymentDetails(db,env,organization.id,query.payment_id))
- }
- if(query.view==='payouts')return jsonResponse(await paymentPayouts(db,env,principal,after,query.with_items==='1'))
- if(query.view==='payout'){
-  if(typeof query.payout_id!=='string'||!query.payout_id)throw new HTTPError({statusCode:400,statusMessage:'Payout is required'})
-  return jsonResponse(await paymentPayoutDetail(db,env,principal,query.payout_id))
  }
  if(query.view==='transactions')return jsonResponse(await paymentTransactions(db,principal,organization.slug,await listPayments(db,principal,{from,to,after,location_id:typeof query.location_id==='string'&&query.location_id?query.location_id:undefined,earnings_type:query.earnings_type==='paid'||query.earnings_type==='refunded'?query.earnings_type:undefined})))
  if(query.view==='refunds' || query.view==='disputes'){

@@ -1,5 +1,9 @@
 import { expect, test } from '@playwright/test'
 import { z } from 'zod'
+import { insightsIndexSchema, insightsOverviewSchema, insightsPageSchema } from '../../shared/insights'
+import { paymentMoney } from '../../shared/payment-display'
+import { dashboardPresentationSchema } from '../../shared/dashboard-presentation'
+import { isEarningsPerformance } from '../../shared/earnings-display'
 import { isThreadListResponse } from '../../lib/components/workspace/messages/guest-thread-client'
 
 const text = z.string()
@@ -119,4 +123,98 @@ test('native Today and Upcoming support the shipped and candidate iOS builds', a
       expect.soft(invalidFields, `iOS build ${build} cannot decode ${range}`).toEqual([])
     }
   }))
+})
+
+
+test('native Performance and Earnings preserve their metric values in one D1 round trip', async ({ baseURL }) => {
+  test.setTimeout(90_000)
+  if (!baseURL) throw new Error('Set PLAYWRIGHT_PREVIEW_URL for the deployed environment')
+  const origin = new URL(baseURL).origin
+  const email = process.env.CANARY_LOGIN_EMAIL, password = process.env.CANARY_LOGIN_PASSWORD
+  if (!email || !password) throw new Error('Configure the deployed canary login')
+  const signIn = await fetch(new URL('/api/auth/sign-in/email', origin), {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin },
+    body: JSON.stringify({ email, password, rememberMe: false }), redirect: 'error', signal: AbortSignal.timeout(12_000),
+  })
+  expect(signIn.status).toBe(200)
+  const token = signIn.headers.get('set-auth-token')
+  if (!token) throw new Error('Better Auth did not issue a native bearer token')
+  const read = async (path: string, query: Record<string, string> = {}) => {
+    const url = new URL(path, origin)
+    url.search = new URLSearchParams({ org: 'saltleaf-stays-demo', ...query }).toString()
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(12_000) })
+    expect(response.status, path).toBe(200)
+    expect(response.headers.get('x-d1-round-trip-count'), path).toBe('1')
+    return response.json() as Promise<unknown>
+  }
+  const index = insightsIndexSchema.parse(await read('/api/dashboard/insights'))
+  const overview = insightsOverviewSchema.parse(await read('/api/dashboard/insights/overview', { days: '30' }))
+  expect(overview.sections.map(section => section.id)).toEqual(expect.arrayContaining(['quality', 'rates', 'conversion']))
+  expect(overview.summary.map(metric => `${metric.page}/${metric.key}`)).toEqual(['rates/occupancy-rate/nights_booked', 'rates/nightly-rate/income', 'quality/overall-rating/five_star'])
+  expect(overview.sections.flatMap(section => section.metrics.map(metric => metric.page))).toEqual(expect.arrayContaining(['quality/overall-rating', 'rates/occupancy-rate', 'rates/nightly-rate', 'conversion/booking-conversion', 'conversion/lead-time', 'conversion/returning']))
+  const available = new Set<string>(index.sections.flatMap(section => section.pages.map(page => page.id)))
+  for (const pageId of new Set(overview.sections.flatMap(section => section.metrics.map(metric => metric.page)))) {
+    expect(available.has(pageId), pageId).toBe(true)
+    const detail = insightsPageSchema.parse(await read(`/api/dashboard/insights/${pageId}`, { start_date: overview.range.start_date, end_date: overview.range.end_date }))
+    for (const metric of [...overview.summary, ...overview.sections.flatMap(section => section.metrics)].filter(metric => metric.page === pageId)) {
+      expect(detail.metrics.find(value => value.key === metric.key)?.display, `${pageId}/${metric.key}`).toBe(metric.display)
+    }
+  }
+  const from = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10)
+  const to = new Date(Date.now() + 31 * 86_400_000).toISOString().slice(0, 10)
+  const grid = z.object({
+    from: z.string(), to: z.string(), presentation: z.object({ day_header_height: z.number(), settings_label: z.string() }),
+    homes: z.array(z.object({ home: z.object({ product_id: z.string() }), nights: z.array(z.object({ date: z.string() })) })),
+    home_context: z.object({ homes: z.array(z.object({ product_id: z.string() }).passthrough()), manage: z.boolean() }),
+  }).parse(await read('/api/dashboard/bookings/calendar', { unit: 'nights', from, to, include_homes: 'true' }))
+  expect(grid.from).toBe(from)
+  expect(grid.to).toBe(to)
+  expect(grid.home_context.homes.length).toBeGreaterThan(0)
+  expect(grid.homes.map(entry => entry.home.product_id)).toEqual(grid.home_context.homes.map(home => home.product_id))
+  for (const entry of grid.homes) expect(entry.nights).toHaveLength(45)
+  for (const home of grid.home_context.homes) {
+    const record = await read(`/api/dashboard/stay-homes/${home.product_id}`) as { home: unknown }
+    expect(home).toEqual(record.home)
+  }
+  const month = new Date().toISOString().slice(0, 7)
+  const landing = await read('/api/dashboard/payments', { view: 'overview', year: month.slice(0, 4), month }) as { month: string; performance: unknown; payouts: unknown }
+  expect(landing.month).toBe(month)
+  expect(isEarningsPerformance(landing.performance)).toBe(true)
+  if (!isEarningsPerformance(landing.performance)) throw new Error('Invalid earnings landing response')
+  const earnings = await read('/api/dashboard/payments', { view: 'performance', year: month.slice(0, 4), month, comparison: 'previous_year' })
+  expect(isEarningsPerformance(earnings)).toBe(true)
+  if (!isEarningsPerformance(earnings)) throw new Error('Invalid earnings response')
+  expect(earnings.months.find(row => row.month === month)).toEqual(landing.performance.months.find(row => row.month === month))
+  expect(earnings.comparison?.year).toBe(Number(month.slice(0, 4)) - 1)
+  expect(earnings.comparison?.months).toHaveLength(12)
+  const membershipsResponse = await fetch(new URL('/api/auth/organization/list', origin), { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(12_000) })
+  expect(membershipsResponse.status).toBe(200)
+  const memberships = z.array(z.object({ id: z.string(), slug: z.string() })).parse(await membershipsResponse.json())
+  // The whole Menu must use one batch and agree with the canonical financial report.
+  for (const org of ['saltleaf-stays-demo', 'cedar-legal-demo', 'ember-slice-demo']) {
+    const menu = z.object({ title: z.string(), presentation: dashboardPresentationSchema,
+      cards: z.array(z.object({ id: z.string(), title: z.string(), value: z.string(), detail: z.string(), bars: z.array(z.number()), amount: z.number().optional(), currency: z.string().optional(), month: z.string().optional() })),
+      insights: insightsIndexSchema,
+    }).parse(await read('/api/dashboard/menu', { org }))
+    expect(menu.cards.map(card => card.id)).toEqual(['earnings', 'insights'])
+    expect(menu.insights.sections.find(section => section.id === 'quality')?.pages.map(page => page.id)).toContain('quality/overall-rating')
+    const organization = memberships.find(value => value.slug === org)
+    if (!organization) throw new Error(`Missing review workspace ${org}`)
+    const records = z.object({ reviews: z.array(z.object({ rating: z.number(), status: z.string(), booking_id: z.string().nullable() })) }).parse(await read(`/api/editor/organizations/${organization.id}/reviews`, { org }))
+    const eligible = records.reviews.filter(review => review.booking_id !== null ? review.status !== 'rejected' : review.status === 'approved')
+    const rating = eligible.length ? (Math.round(eligible.reduce((sum, review) => sum + review.rating, 0) / eligible.length * 100) / 100).toFixed(2) : null
+    expect(menu.cards[1]!.value).toBe(rating === null ? 'No ratings yet' : `★ ${rating}`)
+    expect(menu.cards[1]!.detail).toBe(`${eligible.length} ${eligible.length === 1 ? 'review' : 'reviews'}`)
+
+    const card = menu.cards[0]!
+    const report = await read('/api/dashboard/payments', { org, view: 'performance', year: month.slice(0, 4), month })
+    if (!isEarningsPerformance(report)) throw new Error('Invalid menu comparison report')
+    const current = report.months.find(row => row.month === month)!
+    expect(card.amount).toBe(current.paid - current.refunded)
+    expect(card.value).toBe(paymentMoney(current.paid - current.refunded, report.currency))
+    expect(card.currency).toBe(report.currency)
+    expect(card.bars).toEqual(report.months.map(row => row.paid - row.refunded))
+    expect(menu.presentation).toEqual(overview.presentation)
+  }
+
 })

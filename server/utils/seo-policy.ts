@@ -72,7 +72,15 @@ export interface RuntimeSeoConfig {
   name?: string
 }
 
-export function isPrivateSeoPath(pathname: string): boolean {
+export const PLATFORM_INDEXABLE_AUTH_PATHS = new Set([
+  '/login',
+  '/signup',
+])
+
+export function isPrivateSeoPath(pathname: string, options?: { isPlatform?: boolean }): boolean {
+  if (options?.isPlatform && PLATFORM_INDEXABLE_AUTH_PATHS.has(pathname)) {
+    return false
+  }
   if (PRIVATE_EXACT_ROUTES.has(pathname)) return true
   return PRIVATE_ROUTE_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))
 }

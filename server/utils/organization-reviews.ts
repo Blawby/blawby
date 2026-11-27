@@ -89,7 +89,7 @@ export function prepareOrganizationReviews(organizationId: string | { sql: strin
   const scope = `r.organization_id = ${org}${locationFilter}${options.publishedOnly ? " AND r.status = 'approved'" : ''}`
   const params = options.locationId ? [...orgParams, options.locationId] : orgParams
   const queries = [{ query: `
-    SELECT r.id, r.organization_id, r.location_id, r.author_name,
+    SELECT r.id, r.organization_id, r.location_id, r.booking_id, r.author_name,
            r.rating, r.title, r.content, r.owner_reply, r.owner_reply_at, r.helpful_count, r.status, r.source,
            ${submittedReviewRequestSql('r')} AS review_request_id, entered_by_user_id, collection_method, original_review_date,
            original_reference, google_review_metadata, publication_authorized, created_at, updated_at,

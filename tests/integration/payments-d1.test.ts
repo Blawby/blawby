@@ -12,7 +12,8 @@ import { bindDatabaseEvents } from '../../server/db/index.ts'
 import { claimSessionCapacity, listBookableSessions, setProductBookingConfig } from '../../server/utils/availability.ts'
 import { createProductBooking, quoteTimedBooking } from '../../server/domain/product-bookings.ts'
 import publicBookingRoute from '../../server/api/public/products/[slug]/book.post.ts'
-import { projectStripeConnectedAccount, reserveStripeConnectedAccount } from '../../server/utils/stripe-connect.ts'
+import { paymentPayoutExport, payoutFilters, paymentPerformance, paymentTransactionDestination  } from '../../server/domain/payments/earnings.ts'
+import { projectStripeConnectedAccount, reserveStripeConnectedAccount, getStripeConnectedAccount } from '../../server/utils/stripe-connect.ts'
 import { H3Event } from 'h3'
 import { ingestStripeFeeReport, stripeFeeMinor, stripeFeeScaled } from '../../server/domain/payments/costs.ts'
 import { buyerActivities, buyerPaymentActivityPath, claimCheckoutReturn, tokenHash } from '../../server/domain/payments/buyer.ts'
@@ -39,7 +40,6 @@ import { createReplayableReservationCancelToken, hashReservationCancelToken } fr
 import { getStripe } from '../../server/utils/billing.ts'
 import { executeGuestThreadOperation } from '../../server/domain/guest-threads/operations.ts'
 import { approveRefundAuthorization, reconcileRefundState, requirePayment } from '../../server/domain/payments/index.ts'
-import { paymentTransactionDestination } from '../../server/domain/payments/earnings.ts'
 import { completePaymentReturn, reviewPayment, confirmPayment, paymentHandoff, preparePaymentReturn, requireClaimedPayment } from '../../server/domain/payments/intent.ts'
 import { reconcilePaymentIntent, processPaymentEvent } from '../../server/domain/payments/events.ts'
 import { readUnpaid, writeExistingPaymentTasks } from '../../server/domain/unpaid.ts'
@@ -466,6 +466,12 @@ test('MCP financial reads return bounded reports and authenticated detail links 
    assert.equal(new Headers(init?.headers).get('stripe-account'),'acct_seller')
    if(url.pathname==='/v1/balance')return Response.json({object:'balance',livemode:false,available:[{currency:'usd',amount:9000,source_types:{card:9000}}],pending:[],connect_reserved:[{currency:'usd',amount:500}],metadata:{private_bank_account:'private-bank-value'}})
    assert.equal(url.pathname,'/v1/payouts')
+   if(url.searchParams.get('status')==='paid'){
+    assert.equal(url.searchParams.get('arrival_date[gte]'),'1893456000')
+    assert.equal(url.searchParams.get('arrival_date[lt]'),'1924992000')
+    const next=url.searchParams.has('starting_after')
+    return Response.json({object:'list',has_more:!next,data:[{id:next?'po_export_last':'po_export_first',object:'payout',livemode:false,amount:next?12345:9000,currency:next?'jpy':'usd',status:'paid',arrival_date:1900000000,created:1899990000}]})
+   }
    payoutReads.push(url.searchParams.get('starting_after')??'first')
    const next = url.searchParams.has('starting_after')
    return Response.json({object:'list',has_more:!next,data:next?[]:[{id:'po_report',object:'payout',livemode:false,amount:9000,currency:'usd',status:'paid',arrival_date:1900000000,created:1899990000,automatic:true,destination:'private-bank-value',metadata:{note:'private-payout-note'}}]})
@@ -478,6 +484,17 @@ test('MCP financial reads return bounded reports and authenticated detail links 
    assert.deepEqual((payouts.payouts as Array<Record<string,unknown>>).map(payout=>({id:payout.id,amount:payout.amount,currency:payout.currency,dashboard_url:payout.dashboard_url})),[{id:'po_report',amount:9000,currency:'USD',dashboard_url:'https://proof.example/dashboard/payments/earnings/payouts/po_report'}])
    assert.deepEqual((await call('get_payment_payouts',{after:'po_report'})).payouts,[])
    assert.deepEqual(payoutReads,['first','po_report'])
+   const principal={organizationId:ORG,userId:'verified',role:'owner'}
+   const report=await paymentPerformance(db as never,principal,2026,'2026-10',true)
+   assert.deepEqual(report.months.find(month=>month.month==='2026-10'),{month:'2026-10',paid:10000,refunded:1000})
+   assert.equal(report.comparison!.year,2025)
+   assert.deepEqual(report.comparison!.months,Array.from({length:12},(_,index)=>({month:`2025-${String(index+1).padStart(2,'0')}`,paid:0,refunded:0})))
+   const exported=await paymentPayoutExport(env,principal,await getStripeConnectedAccount(db,ORG),payoutFilters({status:'paid',arrival_from:'2030-01-01',arrival_to:'2030-12-31'}))
+   const csv=await new Response(exported).text()
+   assert.equal(csv.trim().split('\r\n').length,3)
+   assert.match(csv,/"90.00","USD","paid","po_export_first"/)
+   assert.match(csv,/"12345","JPY","paid","po_export_last"/)
+
   } finally { fetchMock.mock.restore() }
   for(const value of [listed,detail,usage,payouts])assert.doesNotMatch(JSON.stringify(value),/private-|acct_seller|buyer_user_id|stripe_account_id|price_snapshot_json|idempotency_key|created_by|source_types|connect_reserved/u)
   assert.deepEqual(await Promise.all(tables.map(async table => (await db.prepare(`SELECT * FROM ${table} ORDER BY id`).all()).results)),before)

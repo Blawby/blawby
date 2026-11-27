@@ -1,7 +1,7 @@
 {
   "surface": "tenant",
-  "fingerprint": "sha256:c6e4aa5ce4c092524c4f08ce3f94bc72a60110c1cb801c3b7149baf918fb0f37",
-  "documentationFingerprint": "sha256:dd9e27bf0c302e6d5e086fe06473fc99d4a967fa1b5a71dfaccb4881bfbff0cf",
+  "fingerprint": "sha256:b9115d2406dbf388cddab956fc10c6db44948c287499f4c3206953c4e9d66a15",
+  "documentationFingerprint": "sha256:cfd5dd10c984e7f62fe33f9454bf5cb98745b2498cc3b23d53a00f4e3ce2608c",
   "tools": [
     {
       "name": "add_organization_language",
@@ -52282,6 +52282,86 @@
             ],
             "type": "object"
           },
+          "index": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "sections": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "enum": [
+                            "quality",
+                            "rates",
+                            "conversion",
+                            "marketing"
+                          ],
+                          "type": "string"
+                        },
+                        "pages": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "enum": [
+                                  "quality/overall-rating",
+                                  "rates/occupancy-rate",
+                                  "rates/bookings",
+                                  "rates/cancellation-rate",
+                                  "rates/length-of-stay",
+                                  "rates/party-size",
+                                  "rates/nightly-rate",
+                                  "rates/average-value",
+                                  "rates/income-by-channel",
+                                  "conversion/booking-conversion",
+                                  "conversion/lead-time",
+                                  "conversion/returning",
+                                  "conversion/page-views",
+                                  "conversion/top-pages",
+                                  "conversion/sources",
+                                  "marketing/instagram",
+                                  "marketing/google-ads"
+                                ],
+                                "type": "string"
+                              },
+                              "title": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "title"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title",
+                        "pages"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "sections"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "list": {
             "anyOf": [
               {
@@ -52570,6 +52650,7 @@
           }
         },
         "required": [
+          "index",
           "title",
           "subtitle",
           "note",
@@ -134999,7 +135080,7 @@
       "toolContracts": {
         "create_post": "sha256:a2a95f5e752b47a10f2d42dfaaca0caca19afd2a4110adc3fd97dad2eb8a763a",
         "get_conversation": "sha256:5007b5cc2485f51db503b10ae92e88691fe6d2ffa56dafced5194e41abd1fd3f",
-        "get_organization_analytics": "sha256:6778353a6266b04efaca189217f19982d643d91249d8444829e9936ff203e487",
+        "get_organization_analytics": "sha256:c48d286a1c8e9c89006c19cfad37dcaa7b11a2f9ea4acb5bdbd35ea9e9255d9d",
         "get_product": "sha256:c8270bc0e91bc60249c60c0b9c8fb0c6051130a5b0e00ab51b83b228adee6af7",
         "get_workspace_context": "sha256:e8760a2ee1dccde4719c76a07115d3fffd324972c6aa981e567f4934b19a550c",
         "list_conversations": "sha256:5efc262d1e75b8dfe19318f81b756d196a5244255dec58a22242eabdd932a179",

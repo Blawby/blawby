@@ -112,8 +112,10 @@ test('the places calendar reads each location, experience and consultation with 
       const rows = await executeBatch(db, stayCalendarQueries({ from: FROM, to: TO, productId: null, cancelled }).map(query => withViewer(membershipBySlugQuery('ember', OWNER), query)), { operation: 'Read combined calendar records' })
       return rows[3]!.results as Array<{ id: string; status: string }>
     }
-    assert.equal((await records(false)).some(record => record.id === 'r3'), false)
-    assert.equal((await records(true)).find(record => record.id === 'r3')?.status, 'cancelled')
+    assert.deepEqual((await records(false)).map(record => record.id).sort(), ['b1', 'b2', 'r1', 'r2', 'r4'])
+    const includingCancelled = await records(true)
+    assert.deepEqual(includingCancelled.map(record => record.id).sort(), ['b1', 'b2', 'r1', 'r2', 'r3', 'r4'])
+    assert.equal(includingCancelled.find(record => record.id === 'r3')?.status, 'cancelled')
     assert.deepEqual(calendar.places.map(entry => [entry.place.kind, entry.place.id, entry.place.name, entry.place.detail, entry.place.slug, entry.place.provider]), [
       ['location', 'brooklyn', 'Brooklyn', '77 Dean St, Brooklyn', 'brooklyn', null],
       ['location', 'williamsburg', 'Williamsburg', '77 Dean St, Brooklyn', 'williamsburg', null],

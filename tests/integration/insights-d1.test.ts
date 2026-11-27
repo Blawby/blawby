@@ -105,14 +105,14 @@ test('Insights reads a restaurant from visit to payment: sources, bookings, valu
     const index = await readInsightsIndex(db as never, reader)
     // A restaurant's pages, in its words: no homes, Reservations, Returning diners.
     assert.deepEqual(index.sections.map(section => [section.title, section.pages.map(page => page.title)]), [['Quality', ['Overall rating']],
-      ['Bookings & rates', ['Reservations', 'Cancellation rate', 'Party size', 'Average value', 'Income by channel']],
-      ['Conversion', ['Booking conversion', 'Booking lead time', 'Returning diners', 'Page views', 'Top pages', 'Sources']], ['Marketing', ['Instagram', 'Google Ads']]])
+      ['Reservations & rates', ['Reservations', 'Cancellation rate', 'Party size', 'Average value', 'Income by channel']],
+      ['Conversion', ['Reservation conversion', 'Reservation lead time', 'Returning diners', 'Page views', 'Top pages', 'Sources']], ['Marketing', ['Instagram', 'Google Ads']]])
 
     for (const length of ['7', '30', '365']) {
       const overview = await readInsightsOverview(db as never, reader, length, true)
       assert.equal((Date.parse(overview.range.end_date) - Date.parse(overview.range.start_date)) / 86_400_000 + 1, Number(length))
       assert.deepEqual(overview.summary.map(metric => [metric.page, metric.key]), [['rates/bookings', 'confirmed'], ['rates/average-value', 'income'], ['quality/overall-rating', 'five_star']])
-      assert.deepEqual(overview.sections.map(section => section.title), ['Quality', 'Bookings & rates', 'Conversion'])
+      assert.deepEqual(overview.sections.map(section => section.title), ['Quality', 'Reservations & rates', 'Conversion'])
       assert.equal(overview.sections[1]!.metrics[0]!.label, 'Reservations')
       assert.equal(overview.sections[2]!.metrics.at(-1)!.label, 'Returning diners')
       for (const metric of [...overview.summary, ...overview.sections.flatMap(section => section.metrics)]) {

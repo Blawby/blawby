@@ -108,7 +108,9 @@ export async function dashboardFetch<T>(
     || (/^\/api\/organizations\/[^/]+\/billing\/homes$/.test(request) && /^\/dashboard\/[^/]+\/products\/[^/]+\/publication(?:\/|$)/.test(useRequestURL().pathname))
     || request === '/api/dashboard/agenda' || request === '/api/dashboard/bookings/calendar'
     || (request === '/api/dashboard/stay-homes' && options.query?.view === 'calendar')
-    || (request === '/api/dashboard/payments' && (options.query?.view === 'performance' || options.query?.view === 'payouts'))
+    || request === '/api/dashboard/menu' || request === '/api/dashboard/insights/overview'
+    || /^\/api\/dashboard\/insights\/(?!marketing\/)[^/]+\/[^/]+$/.test(request)
+    || (request === '/api/dashboard/payments' && ['overview', 'performance', 'payouts', 'booking_value'].includes(String(options.query?.view)))
     || (request === '/api/dashboard/settings' && (options.query?.connections === '1' || options.query?.view === 'website'))
     || (/^\/api\/editor\/organizations\/[^/]+\/media$/.test(request) && /^\/dashboard\/[^/]+\/locations\/[^/]+\/photos\/?$/.test(useRequestURL().pathname))
     || /^\/api\/editor\/organizations\/[^/]+\/(?:reviews|blog\/[^/]+|posts|qa|locations\/[^/]+\/qa|pages\/[^/]+)$/.test(request)

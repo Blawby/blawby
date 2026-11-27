@@ -30,6 +30,7 @@ export interface OpportunityView {
   product_id: string | null
   location_id: string | null
   /** The guest conversation a welcome is sent in; null for every setup item. */
+  progress?: { completed: number; total: number; label: string }
   conversation_id: string | null
   /** The welcome it pre-writes from the business's own records, for the owner to review and send. */
   message: string | null
@@ -85,17 +86,19 @@ export function setupQueries(organization: { sql: string; params?: unknown[] }, 
       ORDER BY p.created_at, p.id`, params: [...organization.params ?? [], ...(locationId ? [locationId] : []), at, at, ...(locationId ? [locationId] : [])] },
     { query: `SELECT * FROM (
         SELECT p.id, p.name, NULL AS slug, 'product' AS owner_type,
-          CASE WHEN NOT EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = p.organization_id
-            AND m.owner_type = 'product' AND m.owner_id = p.id AND m.slot IN ('image', 'gallery') AND m.status = 'active') THEN 'photo' ELSE 'description' END AS missing
+          CASE WHEN p.kind <> 'service' AND NOT EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = p.organization_id
+            AND m.owner_type = 'product' AND m.owner_id = p.id AND m.slot IN ('image', 'gallery') AND m.status = 'active') THEN 'photo' ELSE 'description' END AS missing,
+          (CASE WHEN trim(p.description) <> '' THEN 1 ELSE 0 END + CASE WHEN p.kind <> 'service' AND EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = p.organization_id AND m.owner_type = 'product' AND m.owner_id = p.id AND m.slot IN ('image', 'gallery') AND m.status = 'active') THEN 1 ELSE 0 END) AS completed,
+          CASE WHEN p.kind = 'service' THEN 1 ELSE 2 END AS total
         FROM products p WHERE p.organization_id = ${organization.sql} AND p.active = 1 AND p.kind IN ('dish', 'experience', 'stay', 'service')
           ${locationId ? 'AND EXISTS (SELECT 1 FROM product_locations l WHERE l.organization_id = p.organization_id AND l.product_id = p.id AND l.location_id = ?)' : ''}
-          AND (trim(p.description) = '' OR NOT EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = p.organization_id
+          AND (trim(p.description) = '' OR p.kind <> 'service' AND NOT EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = p.organization_id
             AND m.owner_type = 'product' AND m.owner_id = p.id AND m.slot IN ('image', 'gallery') AND m.status = 'active'))
-        UNION ALL SELECT l.id, l.title, l.slug, 'business_location', 'photo' FROM business_locations l
+        UNION ALL SELECT l.id, l.title, l.slug, 'business_location', 'photo', 0 AS completed, 1 AS total FROM business_locations l
         WHERE l.organization_id = ${organization.sql} AND l.status = 'active' ${locationId ? 'AND l.id = ?' : ''}
           AND NOT EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = l.organization_id
             AND m.owner_type = 'business_location' AND m.owner_id = l.id AND m.slot IN ('image', 'gallery') AND m.status = 'active')
-      ) ORDER BY owner_type, name, id LIMIT 3`, params: [...organization.params ?? [], ...(locationId ? [locationId] : []), ...organization.params ?? [], ...(locationId ? [locationId] : [])] },
+      ) ORDER BY owner_type, name, id`, params: [...organization.params ?? [], ...(locationId ? [locationId] : []), ...organization.params ?? [], ...(locationId ? [locationId] : [])] },
   ]
 }
 
@@ -105,25 +108,25 @@ export function setupViews(factRows: unknown[], unpricedRows: unknown[], improve
   if (!organization) return null
   const slug = organization.slug, organizationId = organization.id
   const items: OpportunityView[] = []
-  const offer = (id: string, statusLine: string, title: string, detail: string, path: string, icon: TodayIcon, productId: string | null = null) =>
-    items.push({ id, status_line: statusLine, title, detail, icon, path, product_id: productId, location_id: input.locationId ?? null, conversation_id: null, message: null })
+  const offer = (id: string, statusLine: string, title: string, detail: string, path: string, icon: TodayIcon, productId: string | null = null, progress?: OpportunityView['progress']) =>
+    items.push({ ...(progress ? { progress } : {}), id, status_line: statusLine, title, detail, icon, path, product_id: productId, location_id: input.locationId ?? null, conversation_id: null, message: null })
 
   // Stripe is reviewing an account that is waiting on it; there is nothing for the owner to do yet.
   if (!organization.payments_ready && organization.stripe_status !== 'pending_review') {
-    offer(`payments.connect:${organizationId}`, 'Payments', organization.stripe_status ? 'Finish setting up payments' : 'Set up payments', 'Connect with Stripe.', `/dashboard/${encodeURIComponent(slug)}/payments/payout-method`, 'i-lucide-credit-card')
+    offer(`payments.connect:${organizationId}`, 'Payments', organization.stripe_status ? 'Finish setting up payments' : 'Set up payments', 'Connect with Stripe.', `/dashboard/${encodeURIComponent(slug)}/payments/payout-method`, 'i-lucide-credit-card', null, { completed: 0, total: 1, label: 'Payments enabled' })
   }
   const first = FIRST_OFFERING[organization.vertical as keyof typeof FIRST_OFFERING]
   if (first && !organization.has_offering) offer(`product.create:${organizationId}`, 'Catalog', first.title, first.detail, first.path(slug), 'i-lucide-list-checks')
   for (const product of unpricedRows as Array<{ id: string; name: string }>) {
     offer(`product.readiness:${product.id}`, 'Catalog', `Set a booking price for “${product.name}”`, 'This experience needs a price before guests can book it on your site.', `${productEditorPath(slug, product.id)}/price`, 'i-lucide-list-checks', product.id)
   }
-  for (const row of improvementRows as Array<{ id: string; name: string; slug: string | null; owner_type: string; missing: string }>) {
+  for (const row of improvementRows as Array<{ id: string; name: string; slug: string | null; owner_type: string; missing: string; completed: number; total: number }>) {
     const location = row.owner_type === 'business_location'
     const path = location ? `${locationEditorPath(slug, row.slug!)}/photos` : `${productEditorPath(slug, row.id)}/${row.missing === 'photo' ? 'photo' : 'description'}`
     offer(`${row.owner_type}.${row.missing}:${row.id}`, location ? 'Location' : 'Catalog',
       row.missing === 'photo' ? `Add photos of “${row.name}”` : `Describe “${row.name}”`,
       row.missing === 'photo' ? 'Help people see what to expect.' : 'Help people decide whether it’s right for them.', path,
-      'i-lucide-list-checks', location ? null : row.id)
+      'i-lucide-list-checks', location ? null : row.id, { completed: row.completed, total: row.total, label: location ? 'Photos added' : 'Details completed' })
   }
   if (!items.length && !organization.has_post) offer(`marketing.post:${organizationId}`, 'Marketing', 'Create a post for your business', 'Share something people can look forward to.', `/dashboard/${encodeURIComponent(slug)}/website/posts/new`, 'i-lucide-list-checks')
   return { slug, vertical: organization.vertical, opportunities: items }

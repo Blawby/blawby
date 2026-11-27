@@ -1,4 +1,6 @@
-import type { EarningsPerformance, PayoutDetail, PayoutItem } from '~/shared/earnings-display'
+import { bookingDay } from '~/server/domain/requests'
+import { dashboardPresentation } from '~/shared/dashboard-presentation'
+import type { EarningsPerformance, PayoutDetail, PayoutItem, BookingValueReport } from '~/shared/earnings-display'
 import type Stripe from 'stripe'
 import { HTTPError } from 'nitro'
 import { executeBatch, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
@@ -6,6 +8,7 @@ import { ownerPicturesFromRows } from '~/server/notifications/hero'
 import { mediaPlacementsQuery } from '~/server/utils/media-asset-manager'
 import { paymentsStripe, type StripeConnectedAccount } from '~/server/utils/stripe-connect'
 import { currencyFractionDigits } from '~/shared/currencies'
+import { paymentMoney } from '~/shared/payment-display'
 import { addLocalDays, isValidCalendarDate } from '~/utils/timezone'
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { roleAllows } from '~/server/utils/member-access'
@@ -25,6 +28,7 @@ interface PaymentPicture {
 }
 
 type PaymentSubject = Omit<PaymentPicture, 'title' | 'image_url'> & { id: string; product_id: string | null }
+const paymentProductSql = "COALESCE(b.product_id, json_extract(p.price_snapshot_json, '$.product_id'), json_extract(p.price_snapshot_json, '$.membership.product_id'))"
 const paymentBookingJoin = "LEFT JOIN bookings b ON p.subject_type = 'booking' AND b.id = p.subject_id AND b.organization_id = p.organization_id"
 
 function paymentSnapshot(payment: Pick<Payment, 'id' | 'price_snapshot_json'>) {
@@ -37,11 +41,11 @@ function paymentSnapshot(payment: Pick<Payment, 'id' | 'price_snapshot_json'>) {
 function preparePaymentPictures(organizationId: string, selection: { sql: string; params: unknown[] }, includeBuyer: boolean) {
   const subjects: BatchQuery = {
     query: `
-    SELECT p.id, b.id AS booking_id, COALESCE(b.product_id, CASE WHEN p.subject_type = 'membership' THEN json_extract(p.price_snapshot_json, '$.product_id') END) AS product_id, pr.name, b.starts_at, b.ends_at, b.timezone,
+    SELECT p.id, b.id AS booking_id, ${paymentProductSql} AS product_id, pr.name, b.starts_at, b.ends_at, b.timezone,
       ${includeBuyer ? `COALESCE(json_extract(r.payload_json, '$.guest.name'), json_extract(bc.payload_json, '$.guest.name'), json_extract(oc.payload_json, '$.guest.name'), json_extract(p.price_snapshot_json, '$.membership.member_name'), CASE WHEN COALESCE(u."isAnonymous", 0) = 0 THEN u.name END)` : 'NULL'} AS buyer_name
       FROM payments p
       ${paymentBookingJoin}
-      LEFT JOIN products pr ON pr.id = b.product_id AND pr.organization_id = b.organization_id
+      LEFT JOIN products pr ON pr.id = ${paymentProductSql} AND pr.organization_id = p.organization_id
       ${includeBuyer ? `LEFT JOIN user u ON u.id = p.buyer_user_id
       LEFT JOIN payment_checkout_holds h ON h.payment_id = p.id
       LEFT JOIN conversations r ON r.id = h.conversation_id AND r.organization_id = p.organization_id
@@ -54,7 +58,7 @@ function preparePaymentPictures(organizationId: string, selection: { sql: string
     organizationId, ownerType, includeOrganizationFallback: false,
     owners: { sql, params: selection.params }
   })
-  const products = media('product', `SELECT COALESCE(b.product_id, CASE WHEN p.subject_type = 'membership' THEN json_extract(p.price_snapshot_json, '$.product_id') END) FROM payments p ${paymentBookingJoin} WHERE ${selection.sql}`)
+  const products = media('product', `SELECT ${paymentProductSql} FROM payments p ${paymentBookingJoin} WHERE ${selection.sql}`)
   const locations = media('business_location', `SELECT p.location_id FROM payments p ${paymentBookingJoin} WHERE ${selection.sql} AND b.id IS NULL AND json_type(p.price_snapshot_json, '$.stay') IS NOT NULL`)
   return {
     queries: [subjects, products, locations], read(payments: readonly Pick<Payment, 'id' | 'location_id' | 'price_snapshot_json'>[], [subjectRows, productMedia, locationMedia]: D1Result[]) {
@@ -115,15 +119,15 @@ export function preparePaymentPerformance(
   const queries = [paymentMonthsQuery(organization, year),
   {
     query: `SELECT p.id, p.location_id, p.price_snapshot_json, p.captured_amount, p.refunded_amount,
-        b.id AS booking_id, b.product_id ${period}`, params: periodParams
+        b.id AS booking_id, ${paymentProductSql} AS product_id ${period}`, params: periodParams
   },
   {
-    query: `SELECT o.default_currency, CASE WHEN ${payoutGuard} THEN EXISTS (
+    query: `SELECT o.default_currency, o.vertical, CASE WHEN ${payoutGuard} THEN EXISTS (
       SELECT 1 FROM stripe_connected_accounts s WHERE s.organization_id = o.id AND s.stripe_account_id IS NOT NULL
     ) END AS payouts_connected FROM organization o WHERE o.id = ${org}`, params: orgParams
   },
   channelReservationAmountQuery(organization, monthStart, monthEnd),
-  imagesFor('product', `SELECT b.product_id ${period} AND b.product_id IS NOT NULL`),
+  imagesFor('product', `SELECT ${paymentProductSql} ${period} AND ${paymentProductSql} IS NOT NULL`),
   imagesFor('business_location', `SELECT p.location_id ${period} AND b.id IS NULL AND json_type(p.price_snapshot_json, '$.stay') IS NOT NULL`),
   ...(comparison ? [paymentMonthsQuery(organization, year - 1)] : []),
   ]
@@ -163,20 +167,31 @@ export function preparePaymentPerformance(
       entry.count += 1
       byTitle.set(snapshot.title, entry)
     }
-    const account = organizationResult!.results[0] as { default_currency: string; payouts_connected: number | null } | undefined
+    const account = organizationResult!.results[0] as { default_currency: string; vertical: string; payouts_connected: number | null } | undefined
     const currency = currencies[0] ?? account?.default_currency
     if (!currency) throw new HTTPError({ statusCode: 404, statusMessage: 'Organization not found' })
     const channel_reservations = channelReservationAmounts(channel!, monthStart, monthEnd)
     const previous = comparisonResult ? paymentMonths(comparisonResult, year - 1) : null
-    const compared = previous ? { year: year - 1, currency: previous.currencies[0] ?? account!.default_currency, months: previous.months } : null
-    return { ...(compared ? { comparison: compared } : {}), currency, payouts_connected: account?.payouts_connected == null ? null : account.payouts_connected === 1, months, items: [...byTitle.values()].sort((a, b) => b.paid - a.paid), channel_reservations }
+    const compared = previous ? { year: year - 1, currency: previous.currencies[0] ?? currency, months: previous.months } : null
+    const selected = months.find(row => row.month === month)!
+    return { presentation: dashboardPresentation, booking_value_title: bookingValueTitle(account!.vertical), ...(compared ? { comparison: compared } : {}), currency, payouts_connected: account?.payouts_connected == null ? null : account.payouts_connected === 1, months, items: [...byTitle.values()].sort((a, b) => b.paid - a.paid), channel_reservations,
+      breakdown: [
+        { key: 'captured_amount', label: 'Payments collected', display: paymentMoney(selected.paid, currency) },
+        { key: 'refunded_amount', label: 'Refunds', display: paymentMoney(-selected.refunded, currency) },
+        { key: 'net', label: `Total (${currency})`, display: paymentMoney(selected.paid - selected.refunded, currency) },
+      ],
+      statistics: [
+        { key: 'payments', label: 'Payments', display: String(payments.length) },
+        { key: 'average_payment', label: 'Average payment', display: payments.length ? paymentMoney(Math.round(selected.paid / payments.length), currency) : '—' },
+      ],
+    }
   }
 }
 
 /** Stripe owns date/status filtering and pagination; the app sends UTC calendar days. */
 export function payoutFilters(query: Record<string, unknown>): Stripe.PayoutListParams {
   const status = query.status
-  if (status !== undefined && (typeof status !== 'string' || !['pending', 'paid', 'failed', 'canceled'].includes(status))) throw new HTTPError({ statusCode: 400, message: 'Invalid payout status', data: { code: 'INVALID_PAYOUT_FILTER', field: 'status' } })
+  if (status !== undefined && (typeof status !== 'string' || !['upcoming', 'pending', 'paid', 'failed', 'canceled'].includes(status))) throw new HTTPError({ statusCode: 400, message: 'Invalid payout status', data: { code: 'INVALID_PAYOUT_FILTER', field: 'status' } })
   const boundary = (name: string) => {
     const value = query[name]
     if (value === undefined) return undefined
@@ -194,6 +209,14 @@ export function payoutFilters(query: Record<string, unknown>): Stripe.PayoutList
   }
 }
 
+function payoutSelection(filters: Stripe.PayoutListParams) {
+  const { status, ...rest } = filters
+  return {
+    query: { ...rest, ...(status && status !== 'upcoming' ? { status } : {}) },
+    matches: (payout: Stripe.Payout) => status !== 'upcoming' || payout.status === 'pending' || payout.status === 'in_transit',
+  }
+}
+
 /** The SDK owns pagination; the CSV includes every payout matching the chosen filters. */
 export async function paymentPayoutExport(env: CloudflareEnv, principal: FinancialPrincipal, account: StripeConnectedAccount | null, filters: Stripe.PayoutListParams) {
   await authorizePayments(principal, 'payouts')
@@ -205,8 +228,10 @@ export async function paymentPayoutExport(env: CloudflareEnv, principal: Financi
     return `"${escaped.replaceAll('"', '""')}"`
   }).join(',') + '\r\n'
   const rows = [line(['Created date', 'Arrival date', 'Amount', 'Currency', 'Status', 'Payout ID'])]
-  for await (const payout of stripe.payouts.list({ ...filters, limit: 100 }, options)) {
+  const selection = payoutSelection(filters)
+  for await (const payout of stripe.payouts.list({ ...selection.query, limit: 100 }, options)) {
     if (payout.livemode !== account.livemode) throw new Error('Stripe payout mode does not match connected account')
+    if (!selection.matches(payout)) continue
     const currency = payout.currency.toUpperCase(), digits = currencyFractionDigits(currency)
     rows.push(line([new Date(payout.created * 1000).toISOString().slice(0, 10), new Date(payout.arrival_date * 1000).toISOString().slice(0, 10),
       (payout.amount / 10 ** digits).toFixed(digits), currency, payout.status, payout.id]))
@@ -222,11 +247,12 @@ export async function paymentPayouts(env: CloudflareEnv, principal: FinancialPri
 export async function readStripePayouts(env: CloudflareEnv, organizationId: string, account: StripeConnectedAccount | null, after?: string, filters: Stripe.PayoutListParams = {}, includeBalance = true) {
   if (!account?.stripe_account_id) return { organization_id: organizationId, configured: false, ...(includeBalance ? { balance: null } : {}), payouts: [], next_cursor: null, source: 'Stripe account not connected', refreshed_at: null }
   const stripe = paymentsStripe(env, account.livemode), options = { stripeAccount: account.stripe_account_id }
-  const [balance, payouts] = await Promise.all([includeBalance ? stripe.balance.retrieve({}, options) : undefined, stripe.payouts.list({ ...filters, limit: 50, ...(after ? { starting_after: after } : {}) }, options)])
+  const selection = payoutSelection(filters)
+  const [balance, payouts] = await Promise.all([includeBalance ? stripe.balance.retrieve({}, options) : undefined, stripe.payouts.list({ ...selection.query, limit: 50, ...(after ? { starting_after: after } : {}) }, options)])
   if ((includeBalance && (!balance || balance.livemode !== account.livemode)) || payouts.data.some(row => row.livemode !== account.livemode)) throw new Error('Stripe payout mode does not match connected account')
   const nextCursor = payouts.has_more ? payouts.data.at(-1)?.id : null
   if (nextCursor === undefined || nextCursor === '') throw new Error('Stripe payout list is missing its next cursor')
-  return { organization_id: organizationId, configured: true, ...(includeBalance ? { balance } : {}), payouts: payouts.data, next_cursor: nextCursor, source: 'Stripe', refreshed_at: new Date().toISOString() }
+  return { organization_id: organizationId, configured: true, ...(includeBalance ? { balance } : {}), payouts: payouts.data.filter(selection.matches), next_cursor: nextCursor, source: 'Stripe', refreshed_at: new Date().toISOString() }
 }
 
 /**
@@ -333,4 +359,37 @@ export function paymentMonths(result: D1Result, periodYear: number) {
 
 export function paymentMonthsQuery(organization: string | { sql: string }, year: number): BatchQuery {
   return { query: `SELECT strftime('%Y-%m', created_at) AS month, currency, SUM(captured_amount) AS paid, SUM(refunded_amount) AS refunded FROM payments WHERE organization_id = ${typeof organization === 'string' ? '?' : organization.sql} AND created_at >= ? AND created_at < ? GROUP BY 1, 2 ORDER BY 1`, params: [...(typeof organization === 'string' ? [organization] : []), `${year}-01-01T00:00:00.000Z`, `${year + 1}-01-01T00:00:00.000Z`] }
+}
+
+const bookingValueTitle = (vertical: string | null) => vertical === 'service' ? 'Confirmed consultation value' : vertical === 'restaurant' ? 'Confirmed reservation value' : 'Confirmed booking value'
+
+/** Confirmed booking value uses the canonical booking total and local visit date; no payout is inferred. */
+export function prepareBookingValueReport(organization: string | { sql: string }, year: number) {
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new HTTPError({ statusCode: 400, message: 'Valid year is required', data: { code: 'INVALID_EARNINGS_PERIOD', field: 'year' } })
+  const org = typeof organization === 'string' ? '?' : organization.sql
+  const params = [...(typeof organization === 'string' ? [organization] : []), `${year-1}-12-31`, `${year+1}-01-02`]
+  const selection = `FROM bookings b WHERE b.organization_id = ${org} AND b.status = 'confirmed' AND b.starts_at >= ? AND b.starts_at < ?`
+  const queries: BatchQuery[] = [{ query: `SELECT b.product_id, b.starts_at, b.timezone, b.total_minor, b.currency, (SELECT p.name FROM products p WHERE p.id = b.product_id AND p.organization_id = b.organization_id) AS title ${selection}`, params },
+    mediaPlacementsQuery({ organizationId: organization, ownerType: 'product', includeOrganizationFallback: false, owners: { sql: `SELECT DISTINCT b.product_id ${selection}`, params } })]
+  return { queries, read(results: D1Result[], organizationId: string, vertical: string | null): BookingValueReport {
+    const rows = (results[0]!.results as Array<{product_id:string;starts_at:string;timezone:string;total_minor:number|null;currency:string|null;title:string}>).map(row => ({ ...row, month: bookingDay(row.starts_at,row.timezone).slice(0,7) })).filter(row=>row.month.startsWith(`${year}-`))
+    const pictures = ownerPicturesFromRows(organizationId,'product',[...new Set(rows.map(row=>row.product_id))],results[1]!.results,false)
+    const currencies = [...new Set(rows.flatMap(row=>row.currency?[row.currency]:[]))].sort()
+    const reports = currencies.map(currency=>{
+      const priced = rows.filter(row=>row.currency===currency)
+      const months = Array.from({length:12},(_,index)=>{
+        const month = `${year}-${String(index+1).padStart(2,'0')}`, selected = priced.filter(row=>row.month===month)
+        return {month,total_minor:selected.reduce((sum,row)=>sum+row.total_minor!,0),bookings:selected.length}
+      })
+      const grouped = new Map<string,BookingValueReport['reports'][number]['items'][number]>()
+      for(const row of priced){
+        if(!row.title)throw new Error(`Booking offering ${row.product_id} has no title`)
+        const key=`${row.month}:${row.product_id}`, item=grouped.get(key)??{product_id:row.product_id,title:row.title,image_url:pictures.get(row.product_id)?.imageUrl??null,month:row.month,total_minor:0,bookings:0}
+        item.total_minor+=row.total_minor!;item.bookings+=1;grouped.set(key,item)
+      }
+      return {currency,months,items:[...grouped.values()].sort((a,b)=>b.total_minor-a.total_minor)}
+    })
+    return {presentation:dashboardPresentation,title:bookingValueTitle(vertical),bookings_label:vertical==='service'?'Confirmed consultations':vertical==='restaurant'?'Confirmed reservations':'Confirmed bookings',empty_label:vertical==='service'?`No confirmed consultations with a recorded fee in ${year}.`:vertical==='restaurant'?`No confirmed reservations with a recorded value in ${year}.`:`No confirmed bookings with a recorded value in ${year}.`,future_label:vertical==='service'?'Display future consultations':vertical==='restaurant'?'Display future reservations':'Display future bookings',note:vertical==='service'?'Confirmed consultation fees by visit month, before fees. Payment collections and bank payouts are reported separately.':'Confirmed booking values by arrival or visit month, before fees. Payment collections and bank payouts are reported separately.',year,
+      unpriced_label:vertical==='service'?'Consultations without a recorded fee':'Bookings without a recorded value',unpriced_bookings:rows.filter(row=>row.total_minor===null).length,reports}
+  } }
 }

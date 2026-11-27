@@ -4,10 +4,11 @@ import {getDashboardContext} from '~/server/utils/dashboard-context'
 import {jsonResponse} from '~/server/utils/api-response'
 import {listPayments,paymentSummary,readPaymentDetails,authorizePayments} from '~/server/domain/payments'
 import {paymentPayoutExport,payoutFilters,paymentPayoutDetail,paymentPayouts,paymentTransactionDestination,paymentTransactions} from '~/server/domain/payments/earnings'
-import { readDashboardEarnings, readDashboardEarningsOverview, readDashboardPayoutAccount } from '~/server/utils/dashboard-earnings'
+import { readDashboardBookingValue, readDashboardEarnings, readDashboardEarningsOverview, readDashboardPayoutAccount } from '~/server/utils/dashboard-earnings'
 import {queryAll,queryFirst} from '~/server/db'
 export default defineHandler(async event=>{
  const query=getQuery(event)
+ if(query.view==='booking_value')return jsonResponse(await readDashboardBookingValue(event,query),{headers:{'cache-control':'private, no-store'}})
  if(query.view==='overview')return jsonResponse(await readDashboardEarningsOverview(event,query),{headers:{'cache-control':'private, no-store'}})
  if(query.view==='performance' && typeof query.payment_id!=='string' && (query.after===undefined || (typeof query.after==='string' && query.after))) return jsonResponse(await readDashboardEarnings(event,query))
  if(query.view==='payouts'||query.view==='payout'||query.view==='payout_export'){

@@ -4,7 +4,7 @@ import { memberAccessPrincipal, roleAllows, assertRoleAllows, assertOrganization
 import { getDashboardMemberContext } from '~/server/utils/dashboard-context'
 import { readDashboardAgenda } from '~/server/utils/dashboard-agenda-reader'
 import { readDashboardConnectionsDocument } from '~/server/utils/dashboard-connections'
-import { readDashboardEarnings, readDashboardPayoutsDocument } from '~/server/utils/dashboard-earnings'
+import { readDashboardBookingValue, readDashboardEarnings, readDashboardEarningsOverview, readDashboardPayoutsDocument } from '~/server/utils/dashboard-earnings'
 import { readDashboardStayHomes } from '~/server/utils/dashboard-stay-homes'
 import { readCalendarSettingsDocument } from '~/server/utils/google-calendar'
 import { defineHandler, HTTPError } from 'nitro'
@@ -32,6 +32,12 @@ export default defineHandler(event => {
           return { home: home.read(), manage: access.manage }
         }
 
+        if (/^\/api\/dashboard\/insights\/(?!marketing\/)[^/]+\/[^/]+$/.test(resource)) {
+          const { organization } = await getDashboardMemberContext(event, { organizationSlug: orgSlug })
+          const detail = event.context.dashboardInsightsDetail as { slug: string; resource: string; value: unknown } | undefined
+          if (detail?.slug !== organization.slug || detail.resource !== resource) throw new HTTPError({ statusCode: 500, message: 'Insights page was not read for this document' })
+          return detail.value
+        }
         switch (resource) {
           case '/api/dashboard/stay-homes/setup': {
             const { env, organization } = await getDashboardMemberContext(event, { organizationSlug: orgSlug })
@@ -49,8 +55,18 @@ export default defineHandler(event => {
             return dashboardBookingCalendar(event, query, orgSlug)
           case '/api/dashboard/stay-homes':
             return readDashboardStayHomes(event, orgSlug, true)
+          case '/api/dashboard/menu':
+          case '/api/dashboard/insights/overview': {
+            const { organization } = await getDashboardMemberContext(event, { organizationSlug: orgSlug })
+            const context = event.context[resource.endsWith('/menu') ? 'dashboardMenuDocument' : 'dashboardInsightsOverview'] as { slug: string; days?: string; value: unknown } | undefined
+            if (context?.slug !== organization.slug) throw new HTTPError({ statusCode: 500, message: 'Dashboard overview was not read for this document' })
+            if (resource.endsWith('/overview') && String(query.days ?? '7') !== context.days) throw new HTTPError({ statusCode: 400, message: 'Insights range does not match this document' })
+            return context.value
+          }
           case '/api/dashboard/payments':
-            if (query.view === 'payouts') return readDashboardPayoutsDocument(event, orgSlug, query.after)
+            if (query.view === 'booking_value') return readDashboardBookingValue(event, query, orgSlug)
+            if (query.view === 'overview') return readDashboardEarningsOverview(event, query, orgSlug)
+            if (query.view === 'payouts') return readDashboardPayoutsDocument(event, orgSlug, query)
             if (query.view !== 'performance') throw new HTTPError({ statusCode: 400, message: 'Earnings performance is required' })
             return readDashboardEarnings(event, query, orgSlug)
           case '/api/integrations/social-connections': {

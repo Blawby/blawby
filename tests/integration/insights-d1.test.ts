@@ -234,7 +234,7 @@ test('Insights reads a home: occupancy, length of stay and nightly rate, and who
     // 20 nights, 2 closed: 5 of 18 open nights booked.
     assert.deepEqual(metrics(occupancy), { occupancy: '27.8%', nights_booked: '5 nights', nights_blocked: '2 nights' })
     const chart = occupancy.series.charts.occupancy!
-    assert.deepEqual([chart.points[15], chart.points[5]], [{ value: null, display: 'No average occupancy rate' }, { value: 100, display: '100% average occupancy rate' }])
+    assert.deepEqual([chart.points[15], chart.points[5]], [{ value: null, display: 'No occupancy rate' }, { value: 100, display: '100% occupancy rate' }])
     assert.deepEqual(chart.axis.map(tick => tick.label), ['0%', '25%', '50%', '75%', '100%'])
     assert.deepEqual(rows(occupancy), [['Cabin', '27.8%', '5 nights']])
     assert.deepEqual(metrics(await read('rates/length-of-stay')), { average_nights: '2.5 nights', longest: '3 nights' })

@@ -20,7 +20,7 @@
               <DashboardSurface :presentation="data.presentation"><p class="text-xs text-muted">{{ payoutDate(row.created) }}</p><p class="mt-1 text-lg font-semibold">{{ paymentMoney(row.amount, row.currency.toUpperCase()) }}</p><p class="mt-1 text-xs text-muted">{{ payoutStatusLabel(row.status) }} · Arrival {{ payoutDate(row.arrival_date) }}</p></DashboardSurface>
             </NuxtLink>
             <p v-if="!group.rows.length" class="text-sm text-muted">{{ group.empty }}</p>
-            <UButton block color="neutral" variant="soft" :label="`View all ${group.title.toLowerCase()}`" :to="{ path: `${level.path.value}/payouts`, query: { status: group.status } }" />
+            <UButton block color="neutral" variant="soft" :label="group.label" :to="{ path: `${level.path.value}/payouts`, query: { status: group.status } }" />
           </section>
         </template>
         <p v-else-if="data.performance.payouts_connected === false" class="text-sm text-muted">Connect Stripe in Payments &amp; payouts to receive online payments.</p>
@@ -49,7 +49,12 @@ const monthName = computed(() => data.value ? formatCalendarDate(`${data.value.m
 const total = computed(() => selected.value && data.value ? paymentMoney(selected.value.paid - selected.value.refunded, data.value.performance.currency) : '')
 const payoutGroups = computed(() => {
   const rows = data.value?.payouts?.payouts ?? []
-  return [{ title: 'Upcoming', status: 'upcoming', empty: 'No upcoming payouts.', rows: rows.filter(row => ['pending', 'in_transit'].includes(row.status)) }, { title: 'Paid', status: 'paid', empty: 'Nothing has been paid out yet.', rows: rows.filter(row => row.status === 'paid') }]
+  const other = rows.filter(row => row.status === 'failed' || row.status === 'canceled')
+  return [
+    { title: 'Upcoming', label: 'View all upcoming', status: 'upcoming', empty: 'No upcoming payouts.', rows: rows.filter(row => ['pending', 'in_transit'].includes(row.status)) },
+    { title: 'Paid', label: 'View all paid', status: 'paid', empty: 'Nothing has been paid out yet.', rows: rows.filter(row => row.status === 'paid') },
+    ...(other.length ? [{ title: 'Failed or cancelled', label: 'View all payouts', status: 'all', empty: '', rows: other }] : []),
+  ]
 })
 const settingsItems = computed(() => [[{ label: 'Payout settings', icon: 'i-lucide-landmark', to: `/dashboard/${route.params.org_slug}/payments` }, { label: 'Plan and billing', icon: 'i-lucide-receipt', to: `/dashboard/${route.params.org_slug}/billing` }]])
 </script>

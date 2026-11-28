@@ -219,7 +219,7 @@ export type ProductEditorContext = {
 export async function loadDashboardProduct(
   event: H3Event, organizationId: string, locationId: string | null, productId: string, editor = false, calendar?: SlotWindow, template = false,
 ) {
-  const plan = prepareDashboardProductRead(productId, editor || calendar !== undefined, undefined, { calendar, members: editor || calendar !== undefined, template })
+  const plan = prepareDashboardProductRead(productId, editor || calendar !== undefined, undefined, { calendar, template })
   const context = await readDashboardMemberResources(event, organizationId, plan.queries)
   return plan.read(context.rows, context, locationId)
 }

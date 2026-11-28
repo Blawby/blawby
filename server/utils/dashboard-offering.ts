@@ -5,7 +5,7 @@ import { prepareDashboardLocations } from '~/server/utils/dashboard-context'
 import { prepareCollectionList } from '~/server/utils/product-management'
 import { BATCH_VIEWER, isOrganizationWideRole, memberAccessPrincipal, roleAllows } from '~/server/utils/member-access'
 import { MEMBER_NAME_SQL } from '~/shared/member-scheduling'
-import { PRODUCT_KIND_LABELS, productDetailFields } from '~/shared/product-details'
+import { PRODUCT_KIND_LABELS, editableProductKinds, productDetailFields } from '~/shared/product-details'
 import { isCurrencyCode } from '~/shared/currencies'
 import { isMembershipProduct, offeredPrice } from '~/shared/memberships'
 import { formatProductMoney } from '~/utils/product-money'
@@ -48,8 +48,10 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
     const { locations } = locationPlan.read(rows.slice(0, locationPlan.queries.length), context.organization.id)
     const collections = collectionPlan.read(rows.slice(locationPlan.queries.length, -2))
     const assigned = (rows.at(-2)!.results as { name: string }[])[0]?.name ?? null
-    const stocked = Number((rows.at(-1)!.results as { available: number }[])[0]?.available ?? 0)
-    if (product.kind === 'stay') return { locations, collections, offering: null, assigned_member_name: assigned }
+    const stock = (rows.at(-1)!.results as { available: number }[])[0]
+    if (!stock || !Number.isSafeInteger(stock.available) || stock.available < 0) throw new Error('The offering stock could not be read')
+    const stocked = stock.available
+    if (product.kind === 'stay') return { locations, collections, offering: null, assigned_member_name: assigned, pricing: null, kind_options: [] }
     const location = locationId ? locations.find(place => place.id === locationId && product.locations.some(binding => binding.location_id === place.id)) ?? missing('Offering not found at this location') : null
     const service = product.kind === 'service'
     const dish = product.kind === 'dish'
@@ -81,6 +83,10 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
     // A membership's variant sells its recurring price; anything booked is priced once.
     const chosenPrice = (variant: typeof product.variants[number]) => offeredPrice(variant.prices, selection, isMembershipProduct(product))
     const locationsUsed = locations.filter(entry => product.locations.some(binding => binding.location_id === entry.id))
+    const pricing = { ...selection, variants: product.variants.map(variant => ({
+      product_variant_id: variant.id, displayed_price: chosenPrice(variant),
+      editable_price: chosenPrice({ ...variant, prices: variant.prices.filter(price => price.location_id === selection.location_id) }),
+    })) }
     const prices = product.variants.map(variant => {
       const price = chosenPrice(variant)
       const amount = price ? formatProductMoney(price) : text(detail('pricing_note')) || 'No price set'
@@ -113,7 +119,7 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
       ] : []),
       ...(service && !booking && manages ? [{ ...leaf('booking', 'Set up consultations', 'No booking calendar'), optional_detail: true }] : []),
       ...(service && !booking && !product.locations.length && wide ? [{ ...leaf('locations', placeLabel), optional_detail: true }] : []),
-      ...definitions.map(definition => leaf(definition.key, definition.name, text(detail(definition.key)) || undefined, { view: 'attribute', web: `attributes/${definition.id}`, query: { field: definition.key } })),
+      ...definitions.map(definition => leaf(definition.key, definition.name, text(detail(definition.key)) || undefined, { view: 'attribute', web: `attributes/${definition.id}`, query: { field: definition.key, value_type: definition.value_type } })),
       ...(wide && service ? [photo] : []),
       ...(wide ? [{ ...leaf('collections', dish ? 'Menu sections' : 'Collections', collections.filter(section => product.collections.some(row => row.collection_id === section.id)).map(section => section.name).join(', ')),
         optional_detail: !dish && !product.collections.length }] : []),
@@ -122,6 +128,6 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
       leaf('order-url', dish ? 'Ordering link' : item ? 'External link' : service ? 'External consultation link' : 'External booking link', product.order_url ?? undefined),
       ...(manages ? [leaf('kind', 'Type', PRODUCT_KIND_LABELS[product.kind])] : []),
     ] }
-    return { locations, collections, offering, assigned_member_name: assigned }
+    return { locations, collections, offering, assigned_member_name: assigned, pricing, kind_options: manages ? editableProductKinds(product.kind).map(value => ({ value, label: PRODUCT_KIND_LABELS[value] })) : [] }
   } }
 }

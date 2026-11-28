@@ -1,8 +1,7 @@
 import type { EditorNavigationGroup } from '~/components/dashboard/EditorNavigationList.vue'
 import type { DashboardScopeHeaderModel } from '~/lib/components/workspace/dashboard/DashboardScopeHeader.vue'
-import { authClient } from '~/lib/auth-client'
-import type { organizationRoles } from '~/utils/organization-access'
-import { canOpenPlatformAccounts, canOpenPlatformReports } from '~/utils/platform-admin-access'
+import { dashboardMenuSchema, type DashboardMenu } from '~/shared/dashboard-menu'
+import { dashboardFetch } from '~/composables/dashboardFetch'
 import { onboardingLink } from '~/composables/useOnboardingFlow'
 import type { WebsiteOnboardingResumeAction } from '~/shared/onboarding-flow'
 
@@ -21,55 +20,18 @@ export function useOrganizationSettingsNavigation(
 ) {
   const route = useRoute()
   const router = useRouter()
-  const dashboard = useDashboardOrganization()
-  const session = authClient.useSession()
 
   const base = computed(() => organization.value ? `/dashboard/${encodeURIComponent(organization.value.slug)}` : null)
 
-  // Menu and Search share these exact organization checks, made locally from the
-  // member's role. The loaded workspace context carries the role; Account
-  // settings opened outside a workspace route asks Better Auth for it once.
-  // The context's role is part of the key, so a role change (a self-demotion
-  // on Team refreshes it) checks again.
-  const contextRole = computed(() => dashboard.organization.value?.id === organization.value?.id ? dashboard.organization.value?.role ?? '' : '')
   const permissionLoad = useAsyncData(
-    () => `menu-organization:${session.value.data?.user.id ?? ''}:${organization.value?.id ?? ''}:${contextRole.value}`,
+    () => `dashboard-menu:${organization.value?.id ?? ''}`,
     async (_app, { signal }) => {
       const target = organization.value
-      const userId = session.value.data?.user.id
-      if (!target || !userId) return null
-      let role = contextRole.value
-      if (!role) {
-        const result = await authClient.organization.getActiveMemberRole({ query: { organizationId: target.id }, fetchOptions: { signal } })
-        if (result.error) throw new Error(result.error.message || 'Your role could not be read.')
-        role = result.data.role
-      }
-      const can = (permissions: Parameters<typeof authClient.organization.checkRolePermission>[0]['permissions']) =>
-        authClient.organization.checkRolePermission({ role: role as keyof typeof organizationRoles, permissions })
-      return { organizationId: target.id, userId, payments: can({ payments: ['read'] }), billing: can({ billing: ['read'] }), team: can({ members: ['read'] }), invite: can({ members: ['invite'] }) }
-    },
-    { enabled: () => Boolean(organization.value && session.value.data?.user.id), dedupe: 'defer' },
+      if (!target) return null
+      return { ...await dashboardFetch<DashboardMenu>('/api/dashboard/menu', { orgSlug: target.slug }, { signal, validate: (value): value is DashboardMenu => dashboardMenuSchema.safeParse(value).success }), organizationId: target.id }
+    }, { dedupe: 'defer' },
   )
-  const permissions = computed(() => {
-    const loaded = permissionLoad.data.value
-    return loaded && loaded.organizationId === organization.value?.id && loaded.userId === session.value.data?.user.id ? loaded : null
-  })
-
-  /**
-   * Every account on the platform, and impersonation: Blawby runs on
-   * Blawby, so only its own organization's Menu carries this row, and only
-   * for a Better Auth admin. The template is read off the route's loaded
-   * organization context, the same reading the page itself gates on. Airbnb
-   * has no equivalent; internal admin tooling is not in the host's dashboard.
-   */
-  const showPlatformAccounts = computed(() => {
-    const loaded = dashboard.organization.value
-    return Boolean(loaded && canOpenPlatformAccounts(loaded, (session.value.data?.user as { role?: string | null } | undefined)?.role))
-  })
-  const showPlatformReports = computed(() => {
-    const loaded = dashboard.organization.value
-    return Boolean(loaded && canOpenPlatformReports(loaded, (session.value.data?.user as { role?: string | null } | undefined)?.role))
-  })
+  const permissions = computed(() => permissionLoad.data.value?.organizationId === organization.value?.id ? permissionLoad.data.value?.permissions ?? null : null)
 
   // Airbnb's "Switch to hosting": one organization switches straight to it;
   // several open the list under Account settings; none offers to start one.
@@ -87,30 +49,8 @@ export function useOrganizationSettingsNavigation(
       ...(switchRow.value ? [switchRow.value] : []),
       { id: 'log-out', icon: 'i-lucide-log-out', label: 'Log out', action: {} },
     ]
-    return [
-      { id: 'website', icon: 'i-lucide-panels-top-left', label: 'Website', to: `${base.value}/website` },
-      { id: 'locations', icon: 'i-lucide-map-pin', label: dashboard.organization.value?.vertical === 'service' ? 'Offices' : 'Locations', to: `${base.value}/locations` },
-      { id: 'shipping', icon: 'i-lucide-truck', label: 'Shipping and pickup', to: `${base.value}/shipping` },
-      ...(permissions.value?.team ? [{ id: 'team', icon: 'i-lucide-users', label: 'Team', to: `${base.value}/team` }] : []),
-      { id: 'integrations', icon: 'i-lucide-plug', label: 'Connections', to: `${base.value}/integrations` },
-      // What the organization pays Blawby. Owners change it and admins read it; members have no row.
-      ...(permissions.value?.billing ? [{ id: 'billing', icon: 'i-lucide-receipt', label: 'Plan and billing', to: `${base.value}/billing` }] : []),
-      // "Team" is this organization's members; this is every account there is.
-      ...(showPlatformAccounts.value
-        ? [{ id: 'platform-accounts', icon: 'i-lucide-shield-user', label: 'Platform accounts', to: `${base.value}/platform-accounts` }]
-        : []),
-      // Members' reports of guests and teammates, decided by Blawby staff within 24 hours.
-      ...(showPlatformReports.value
-        ? [{ id: 'platform-reports', icon: 'i-lucide-flag', label: 'Platform reports', to: `${base.value}/platform-reports` }]
-        : []),
-      // The way to the account on a phone, where there is no header to carry an
-      // avatar. Airbnb's mobile Menu lists "Account settings" in the same place,
-      // second from last, above Log out (measured 2026-09-22).
-      { id: 'account', icon: 'i-lucide-user-round-cog', label: 'Account settings', to: '/dashboard/account/profile' },
-      // Airbnb's "Switch to travelling": the last row before Log out.
-      { id: 'switch-personal', icon: 'i-lucide-repeat-2', label: 'Switch to Personal', action: {} },
-      { id: 'log-out', icon: 'i-lucide-log-out', label: 'Log out', action: {} },
-    ]
+    const loaded = permissionLoad.data.value
+    return loaded && loaded.organizationId === organization.value?.id ? loaded.navigation : []
   })
 
   const groups = computed<EditorNavigationGroup[]>(() => [{ id: organization.value ? 'organization' : 'account', items: items.value }])
@@ -121,5 +61,5 @@ export function useOrganizationSettingsNavigation(
     return items.value.find(item => item.to && open.has(item.to))?.id ?? null
   })
 
-  return { groups, activeItem, permissions, error: permissionLoad.error, pending: permissionLoad.pending, ready: permissionLoad }
+  return { groups, activeItem, permissions, error: permissionLoad.error, pending: permissionLoad.pending, ready: permissionLoad, menu: permissionLoad.data, menuStatus: permissionLoad.status }
 }

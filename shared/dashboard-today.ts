@@ -85,4 +85,8 @@ export interface BusinessToday {
   assignees: TaskPerson[]
   claim_options?: { roles: Array<{ value: string; label: string }>; listings: Array<{ listing_id: string; label: string }> }
   resolved_at: string
+  actions: { add_task: boolean; add_stay: boolean }
+  home_context: { homes: import('~/server/domain/stays').StayHome[]; manage: boolean }
+  website: { address: string; preview_url: string; preview_label: string; status_label: string;
+    action: { type: 'publish' | 'visit'; label: string; to: string } } | null
 }

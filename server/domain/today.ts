@@ -2,9 +2,9 @@ import { staffListingsQuery } from '~/server/domain/listing-access'
 import { organizationRoleCards, rolesAllowing, rolesForVertical, roleMatchesSql, workspaceManagementRoles } from '~/utils/organization-access'
 import { HTTPError, type H3Event } from 'nitro'
 import { executeBatch, type BatchQuery, type DbClient } from '~/server/db'
-import { assertRoleAllows, BATCH_VIEWER, joinedMemberPrincipal, membershipBySlugQuery, withViewer } from '~/server/utils/member-access'
+import { assertRoleAllows, roleAllows, BATCH_VIEWER, joinedMemberPrincipal, membershipBySlugQuery, withViewer } from '~/server/utils/member-access'
 import { bookedRecordsInRange, type BookedRecordInRange } from '~/server/domain/product-bookings'
-import { listTasks, openWorkQuery, taskUpdatePath, taskAssignees, taskAssigneesQuery, taskViewer, type OpenWorkRow, type TaskListQuery } from '~/server/domain/tasks'
+import { prepareTaskList, openWorkQuery, taskUpdatePath, taskAssignees, taskAssigneesQuery, taskViewer, type OpenWorkRow, type TaskListQuery, type TaskSection } from '~/server/domain/tasks'
 import { bookingWelcomesQuery, bookingWelcomeViews, setupQueries, setupViews } from '~/server/domain/opportunities'
 import { bookingDay } from '~/server/domain/requests'
 import { groupMediaPlacements, mediaPlacementsQuery } from '~/server/utils/media-asset-manager'
@@ -18,7 +18,8 @@ import { formatMinorAmount } from '~/shared/prices'
 import { addLocalDays, formatCalendarDate, formatCalendarRange, formatTimestamp, localDateAt } from '~/utils/timezone'
 import { resolveBookingPresentation } from '~/utils/booking-presentation'
 import type { CloudflareEnv } from '~/server/utils/auth'
-import { organizationPublicUrl } from '~/server/utils/domains'
+import { tenantOrganizationOrigin } from '~/utils/tenant-organization-origin'
+import { prepareStayHomesDocument } from '~/server/domain/stays'
 import { createPreviewToken, PREVIEW_TOKEN_QUERY, PREVIEW_TOKEN_TTL_MS, previewSecretOf, PUBLIC_WEBSITE_QUERY } from '~/server/utils/preview-token'
 import { isDemoOrganization } from '~/shared/demo'
 import { turnoverBeforeSql } from '~/server/domain/turnover-checklists'
@@ -51,14 +52,15 @@ type Noun = keyof typeof NOUNS
 interface Card extends TodayItem { noun: Noun; order: [number, string]; bookings: string[]; day: string }
 
 type TodayReadInput = { slug: string; range: Range; now: Date; staffAccessWrites?: boolean;
+  presentation?: { env: CloudflareEnv; event: H3Event };
   native?: { env: CloudflareEnv; event: H3Event; query: TaskListQuery } }
 
 export async function readToday(db: DbClient, input: TodayReadInput & { userId: string }) {
-  const plan = prepareToday(db, input)
+  const plan = prepareToday(input)
   return plan.read(await executeBatch(db, plan.queries, { operation: 'Read Today' }))
 }
 
-export function prepareToday(db: DbClient, input: TodayReadInput & ({ userId: string } | { membership: BatchQuery })) {
+export function prepareToday(input: TodayReadInput & ({ userId: string } | { membership: BatchQuery })) {
   const { range, now, staffAccessWrites = true } = input
   const utcDay = now.toISOString().slice(0, 10)
   const from = utcDay, to = range === 'today' ? utcDay : addLocalDays(utcDay, UPCOMING_RESERVATION_DAYS + 1)
@@ -69,6 +71,8 @@ export function prepareToday(db: DbClient, input: TodayReadInput & ({ userId: st
   // What only an owner or admin reads: a member's statements name no organization and read nothing.
   const managed = { sql: `CASE WHEN ${BATCH_VIEWER.organizationWide} = 1 THEN ${org} END` }
   const management = { sql: `CASE WHEN ${roleMatchesSql(BATCH_VIEWER.role!, workspaceManagementRoles)} THEN ${org} END` }
+  const tasks = input.native ? prepareTaskList(input.native.query, now) : null
+  const homes = prepareStayHomesDocument(null)
   const queries = [
     membership,
     withViewer(membership, bookedRecordsInRange(BATCH_VIEWER, { from, to, pending: range === 'today', includePayments: true })),
@@ -91,17 +95,23 @@ export function prepareToday(db: DbClient, input: TodayReadInput & ({ userId: st
     withViewer(membership, taskAssigneesQuery(managed)),
     ...(staffAccessWrites ? [withViewer(membership, staffListingsQuery(managed.sql, '(SELECT vertical FROM viewer)'))] : []),
   ]
-  return { queries, read: (results: D1Result[]) => presentToday(db, results, input) }
+  const count = queries.length
+  queries.push(...[...(tasks?.queries ?? []), ...homes.queries].map(query => withViewer(membership, query)))
+  return { queries, read: (results: D1Result[]) => presentToday(results.slice(0, count), input, {
+    tasks: tasks ? (viewer: Awaited<ReturnType<typeof taskViewer>>) => tasks.read(results.slice(count, count + tasks.queries.length), viewer) : null,
+    homes: homes.read(results.slice(count + (tasks?.queries.length ?? 0))),
+  }) }
 }
 
 async function presentToday(
-  db: DbClient,
   [viewerResult, recordResult, workResult, unpaidResult, productResult, locationResult, welcomeResult, readinessResult, factResult, unpricedResult, improvementResult, assigneeResult, listingResult]: D1Result[],
   input: TodayReadInput,
+  context: { tasks: ((viewer: Awaited<ReturnType<typeof taskViewer>>) => Promise<{ sections: TaskSection[] }>) | null;
+    homes: import('~/server/domain/stays').StayHome[] },
 ) {
   const { range, now, native, staffAccessWrites = true } = input
   const viewer = viewerResult!.results[0] as { organization_id: string; member_id: string; user_id: string; slug: string; vertical: string | null; role: string;
-    organization_wide: number; status: string; onboarding_status: string; subdomain: string | null } | undefined
+    organization_wide: number; status: string; onboarding_status: string; subdomain: string | null; public_url: string | null } | undefined
   if (!viewer) throw new HTTPError({ statusCode: 404, message: 'Organization not found', data: { code: 'ORGANIZATION_NOT_FOUND', field: 'org' } })
   await assertRoleAllows({ organizationId: viewer.organization_id, role: viewer.role, permissions: { task: ['read'] } })
   const manage = viewer.organization_wide === 1
@@ -392,26 +402,35 @@ async function presentToday(
       roles: rolesForVertical(viewer.vertical)
         .filter(role => rolesAllowing({ task: ['claim'] }).includes(role) && organizationRoleCards[role].access.includes('tasks'))
         .map(value => ({ value, label: organizationRoleCards[value].label })),
-      listings: (listingResult?.results ?? []) as NonNullable<BusinessToday['claim_options']>['listings'],
+      listings: listingResult!.results as NonNullable<BusinessToday['claim_options']>['listings'],
     } } : {}),
-    assignees: taskAssignees(assigneeResult!.results, viewer.user_id), resolved_at: now.toISOString(),
+    assignees: taskAssignees(assigneeResult!.results, viewer.user_id), resolved_at: now.toISOString(), website: null,
+    home_context: { homes: context.homes, manage: await roleAllows({ organizationId: viewer.organization_id, role: viewer.role, permissions: { operations: ['update'] } }) },
+    actions: {
+      add_task: await roleAllows({ organizationId: viewer.organization_id, role: viewer.role, permissions: { task: ['create'] } }),
+      add_stay: context.homes.length > 0 && await roleAllows({ organizationId: viewer.organization_id, role: viewer.role, permissions: { operations: ['update'] } }),
+    },
   }
-  if (!native) return response
-
-  // The installed TodayWork client needs these fields even when it has nothing to show.
-  const principal = joinedMemberPrincipal({ userId: viewer.user_id, organizationId: viewer.organization_id,
-    memberId: viewer.member_id, role: viewer.role }, native)
-  const { sections } = await listTasks(db, await taskViewer(principal), native.query, now)
+  // Installed TodayWork clients still read task sections. Their canonical task plan shares this batch.
+  const principal = native ? joinedMemberPrincipal({ userId: viewer.user_id, organizationId: viewer.organization_id,
+    memberId: viewer.member_id, role: viewer.role }, native) : null
+  const sections = context.tasks && principal ? (await context.tasks(await taskViewer(principal))).sections : null
   const privateSite = viewer.status === 'inactive'
-  const hasOpenWork = cards.some(card => card.bookings.length > 0) || sections.some(section => section.id === 'open')
+  const hasOpenWork = cards.some(card => card.noun !== 'setup')
   let website = null
-  if (range === 'today' && !native.query.kind && !native.query.location_id && administration && viewer.onboarding_status === 'active'
+  const presentation = input.presentation ?? native
+  if (presentation && range === 'today' && !native?.query.kind && !native?.query.location_id && administration && viewer.onboarding_status === 'active'
     && (privateSite || viewer.status === 'active' && !hasOpenWork) && !isDemoOrganization(viewer)) {
-    const address = await organizationPublicUrl(native.env, native.env.DB, viewer.organization_id)
-    if (address) {
+    if (!viewer.public_url) throw new HTTPError({ statusCode: 409, message: 'Configure the website address before opening its preview', data: { code: 'TODAY_WEBSITE_ADDRESS_REQUIRED', field: 'website.address' } })
+    {
+      const origin = tenantOrganizationOrigin({ platformDomain: presentation.env.NUXT_PUBLIC_PLATFORM_DOMAIN ?? '',
+        freeOrganizationDomain: presentation.env.NUXT_PUBLIC_FREE_ORGANIZATION_DOMAIN ?? '', subdomain: viewer.subdomain ?? '',
+        canonicalDomain: new URL(viewer.public_url).hostname })
+      if (!origin) throw new HTTPError({ statusCode: 502, message: 'The website has no configured public origin', data: { code: 'INVALID_TODAY_WEBSITE', field: 'website.address' } })
+      const address = `${origin}/`
       const preview = new URL(address)
-      const secret = previewSecretOf(native.env)
-      if (!secret) throw new Error('Website preview signing is unavailable')
+      const secret = previewSecretOf(presentation.env)
+      if (!secret) throw new HTTPError({ statusCode: 500, message: 'Website preview signing is unavailable', data: { code: 'TODAY_WEBSITE_PREVIEW_UNAVAILABLE', field: 'website.preview_url' } })
       preview.searchParams.set(PREVIEW_TOKEN_QUERY, await createPreviewToken(secret, viewer.organization_id, now.getTime() + PREVIEW_TOKEN_TTL_MS))
       website = {
         address, preview_url: preview.toString(), preview_label: 'Website preview', status_label: privateSite ? 'Private' : 'Live',
@@ -421,7 +440,9 @@ async function presentToday(
       }
     }
   }
-  return { ...response, website, tasks: sections, opportunities: privateSite ? opportunities.slice(0, 3) : opportunities, opportunity_issues: [] }
+  return { ...response, website,
+    ...(sections ? { tasks: sections, opportunities: privateSite ? opportunities.slice(0, 3) : opportunities, opportunity_issues: [] } : {}),
+  }
 }
 
 /**

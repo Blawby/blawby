@@ -65,11 +65,9 @@
 <script setup lang="ts">
 import DashboardSurface from '~/components/dashboard/DashboardSurface.vue'
 import { dashboardPresentation } from '~/shared/dashboard-presentation'
-import { dashboardMenuSchema, type DashboardMenu } from '~/shared/dashboard-menu'
 import EditorNavigationList from '~/components/dashboard/EditorNavigationList.vue'
 import OfferCard from '~/components/dashboard/OfferCard.vue'
 import { planOffers } from '~/shared/offers'
-import { dashboardFetch } from '~/composables/dashboardFetch'
 import { isAccountActivityResponse, type AccountActivityResponse } from '~/shared/account-activity'
 import { readActiveWebsiteDraft } from '~/composables/useOnboardingDraft'
 
@@ -89,14 +87,7 @@ const organizationSettings = useOrganizationSettingsNavigation(organization, sco
 const { groups, activeItem } = organizationSettings
 await Promise.all([organizationSettings.ready, setup])
 // Menu cards, ratings and chart context arrive in one authorized D1 batch.
-const { data: menu, error: menuError, status: menuStatus } = await useAsyncData(
-  () => `dashboard-menu:${organization.value?.id ?? ''}`,
-  async (_app, { signal }) => {
-    const target = organization.value
-    if (!target) return null
-    return { ...await dashboardFetch<DashboardMenu>('/api/dashboard/menu', { orgSlug: target.slug }, { signal, validate: (value): value is DashboardMenu => dashboardMenuSchema.safeParse(value).success }), organizationId: target.id }
-  },
-)
+const { menu, menuStatus, error: menuError } = organizationSettings
 const { data: activity, error: activityError } = await useAsyncData(
   () => `menu-activity:${personal.value}`,
   async () => personal.value ? await applicationFetch<AccountActivityResponse>('/api/account', { validate: isAccountActivityResponse }) : null,

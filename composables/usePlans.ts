@@ -3,12 +3,17 @@ import { formatPlanPrice } from '~/shared/billing-model'
 
 export type { Plan, PlanPrice, PlanLimits } from '~/server/api/billing/plans.get'
 
-export const usePlans = async () => {
+export const usePlans = async (provided?: () => Plan[] | undefined) => {
   const nuxtApp = useNuxtApp()
   const requestEvent = useRequestEvent()
   // Taken before the read: after an await the Nuxt instance is gone.
   const buildId = useRuntimeConfig().app.buildId
   const { data, status, error } = await useAsyncData<Plan[]>('billing-plans', async () => {
+    if (provided) {
+      const plans = provided()
+      if (!plans) throw new Error('The billing screen has no plan catalog')
+      return plans
+    }
     if (import.meta.server) {
       if (!requestEvent) throw createError({ statusCode: 500, statusMessage: 'Request event not available' })
       const [{ cloudflareEnv }, { getCachedPlans }] = await Promise.all([

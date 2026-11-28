@@ -26,8 +26,16 @@ export function isService(value: unknown): value is Service {
 
 /** The current agreement per service, when there is one. */
 export async function listServices(db: DbClient, organizationId: string): Promise<Record<Service, ServiceAgreement | null>> {
-  const rows = await queryAll<ServiceAgreement>(db, 'SELECT id,service,terms_version,agreed_by_user_id,agreed_at,ended_at FROM organization_services WHERE organization_id=? AND ended_at IS NULL', [organizationId])
-  return Object.fromEntries(SERVICES.map(service => [service, rows.find(row => row.service === service) ?? null])) as Record<Service, ServiceAgreement | null>
+  const plan = prepareServices(organizationId)
+  return plan.read(await queryAll<ServiceAgreement>(db, plan.query.query, plan.query.params))
+}
+
+export function prepareServices(organizationId: string | { sql: string }) {
+  return { query: { query: `SELECT id,service,terms_version,agreed_by_user_id,agreed_at,ended_at FROM organization_services WHERE organization_id=${typeof organizationId === 'string' ? '?' : organizationId.sql} AND ended_at IS NULL`, params: typeof organizationId === 'string' ? [organizationId] : [] },
+    read(rows: ServiceAgreement[]): Record<Service, ServiceAgreement | null> {
+      return Object.fromEntries(SERVICES.map(service => [service, rows.find(row => row.service === service) ?? null])) as Record<Service, ServiceAgreement | null>
+    },
+  }
 }
 
 /**

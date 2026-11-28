@@ -30,7 +30,7 @@ import type { SuccessfulChannelPush } from '~/shared/channel-push'
 import { backfillChannexMessages } from '~/server/domain/guest-threads/channel-messages'
 import { publishBusinessInvalidation, publishStayInvalidation } from '~/server/cloudflare/guest-inbox-events'
 import { assertBookingBatchWrite, bookingBatchWriteRefused } from '~/server/utils/availability'
-import { requireStays } from '~/server/utils/cms-capabilities'
+import { requireStays, organizationFeaturesQuery, organizationFeaturesFromRow } from '~/server/utils/cms-capabilities'
 import { publishAirbnbSync } from '~/server/events'
 
 /**
@@ -196,6 +196,28 @@ async function digest(value: string): Promise<string> {
 
 const now = () => new Date().toISOString()
 
+/** Stored connection context joins the caller's authorized screen batch. Provider verification remains here. */
+export function prepareChannexStatus(organization: string | { sql: string }) {
+  const org = typeof organization === 'string' ? { sql: '?', params: [organization] } : { ...organization, params: [] }
+  const queries = [organizationFeaturesQuery(organization),
+    { query: `SELECT c.*, g.group_id FROM channex_connections c LEFT JOIN channex_groups g USING (organization_id)
+      WHERE c.organization_id = ${org.sql} ORDER BY c.created_at, c.id`, params: org.params },
+    { query: `SELECT * FROM ${AIRBNB_MAPPINGS} WHERE organization_id = ${org.sql}`, params: org.params },
+    { query: `SELECT property_id FROM product_channel_mappings WHERE organization_id = ${org.sql} AND property_id IS NOT NULL`, params: org.params },
+    { query: `SELECT product_id, internal_name FROM product_stay_configs WHERE organization_id = ${org.sql}`, params: org.params },
+    { query: `SELECT contact_email, contact_phone FROM organization WHERE id = ${org.sql}`, params: org.params },
+  ]
+  return { queries, read([features, connections, mappings, properties, homes, contact]: D1Result[]) {
+    if (!organizationFeaturesFromRow(features!.results[0] as Parameters<typeof organizationFeaturesFromRow>[0]).includes('stays')) {
+      fail(422, 'STAYS_REQUIRED', 'This business has no places to stay')
+    }
+    if (!contact!.results[0]) fail(409, 'AIRBNB_ORGANIZATION_INVALID', 'The Airbnb workspace contact could not be read')
+    return { connections: connections!.results as ConnectionRow[], mappings: mappings!.results as MappingRow[],
+      properties: properties!.results as Array<{ property_id: string }>, homes: homes!.results as Array<{ product_id: string; internal_name: string | null }>,
+      contact: contact!.results[0] as { contact_email: string | null; contact_phone: string | null } }
+  } }
+}
+
 export class ChannexConnection {
   private readonly db: DbClient
   private readonly env: CloudflareEnv & ChannexEnv
@@ -241,9 +263,9 @@ export class ChannexConnection {
   }
 
   /** The channel, verified to be this organization's Airbnb channel and to map only its properties and rate plans. */
-  private async channel(row: ConnectionRow, channelId: string, inventory: readonly MappingRow[] | Promise<readonly MappingRow[]> = this.mappings()): Promise<Resource & { properties: string[]; ratePlans: JsonRecord[]; active: boolean }> {
+  private async channel(row: ConnectionRow, channelId: string, inventory: readonly MappingRow[] | Promise<readonly MappingRow[]> = this.mappings(), properties?: readonly { property_id: string }[]): Promise<Resource & { properties: string[]; ratePlans: JsonRecord[]; active: boolean }> {
     const [channel, mappings] = await Promise.all([channexGet(this.env, `/channels/${encodeURIComponent(channelId)}`, 'channel'), inventory])
-    const allowedProperties = new Set((await queryAll<{ property_id: string }>(this.db, `SELECT property_id FROM product_channel_mappings
+    const allowedProperties = new Set((properties ?? await queryAll<{ property_id: string }>(this.db, `SELECT property_id FROM product_channel_mappings
       WHERE organization_id = ? AND property_id IS NOT NULL`, [this.organizationId])).map(mapping => mapping.property_id))
     const allowedRatePlans = new Set(mappings.flatMap(mapping => mapping.channel_id === channelId && mapping.rate_plan_id ? [mapping.rate_plan_id] : []))
     return provided(() => {
@@ -273,12 +295,15 @@ export class ChannexConnection {
     }
   }
 
-  async status() {
-    await requireStays(this.db, this.organizationId)
-    const rows = await this.rows()
-    const mappings = rows.some(row => row.status === 'connected') ? await this.mappings() : []
+  async status(preloaded?: ReturnType<ReturnType<typeof prepareChannexStatus>['read']>, verified?: Map<string, Awaited<ReturnType<ChannexConnection['channel']>>>) {
+    const plan = prepareChannexStatus(this.organizationId)
+    const context = preloaded ?? plan.read(await executeBatch(this.db, plan.queries, { operation: 'Read Airbnb connection' }))
+    const rows = context.connections
+    const mappings = context.mappings
     const connections = await Promise.all(rows.map(async row => {
-      const channel = row.status === 'connected' && row.channel_id ? await this.channel(row, row.channel_id, mappings) : null
+      if (row.status === 'connected' && (!row.channel_id || !row.group_id)) throw new HTTPError({ statusCode: 409, message: 'The connected Airbnb account has no recorded channel or group', data: { code: 'AIRBNB_CONNECTION_INVALID', field: !row.channel_id ? 'channel_id' : 'group_id' } })
+      const channel = row.status === 'connected' && row.channel_id ? await this.channel(row, row.channel_id, mappings, context.properties) : null
+      if (channel && row.channel_id) verified?.set(row.channel_id, channel)
       return { ...this.statusOf(row, channel), channel_id: row.channel_id }
     }))
     const connected = connections.filter(account => account.status === 'connected')
@@ -293,14 +318,18 @@ export class ChannexConnection {
     }
   }
 
-  async workspace() {
-    const connection = await this.status()
-    if (connection.status !== 'connected') return { connection, inventory: null, inventory_error: null }
-    try {
-      return { connection, inventory: await this.listings(), inventory_error: null }
-    } catch (cause) {
-      return { connection, inventory: null, inventory_error: cause instanceof Error ? cause.message : String(cause) }
-    }
+  async workspace(preloaded?: ReturnType<ReturnType<typeof prepareChannexStatus>['read']>) {
+    const plan = prepareChannexStatus(this.organizationId)
+    const context = preloaded ?? plan.read(await executeBatch(this.db, plan.queries, { operation: 'Read Airbnb workspace' }))
+    const verified = new Map<string, Awaited<ReturnType<ChannexConnection['channel']>>>()
+    const connection = await this.status(context, verified)
+    if (connection.status !== 'connected') return { connection, inventory: null, inventory_error: null, listing_details: [] as ListingDetails[] }
+    const inventory = await this.listings(context, verified)
+    const listings = inventory.listings.map(listing => ({ ...listing, review_required: listing.import.status === 'not_imported' }))
+    const contact = await this.organizationContact(context.contact)
+    const listing_details = await Promise.all(listings.filter(listing => listing.review_required)
+      .map(listing => listingDetails(this.env, listing.channel_id, listing.id, contact)))
+    return { connection, inventory: { ...inventory, listings }, inventory_error: null, listing_details }
   }
 
   private async ensureGroup(): Promise<string> {
@@ -431,12 +460,14 @@ export class ChannexConnection {
   }
 
   /** The account's listings and imported homes still enabled after their listing disappeared from Airbnb. */
-  async listings(): Promise<{ listings: AirbnbListing[]; missing_listings: Array<{ listing_id: string; product_id: string; internal_name: string }> }> {
-    const rows = (await this.rows()).filter(row => row.status === 'connected' && row.channel_id)
-    const mappings = rows.length ? await this.mappings() : []
+  async listings(preloaded?: ReturnType<ReturnType<typeof prepareChannexStatus>['read']>, verified?: Map<string, Awaited<ReturnType<ChannexConnection['channel']>>>): Promise<{ listings: AirbnbListing[]; missing_listings: Array<{ listing_id: string; product_id: string; internal_name: string }> }> {
+    const plan = prepareChannexStatus(this.organizationId)
+    const context = preloaded ?? plan.read(await executeBatch(this.db, plan.queries, { operation: 'Read Airbnb listings' }))
+    const rows = context.connections.filter(row => row.status === 'connected' && row.channel_id)
+    const mappings = context.mappings
     const inventories = await Promise.all(rows.map(async row => {
-      await this.channel(row, row.channel_id!, mappings)
-      return this.listingsFor(row.channel_id!, mappings)
+      if (!verified?.has(row.channel_id!)) await this.channel(row, row.channel_id!, mappings, context.properties)
+      return this.listingsFor(row.channel_id!, mappings, context.homes)
     }))
     return {
       listings: inventories.flatMap(inventory => inventory.listings),
@@ -444,7 +475,7 @@ export class ChannexConnection {
     }
   }
 
-  private async listingsFor(channelId: string, inventory: readonly MappingRow[] | Promise<readonly MappingRow[]>): Promise<{ listings: AirbnbListing[]; missing_listings: Array<{ listing_id: string; product_id: string; internal_name: string }> }> {
+  private async listingsFor(channelId: string, inventory: readonly MappingRow[] | Promise<readonly MappingRow[]>, homeNames?: readonly { product_id: string; internal_name: string | null }[]): Promise<{ listings: AirbnbListing[]; missing_listings: Array<{ listing_id: string; product_id: string; internal_name: string }> }> {
     const [account, mappings] = await Promise.all([this.accountListings(channelId), inventory])
     const imported = new Map(mappings.filter(mapping => mapping.channel_id === channelId).map(mapping => [mapping.listing_id, mapping]))
     const listings: AirbnbListing[] = account.map((listing) => {
@@ -454,13 +485,13 @@ export class ChannexConnection {
         own_rate_plan: mapping.listing_rate_plan_id !== null, price_adjustment_type: mapping.price_adjustment_type, price_adjustment: mapping.price_adjustment } : { status: 'not_imported' } }
     })
     const missing = [...imported.values()].filter(mapping => mapping.enabled === 1 && mapping.import_stage === 'complete')
-    const homes = missing.length ? await queryAll<{ product_id: string; internal_name: string | null }>(this.db, `
+    const homes = homeNames ?? (missing.length ? await queryAll<{ product_id: string; internal_name: string | null }>(this.db, `
       SELECT product_id, internal_name FROM product_stay_configs
       WHERE organization_id = ? AND product_id IN (SELECT value FROM json_each(?))`,
-    [this.organizationId, d1JsonStringSet(missing.map(mapping => mapping.product_id))]) : []
+    [this.organizationId, d1JsonStringSet(missing.map(mapping => mapping.product_id))]) : [])
     const missing_listings = missing.map((mapping) => {
       const internal_name = homes.find(home => home.product_id === mapping.product_id)?.internal_name
-      if (!internal_name?.trim()) throw new Error(`Home ${mapping.product_id} has no internal name`)
+      if (!internal_name?.trim()) throw new HTTPError({ statusCode: 409, message: `Home ${mapping.product_id} has no internal name`, data: { code: 'AIRBNB_HOME_INVALID', field: 'inventory.missing_listings.internal_name', product_id: mapping.product_id } })
       return { listing_id: mapping.listing_id, product_id: mapping.product_id, internal_name }
     })
     return { listings, missing_listings }
@@ -482,8 +513,8 @@ export class ChannexConnection {
   }
 
   /** The organization's contact email and phone, set on Website › Brand › Contact or by a first import. */
-  private async organizationContact(): Promise<OrganizationContact> {
-    const organization = await queryFirst<{ contact_email: string | null; contact_phone: string | null }>(this.db, 'SELECT contact_email, contact_phone FROM organization WHERE id = ?', [this.organizationId])
+  private async organizationContact(preloaded?: { contact_email: string | null; contact_phone: string | null }): Promise<OrganizationContact> {
+    const organization = preloaded ?? await queryFirst<{ contact_email: string | null; contact_phone: string | null }>(this.db, 'SELECT contact_email, contact_phone FROM organization WHERE id = ?', [this.organizationId])
     if (!organization) throw new Error(`Organization ${this.organizationId} has no row`)
     return { email: organization.contact_email?.trim() || null, phone: organization.contact_phone?.trim() || null }
   }

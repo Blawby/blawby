@@ -123,7 +123,7 @@ test('Today shows every booking type as one card for its own business, with the 
     assert.equal(nativeUpcoming.website, null)
     assert.deepEqual(nativeUpcoming.tasks, [])
     assert.deepEqual(nativeUpcoming.opportunities?.map(step => step.title), ['Set up payments', 'Add your first dish', 'Add photos of “bistro office”'])
-    assert.equal((await today('bistro', 'today')).website, undefined)
+    assert.equal((await today('bistro', 'today')).website?.address, nativeToday.website.address)
 
     const localToday = localDateAt(new Date(), ZONE)
     const inTwoDays = addLocalDays(localToday, 2), inThreeDays = addLocalDays(localToday, 3)

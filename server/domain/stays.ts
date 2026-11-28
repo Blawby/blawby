@@ -465,7 +465,7 @@ function channelOwned(stay: Stay, state: 'belongs to' | 'is paid through'): neve
 }
 
 /** The SQL that limits rows to homes this caller may see, and its parameters. */
-function stayHomeMemberScope(alias: string, member: string, role: string, assigned = roleMatchesSql(role, assignedOperationsRoles)) {
+export function stayHomeMemberScope(alias: string, member: string, role: string, assigned = roleMatchesSql(role, assignedOperationsRoles)) {
   return `((${assigned} AND EXISTS (SELECT 1 FROM product_booking_configs looked_after
     WHERE looked_after.organization_id = ${alias}.organization_id AND looked_after.product_id = ${alias}.product_id AND looked_after.assigned_member_id = ${member}))
     OR ${listingGrantSql(`${alias}.organization_id`, `${alias}.product_id`, member, 'calendar', role)})`

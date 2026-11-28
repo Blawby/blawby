@@ -1,3 +1,4 @@
+import { prepareMemberSchedulingList } from '~/server/domain/member-scheduling'
 import { defineHandler } from 'nitro'
 import { getQuery, getRouterParam } from 'nitro/h3'
 import { jsonResponse } from '~/server/utils/api-response'
@@ -15,12 +16,15 @@ export default defineHandler(async (event) => {
   const plan = prepareChannexStatus({ sql: BATCH_VIEWER.organization })
   const jobs = prepareAirbnbSync({ sql: BATCH_VIEWER.organization })
   const homes = prepareDashboardStayHomes()
+  const members = prepareMemberSchedulingList({ sql: BATCH_VIEWER.organization }, BATCH_VIEWER)
   const { env, session, organization, rows } = await readDashboardMemberResources(event, organizationId,
-    [...plan.queries, ...screen ? [jobs.query, ...homes.queries] : []])
+    [...plan.queries, ...screen ? [jobs.query, ...homes.queries, ...members.queries] : []])
   await assertOrganizationWideAccess(env.DB, memberAccessPrincipal(organization, { env, event }))
   const connection = new ChannexConnection(env.DB, env, organization.id, session.user.id)
   const context = plan.read(rows.slice(0, plan.queries.length))
   if (!screen) return jsonResponse(await connection.status(context))
   return jsonResponse({ ...await connection.workspace(context), jobs: jobs.read(rows[plan.queries.length]!.results),
-    home_context: await homes.read(rows.slice(plan.queries.length + 1), organization) })
+    home_context: await homes.read(rows.slice(plan.queries.length + 1, plan.queries.length + 1 + homes.queries.length), organization),
+    member_options: members.read(rows.slice(plan.queries.length + 1 + homes.queries.length)).members.map(member => ({ value: member.id, label: member.name })),
+  })
 })

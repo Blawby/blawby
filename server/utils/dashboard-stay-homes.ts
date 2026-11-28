@@ -1,3 +1,4 @@
+import { prepareCalendarCapabilities } from '~/server/utils/dashboard-context-service'
 import { ChannexConnection, prepareChannexStatus } from '~/server/integrations/channex/channel-connection'
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { HTTPError } from 'nitro'
@@ -26,17 +27,18 @@ export function prepareDashboardStayHomes(calendar = false) {
   const homes = prepareStayHomesDocument(null)
   const draft = prepareStayHomeSetupDraft({ sql: BATCH_VIEWER.organization }, { sql: BATCH_VIEWER.member })
   const connection = calendar ? prepareChannexStatus({ sql: BATCH_VIEWER.organization }) : null
+  const capabilities = calendar ? prepareCalendarCapabilities({ query: BATCH_VIEWER.organization, params: [] }, { sql: BATCH_VIEWER.user }) : null
   const plan = prepareOrganizationPlan({ sql: BATCH_VIEWER.organization })
-  return { queries: [...homes.queries, ...calendar ? connection!.queries : [draft.query, plan.query]], async read(rows: D1Result[], organization: DashboardOrganizationRow, context?: { env: CloudflareEnv; userId: string }) {
+  return { queries: [...homes.queries, ...calendar ? [...connection!.queries, capabilities!.query] : [draft.query, plan.query]], async read(rows: D1Result[], organization: DashboardOrganizationRow, context?: { env: CloudflareEnv; userId: string }) {
     const manage = await roleAllows({ ...organization, permissions: { operations: ['update'] } })
     const values = homes.read(rows.slice(0, homes.queries.length))
     if (calendar) {
       let airbnb = null
       if (manage && organization.vertical === 'lodging' && !values.length) {
         if (!context) throw new Error('The empty homes calendar requires its provider context')
-        airbnb = await new ChannexConnection(context.env.DB, context.env, organization.id, context.userId).status(connection!.read(rows.slice(homes.queries.length)))
+        airbnb = await new ChannexConnection(context.env.DB, context.env, organization.id, context.userId).status(connection!.read(rows.slice(homes.queries.length, -1)))
       }
-      return { homes: values, manage, airbnb, first_home_setup: null, resume_home_setup: null }
+      return { calendar: capabilities!.read(rows.at(-1)!), homes: values, manage, airbnb, first_home_setup: null, resume_home_setup: null }
     }
     return stayHomeSetup(organization, values, manage, manage ? draft.read(rows[homes.queries.length]!) : null,
       manage && getPlanEntitlements(plan.read(rows[homes.queries.length + 1]!, organization.id)).channel_sync === true)

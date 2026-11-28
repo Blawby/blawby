@@ -573,7 +573,7 @@ function prepareDashboardTenant(event: H3Event, db: D1Database, env: ReturnType<
     if (homeSetup) event.context.dashboardHomeSetup = { organization_id: organization.id, read: () => homeSetup.read(panelRows.slice(0, homeSetup.queries.length)) }
     if (booking && bookingId) await readDashboardBookingDocument(event, { orgSlug: slug, bookingId }, [viewerResult!, ...panelRows])
     if (calendar) {
-      event.context.dashboardCalendarPresence = { slug, has_places: (panelRows[0]!.results[0] as { has_places: number }).has_places === 1 }
+      event.context.dashboardCalendarPresence = { slug, calendar: access.calendar, has_places: (panelRows[0]!.results[0] as { has_places: number }).has_places === 1 }
       if (agenda) await agenda.apply(event, panelRows.slice(1), { env, organization })
     }
     if (earnings) earnings.apply(event, panelRows, organization)

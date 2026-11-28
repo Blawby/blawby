@@ -147,7 +147,7 @@ export async function readDashboardMemberResources(event: H3Event, organization:
     queries: token => queries(member(dashboardSessionUserQuery(token))),
   }
   const session = await getAuthSession(event, env, { document: auth, forwardCookies: true })
-  if (!session?.user?.id) throw new HTTPError({ statusCode: 401, message: 'Authentication required' })
+  if (!session?.user?.id) throw new HTTPError({ statusCode: 401, message: 'Authentication required', data: { code: 'UNAUTHORIZED', field: 'session' } })
   const [viewer, ...rows] = auth.results ?? await executeBatch(
     db, queries(member(session.user.id)), { operation: 'Read the authorized CMS resource' },
   )

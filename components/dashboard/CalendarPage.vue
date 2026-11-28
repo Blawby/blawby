@@ -301,6 +301,7 @@ export const calendarSessionsKey = Symbol('calendar-sessions') as InjectionKey<{
 </script>
 
 <script setup lang="ts">
+import type { CalendarCapabilities } from '~/shared/bookings'
 import { bookingEditorPath } from '~/shared/messages-contract'
 import { NuxtLink } from '#components'
 import { CalendarDate, getDayOfWeek, getLocalTimeZone, parseDate, today } from '@internationalized/date'
@@ -326,6 +327,7 @@ const props = defineProps<{
   sessionLocations?: DashboardLocation[]
   offeringsError?: string
   canCreateStay?: boolean
+  capabilities?: CalendarCapabilities
   hasHomes?: boolean
   /** The organization has restaurant locations, experiences or consultations: the Places grid's rows. */
   hasPlaces?: boolean
@@ -364,10 +366,10 @@ const VIEWS: Record<CalendarView, { label: string; icon: string }> = {
   homes: { label: 'Homes', icon: 'i-lucide-rows-3' },
   places: { label: 'Places', icon: 'i-lucide-rows-4' },
 }
-const homesView = !props.personalScope && !props.sessionProduct && props.hasHomes
+const homesView = !props.personalScope && !props.sessionProduct && (props.capabilities?.modes.some(mode => mode.id === 'all_homes') ?? props.hasHomes)
 const placesView = computed(() => !props.personalScope && !props.sessionProduct && props.hasPlaces)
 // A business with homes opens on its multi-home grid, as Airbnb's and Hostaway's multi-calendars do; a view in the URL still wins.
-const view = ref<CalendarView>(route.query.view === 'list' || route.query.view === 'year' || (homesView && route.query.view === 'homes') || (placesView.value && route.query.view === 'places') ? route.query.view : homesView ? 'homes' : 'month')
+const view = ref<CalendarView>(route.query.view === 'list' || route.query.view === 'year' || (homesView && route.query.view === 'homes') || (placesView.value && route.query.view === 'places') ? route.query.view : props.capabilities?.default_mode === 'all_homes' || !props.capabilities && homesView ? 'homes' : 'month')
 const gridView = computed(() => view.value === 'homes' || view.value === 'places')
 const searchLabel = computed(() => view.value === 'homes' ? 'Search homes' : view.value === 'places' ? 'Search places' : 'Search bookings')
 const routeMonth = typeof route.query.month === 'string' && /^\d{4}-\d{2}$/.test(route.query.month) ? route.query.month : null

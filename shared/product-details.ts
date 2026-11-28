@@ -64,10 +64,10 @@ const DETAIL_FIELDS = {
   sizes: { icon: 'i-lucide-ruler', name: 'Serving sizes', description: 'Authored serving information; priced choices belong in variants.', value_type: 'list.single_line_text', kinds: ['dish'] },
   soup: { icon: 'i-lucide-soup', name: 'Soup', description: 'Authored soup information shown with the dish.', value_type: 'list.single_line_text', kinds: ['dish'] },
   toppings: { icon: 'i-lucide-salad', name: 'Toppings', description: 'Authored topping information; priced choices belong in variants.', value_type: 'list.single_line_text', kinds: ['dish'] },
-  meeting_point: { icon: 'i-lucide-map-pin', name: 'Where to meet', description: 'Instructions shown in the meeting section; meeting mode and video links are set in scheduling.', value_type: 'multi_line_text', kinds: ['experience', 'service'] },
-  included_items: { icon: 'i-lucide-package-check', name: 'What is included', description: 'Items or work included in the stated price, shown in their own public section.', value_type: 'list.single_line_text', kinds: ['experience', 'service'] },
+  meeting_point: { icon: 'i-lucide-map-pin', name: 'Where to meet', service_name: 'Office or call details', description: 'Instructions shown in the meeting section; meeting mode and video links are set in scheduling.', value_type: 'multi_line_text', kinds: ['experience', 'service'] },
+  included_items: { icon: 'i-lucide-package-check', name: 'What is included', service_name: 'What the consultation covers', description: 'Items or work included in the stated price, shown in their own public section.', value_type: 'list.single_line_text', kinds: ['experience', 'service'] },
   what_to_bring: { icon: 'i-lucide-backpack', name: 'What to bring', description: 'Items customers should bring, shown in the preparation section.', value_type: 'list.single_line_text', kinds: ['experience', 'service'] },
-  preparation: { icon: 'i-lucide-clipboard-check', name: 'Before you arrive', description: 'Preparation instructions shown to customers before a session or appointment.', value_type: 'multi_line_text', kinds: ['experience', 'service'] },
+  preparation: { icon: 'i-lucide-clipboard-check', name: 'Before you arrive', service_name: 'Before your consultation', description: 'Preparation instructions shown to customers before a session or appointment.', value_type: 'multi_line_text', kinds: ['experience', 'service'] },
   your_property: { name: 'Your property', description: 'The spaces and features guests should know about this home.', value_type: 'multi_line_text', kinds: ['stay'] },
   guest_access: { name: 'Guest access', description: 'The spaces and facilities guests can use during their stay.', value_type: 'multi_line_text', kinds: ['stay'] },
   interaction_with_guests: { name: 'Interaction with guests', description: 'How guests can contact the host and what support is available.', value_type: 'multi_line_text', kinds: ['stay'] },
@@ -87,11 +87,13 @@ export const STAY_LOCATION_DETAIL_KEYS = ['neighborhood_description', 'getting_a
 export const STAY_HOUSE_RULE_DETAIL_KEYS = [...Object.keys(STAY_HOUSE_RULE_TOGGLES) as Array<keyof typeof STAY_HOUSE_RULE_TOGGLES>, 'quiet_hours_start', 'quiet_hours_end', 'house_rules'] as const satisfies readonly ProductDetailKey[]
 const STAY_FOCUSED_DETAIL_KEYS: ReadonlySet<string> = new Set([...STAY_DESCRIPTION_DETAIL_KEYS, ...STAY_HOUSE_RULE_DETAIL_KEYS, ...STAY_LOCATION_DETAIL_KEYS, ...STAY_SAFETY_DETAIL_KEYS])
 export function isStayFocusedDetail(key: string): boolean { return STAY_FOCUSED_DETAIL_KEYS.has(key) }
-export const PRODUCT_DETAIL_FIELDS: readonly ProductDetailField[] = Object.entries(DETAIL_FIELDS).map(([key, field]) => ({ ...field, id: key, key: key as ProductDetailKey, localizable: 'localizable' in field ? field.localizable : field.value_type !== 'boolean', validations: 'validations' in field ? field.validations : {} }))
+export const PRODUCT_DETAIL_FIELDS: readonly ProductDetailField[] = Object.entries(DETAIL_FIELDS).map(([key, { service_name: _service, ...field }]: [string, typeof DETAIL_FIELDS[keyof typeof DETAIL_FIELDS] & { service_name?: string }]) => ({ ...field, id: key, key: key as ProductDetailKey, localizable: 'localizable' in field ? field.localizable : field.value_type !== 'boolean', validations: 'validations' in field ? field.validations : {} }))
+/** A legal practice area names the shared consultation fields in a law office's words. */
+const SERVICE_NAMES: Partial<Record<ProductDetailKey, string>> = Object.fromEntries(Object.entries(DETAIL_FIELDS).flatMap(([key, field]) => 'service_name' in field ? [[key, field.service_name]] : []))
 export const PRICING_NOTE_HANDLE = 'pricing_note'
 export const EXPERIENCE_ATTRIBUTE_HANDLES = { tagline: 'tagline', meetingPoint: 'meeting_point', includedItems: 'included_items', whatToBring: 'what_to_bring' } as const
 export function productDetailFields(kind: ProductKind): ProductDetailField[] {
-  return PRODUCT_DETAIL_FIELDS.filter(field => field.kinds.includes(kind))
+  return PRODUCT_DETAIL_FIELDS.filter(field => field.kinds.includes(kind)).map(field => kind === 'service' && SERVICE_NAMES[field.key] ? { ...field, name: SERVICE_NAMES[field.key]! } : field)
 }
 export function productDetailKey(field: Pick<ProductDetailField, 'key'>): ProductDetailKey { return field.key }
 export function isProductDetailLocalizable(field: ProductDetailField): boolean { return field.localizable }

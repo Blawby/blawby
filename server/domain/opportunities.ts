@@ -5,7 +5,7 @@ import { BOOKING_RECORDS_SQL, bookedRecordWindow } from '~/server/domain/request
 import { firstExperienceSetupPath, firstHomeSetupPath, firstPracticeAreaPath, guestConversationPath, locationEditorPath, productEditorPath } from '~/server/utils/dashboard-links'
 import { resolveBookingPresentation } from '~/utils/booking-presentation'
 import { addLocalDays, formatCalendarRange, formatTimestamp, localDateAt } from '~/utils/timezone'
-import { PRODUCT_DETAIL_FIELDS, type ProductKind } from '~/shared/product-details'
+import { productDetailFields, type ProductKind } from '~/shared/product-details'
 import { platformLocale } from '~/shared/platform-locales'
 import { stayGuestFirstName } from '~/shared/bookings'
 import { UPCOMING_RESERVATION_DAYS, todayIcon, type TodayDestination, type TodayIcon } from '~/shared/dashboard-today'
@@ -176,7 +176,7 @@ interface WelcomeRow {
   details_json: string | null; directions: string | null; wifi_network: string | null; wifi_password: string | null; house_manual: string | null
 }
 
-const fieldName = (key: 'preparation' | 'what_to_bring') => PRODUCT_DETAIL_FIELDS.find(field => field.key === key)!.name
+const fieldName = (kind: ProductKind, key: 'preparation' | 'what_to_bring') => productDetailFields(kind).find(field => field.key === key)!.name
 const stayLabels = () => {
   const locale = platformLocale('en')
   if (!locale) throw new Error('The English platform locale is missing')
@@ -189,9 +189,9 @@ function welcomeMessage(row: WelcomeRow): string | null {
   const sections: string[] = []
   if (row.unit === 'slot') {
     const details = JSON.parse(row.details_json ?? '{}') as Record<string, unknown>
-    if (filled(details.preparation)) sections.push(`${fieldName('preparation')}:\n${details.preparation.trim()}`)
+    if (filled(details.preparation)) sections.push(`${fieldName(row.product_kind, 'preparation')}:\n${details.preparation.trim()}`)
     const items = Array.isArray(details.what_to_bring) ? details.what_to_bring.filter(filled) : []
-    if (items.length) sections.push(`${fieldName('what_to_bring')}:\n${items.map(item => `- ${item.trim()}`).join('\n')}`)
+    if (items.length) sections.push(`${fieldName(row.product_kind, 'what_to_bring')}:\n${items.map(item => `- ${item.trim()}`).join('\n')}`)
   } else {
     const labels = stayLabels()
     if (filled(row.directions)) sections.push(`${labels['stay.directions']}:\n${row.directions.trim()}`)

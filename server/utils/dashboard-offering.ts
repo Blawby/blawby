@@ -8,7 +8,7 @@ import { MEMBER_NAME_SQL } from '~/shared/member-scheduling'
 import { PRODUCT_KIND_LABELS, editableProductKinds, productDetailFields } from '~/shared/product-details'
 import { isCurrencyCode } from '~/shared/currencies'
 import { isMembershipProduct, offeredPrice } from '~/shared/memberships'
-import { formatProductMoney } from '~/utils/product-money'
+import { formatProductMoney, formatProductPriceRange, summarizeProductPrices } from '~/utils/product-money'
 import { mediaStillUrl } from '~/shared/media-placement-contract'
 import { agreementLabel } from '~/shared/agreements'
 import { getVerticalCopy } from '~/utils/vertical-copy'
@@ -87,9 +87,12 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
       product_variant_id: variant.id, displayed_price: chosenPrice(variant),
       editable_price: chosenPrice({ ...variant, prices: variant.prices.filter(price => price.location_id === selection.location_id) }),
     })) }
+    // With no location chosen the offering is priced as Catalog lists it: across its own and every location's prices.
+    const unscoped = [null, ...locations.map(place => place.id)].map(location_id => ({ currency, location_id }))
     const prices = product.variants.map(variant => {
-      const price = chosenPrice(variant)
-      const amount = price ? formatProductMoney(price) : text(detail('pricing_note')) || 'No price set'
+      const price = location ? chosenPrice(variant) : null
+      const amount = (location ? price && formatProductMoney(price) : formatProductPriceRange(summarizeProductPrices([variant], unscoped, true)))
+        || text(detail('pricing_note')) || 'No price set'
       return product.variants.length === 1 ? amount : `${variant.name}: ${amount}`
     }).join('\n') || 'No price set'
     const photo = leaf('photo', 'Media', product.gallery.length || product.image ? 'View media' : 'Add media', { readonly: !wide })

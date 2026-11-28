@@ -234,7 +234,7 @@ test('Today shows every booking type as one card for its own business, with the 
     // The message is written from the offering's and the home's own fields, and the conversation opens with it.
     const consultationMessage = law.cards[0]!.draft!
     assert.match(consultationMessage, /^Hi Eva,\n\nLooking forward to seeing you for Estate Planning Consultation on .+\.\n\n/)
-    assert.ok(consultationMessage.endsWith(`Before you arrive:\n${preparation}\n\nWhat to bring:\n- Photo ID\n- Current will`), consultationMessage)
+    assert.ok(consultationMessage.endsWith(`Before your consultation:\n${preparation}\n\nWhat to bring:\n- Photo ID\n- Current will`), consultationMessage)
     const stayMessage = inn.cards[0]!.draft!
     assert.match(stayMessage, /^Hi Diana,\n\nLooking forward to hosting you at Seaview Cottage from .+\.\n\n/)
     assert.ok(stayMessage.endsWith(`Directions:\n${directions}\n\nWifi details:\nWifi network: Seaview\nWifi password: saltwater`), stayMessage)

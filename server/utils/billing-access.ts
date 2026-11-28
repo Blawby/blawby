@@ -178,15 +178,15 @@ export async function getOrganizationPlan(
   return plan.read(result!)
 }
 
-export type OrganizationSubscriptionTerms = EntitlementRow & { stripeCustomerId: string | null; stripeSubscriptionId: string | null }
+export type OrganizationSubscriptionTerms = EntitlementRow & { stripeCustomerId: string | null; stripeSubscriptionId: string | null; cancelAtPeriodEnd: boolean; billingInterval: string | null; stripeScheduleId: string | null }
 
 /** The subscription facts a live homes quote needs, read beside its usage. */
 export function prepareOrganizationSubscriptionTerms(organizationId: string | { sql: string }) {
-  return { query: { query: `SELECT id, referenceId, plan, status, periodEnd, stripeCustomerId, stripeSubscriptionId FROM subscription
+  return { query: { query: `SELECT id, referenceId, plan, status, periodEnd, stripeCustomerId, stripeSubscriptionId, cancelAtPeriodEnd, billingInterval, stripeScheduleId FROM subscription
     WHERE referenceId = ${typeof organizationId === 'string' ? '?' : organizationId.sql}`, params: typeof organizationId === 'string' ? [organizationId] : [] },
     read(result: D1Result): OrganizationSubscriptionTerms[] {
       const rows = result.results as Array<Omit<OrganizationSubscriptionTerms, 'periodEnd'> & { periodEnd: number | null }>
-      return rows.map(row => ({ ...row, periodEnd: row.periodEnd === null ? null : new Date(row.periodEnd * 1000) }))
+      return rows.map(row => ({ ...row, periodEnd: row.periodEnd === null ? null : new Date(row.periodEnd * 1000), cancelAtPeriodEnd: Number(row.cancelAtPeriodEnd) === 1 }))
     } }
 }
 

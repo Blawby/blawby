@@ -343,6 +343,7 @@ export interface ProductEditor {
   bookingCopy: ComputedRef<VerticalCopy>
   managesCatalog: ComputedRef<boolean>
   product: ComputedRef<Product | null>
+  agreementTemplate: ComputedRef<AgreementTemplateRead | null>
   /** Saved publication state, separate from the visibility leaf's draft. */
   published: ComputedRef<boolean>
   /** The saved item's public page, or a dish's page at each of its locations; empty while nothing is public. */
@@ -437,6 +438,7 @@ export const productEditorKey = Symbol('product-editor') as InjectionKey<Product
 </script>
 
 <script setup lang="ts">
+import { isAgreementTemplateRead, type AgreementTemplateRead } from '~/shared/agreement-templates'
 import { agreementLabel } from '~/shared/agreements'
 import { MAX_STAY_NIGHTS, STAY_DIRECT_DISCOUNTS, parseStayCalendarRules, type StayCalendarRules } from '~/shared/bookings'
 import { cloneFnJSON } from '@vueuse/core'
@@ -617,17 +619,19 @@ const isMutation = (value: unknown): value is { success: true; product: ProductM
 
 // The product in this scope, read before the level renders. Keyed by location
 // and product, so a scope change reads that location's prices and settings.
-type ProductEditorRead = { collections: Collection[]; product: Product; previewToken: string | null; previewUrl: string | null; publicUrl: string | null; publicUrls: Record<string, string>; hostProfilePublished: boolean | null; offering: CatalogScreen | null; locations: DashboardLocation[]; assignedMemberName: string | null } | null
-const productReadKey = computed(() => `dashboard-product:${organizationId}:${locationScope.value ?? 'organization'}:${productId.value}`)
+type ProductEditorRead = { collections: Collection[]; product: Product; previewToken: string | null; previewUrl: string | null; publicUrl: string | null; publicUrls: Record<string, string>; hostProfilePublished: boolean | null; offering: CatalogScreen | null; locations: DashboardLocation[]; assignedMemberName: string | null; agreementTemplate: AgreementTemplateRead | null } | null
+const readsAgreement = computed(() => /\/products\/[^/]+\/agreement(?:\/|$)/.test(route.path))
+const productReadKey = computed(() => `dashboard-product:${organizationId}:${locationScope.value ?? 'organization'}:${productId.value}:${readsAgreement.value ? 'agreement' : ''}`)
 const { data: loaded, error: loadFailure, refresh } = await useWebsiteIndexData<ProductEditorRead>(
   productReadKey,
   async (signal): Promise<ProductEditorRead> => {
     if (isNew.value) return null
     const id = locationId.value
     const path = `/api/editor/organizations/${organizationId}${id ? `/locations/${encodeURIComponent(id)}` : ''}/products/${encodeURIComponent(productId.value)}`
-    const response = await dashboardApi(path, { validate: isProductRead, signal, query: { editor: '1' } })
+    const response = await dashboardApi(path, { validate: isProductRead, signal, query: { editor: '1', ...(readsAgreement.value ? { include: 'agreement_template' } : {}) } })
+    if (readsAgreement.value && !isAgreementTemplateRead(response)) throw new Error('The agreement template context could not be read')
     if (locationScope.value === 'online' && !response.product.booking?.held_online) throw createError({ statusCode: 404, statusMessage: 'This product is not held online' })
-    return { collections: response.collections, product: response.product, previewToken: response.preview_token, previewUrl: response.preview_url, publicUrl: response.public_url, publicUrls: response.public_urls, hostProfilePublished: response.host_profile_published, offering: response.offering, locations: response.locations, assignedMemberName: response.assigned_member_name }
+    return { collections: response.collections, product: response.product, previewToken: response.preview_token, previewUrl: response.preview_url, publicUrl: response.public_url, publicUrls: response.public_urls, hostProfilePublished: response.host_profile_published, offering: response.offering, locations: response.locations, assignedMemberName: response.assigned_member_name, agreementTemplate: isAgreementTemplateRead(response) ? response : null }
   },
 
 )
@@ -1828,7 +1832,7 @@ async function commit(concern?: ProductConcern) {
       const saved = savedEditor.product
       loaded.value = { product: saved, collections: savedEditor.collections, previewToken: savedEditor.preview_token,
         previewUrl: savedEditor.preview_url, publicUrl: savedEditor.public_url,
-        publicUrls: savedEditor.public_urls, hostProfilePublished: savedEditor.host_profile_published, offering: savedEditor.offering, locations: savedEditor.locations, assignedMemberName: savedEditor.assigned_member_name }
+        publicUrls: savedEditor.public_urls, hostProfilePublished: savedEditor.host_profile_published, offering: savedEditor.offering, locations: savedEditor.locations, assignedMemberName: savedEditor.assigned_member_name, agreementTemplate: isAgreementTemplateRead(savedEditor) ? savedEditor : null }
       applyProduct(saved)
       editVersion.value = saved.updated_at
       const held = realtime.held.begin(`website:${productReadKey.value}`, businessChanged)
@@ -2303,6 +2307,7 @@ provide(productEditorKey, {
   bookingCopy,
   managesCatalog,
   product,
+  agreementTemplate: computed(() => loaded.value?.agreementTemplate ?? null),
   published,
   bookingOffering,
   itemLabel,

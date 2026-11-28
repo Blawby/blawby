@@ -57,7 +57,7 @@
 
 <script setup lang="ts">
 import { paymentMoney, paymentStateLabel } from '~/shared/payment-display'
-import { downloadCsv, isTransactionsView, type TransactionRow } from '~/shared/earnings-display'
+import { downloadCsv, isTransactionsScreen, type TransactionsScreen, type TransactionRow } from '~/shared/earnings-display'
 import { minorAmountToMajor } from '~/shared/prices'
 import type { CurrencyCode } from '~/shared/currencies'
 import { formatCalendarDate, formatTimestamp } from '~/utils/timezone'
@@ -102,12 +102,6 @@ const periodLabel = computed(() => !from.value
     ? formatCalendarDate(from.value, 'en', { month: 'long', year: 'numeric' })
     : `${formatCalendarDate(from.value, 'en', { month: 'short', day: 'numeric' })} – ${formatCalendarDate(through.value, 'en', { month: 'short', day: 'numeric', year: 'numeric' })}`)
 
-// Airbnb's "All listings": the business's locations, each with its picture.
-type LocationPill = { id: string; title: string; image_url: string | null }
-const isLocationList = (value: unknown): value is { locations: LocationPill[] } => isRecord(value) && Array.isArray(value.locations)
-  && value.locations.every(row => isRecord(row) && typeof row.id === 'string' && typeof row.title === 'string' && (row.image_url === null || typeof row.image_url === 'string'))
-const { data: locationData } = await useAsyncData(() => `earnings-transaction-locations:${route.params.org_slug}`, () => api<{ locations: LocationPill[] }>('/api/dashboard/locations', { validate: isLocationList }))
-const locations = computed(() => locationData.value?.locations ?? [])
 const locationItems = computed(() => [[
   { label: 'All locations', type: 'checkbox' as const, checked: !locationId.value, onSelect: () => { locationId.value = '' } },
   ...locations.value.map(location => ({
@@ -132,24 +126,25 @@ const { data, error, status } = await useAsyncData(
     const end = through.value ? new Date(`${through.value}T00:00:00.000Z`) : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
     if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) throw new Error('Choose a valid period')
     end.setUTCDate(end.getUTCDate() + 1)
-    const page = await api<{ payments: TransactionRow[]; next_cursor: string | null }>('/api/dashboard/payments', {
+    const page = await api<TransactionsScreen>('/api/dashboard/payments', {
       query: {
         view: 'transactions', from: start.toISOString(), to: end.toISOString(),
         ...(locationId.value ? { location_id: locationId.value } : {}),
         ...(earningsType.value ? { earnings_type: earningsType.value } : {}),
         ...(after.value ? { after: after.value } : {}),
       },
-      validate: isTransactionsView,
+      validate: isTransactionsScreen,
     })
     return page
   },
   { watch: [from, through, locationId, earningsType, after] },
 )
+const locations = computed(() => data.value?.locations ?? [])
 // Watched rather than written in the handler, which does not run again when the
 // server-rendered page hydrates.
 watch(data, (page) => { if (page) loaded.value = after.value ? [...loaded.value, ...page.payments] : page.payments }, { immediate: true })
-// Newest first, as Airbnb lists them.
-const rows = computed(() => [...loaded.value].sort((a, b) => b.created_at.localeCompare(a.created_at)))
+// The server orders the complete list and its cursor pages.
+const rows = computed(() => loaded.value)
 const total = computed(() => {
   const totals = new Map<string, number>()
   for (const row of rows.value) totals.set(row.currency, (totals.get(row.currency) ?? 0) + row.captured_amount - row.refunded_amount)

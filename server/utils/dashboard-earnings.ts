@@ -1,9 +1,10 @@
 import { dashboardPresentation } from '~/shared/dashboard-presentation'
 import { HTTPError, type H3Event } from 'nitro'
-import { preparePaymentPerformance, prepareBookingValueReport, readStripePayouts, payoutFilters } from '~/server/domain/payments/earnings'
+import { preparePaymentTransactions, preparePaymentPerformance, prepareBookingValueReport, readStripePayouts, payoutFilters } from '~/server/domain/payments/earnings'
+import { prepareDashboardLocationsResource } from '~/server/utils/dashboard-locations-resource'
 import { authorizePayments } from '~/server/domain/payments'
 import { dashboardOrgQueryParam, readDashboardMemberResources, getDashboardContext } from '~/server/utils/dashboard-context'
-import { BATCH_VIEWER, withViewer, roleAllows } from '~/server/utils/member-access'
+import { BATCH_VIEWER, withViewer, roleAllows, assertOrganizationWideAccess, memberAccessPrincipal } from '~/server/utils/member-access'
 import { roleMatchesSql, rolesAllowing } from '~/utils/organization-access'
 import type { BatchQuery } from '~/server/db'
 import { stripeConnectedAccountFromRow, stripeConnectedAccountQuery, type StripeConnectedAccount } from '~/server/utils/stripe-connect'
@@ -125,4 +126,27 @@ export async function readDashboardBookingValue(event: H3Event, query: { year?: 
   const {organization,userId,rows} = await readDashboardMemberResources(event,{slug},plan.queries)
   await authorizePayments({organizationId:organization.id,userId,role:organization.role},'read')
   return plan.read(rows,organization.id,organization.vertical)
+}
+
+/** Transactions, their pictures and the visible location filter are one authorized screen read. */
+export async function readDashboardTransactions(event: H3Event, query: Record<string, unknown>) {
+  const slug = dashboardOrgQueryParam(event)
+  if (!slug) throw new HTTPError({ statusCode: 400, message: 'Choose a workspace', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
+  for (const key of ['from', 'to', 'after', 'location_id'] as const) {
+    if (query[key] !== undefined && (typeof query[key] !== 'string' || !query[key].trim())) throw new HTTPError({ statusCode: 400, message: `A valid ${key} is required`, data: { code: 'INVALID_QUERY', field: key } })
+  }
+  if (query.earnings_type !== undefined && query.earnings_type !== 'paid' && query.earnings_type !== 'refunded') throw new HTTPError({ statusCode: 400, message: 'Choose a valid earnings type', data: { code: 'INVALID_QUERY', field: 'earnings_type' } })
+  const now = new Date()
+  const limit = query.limit === undefined ? undefined : typeof query.limit === 'string' && /^\d+$/.test(query.limit) ? Number(query.limit) : NaN
+  const plan = preparePaymentTransactions({ sql: BATCH_VIEWER.organization }, {
+    from: query.from as string | undefined ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString(),
+    to: query.to as string | undefined ?? now.toISOString(), after: query.after as string | undefined,
+    limit, location_id: query.location_id as string | undefined, earnings_type: query.earnings_type as 'paid' | 'refunded' | undefined,
+  })
+  const locations = prepareDashboardLocationsResource({ sql: BATCH_VIEWER.organization })
+  const { db, env, rows, organization, userId } = await readDashboardMemberResources(event, { slug }, [...plan.queries, ...locations.queries])
+  await assertOrganizationWideAccess(db, memberAccessPrincipal(organization, { env, event }))
+  await authorizePayments({ organizationId: organization.id, userId, role: organization.role }, 'read')
+  return { ...plan.read(rows.slice(0, plan.queries.length), organization.id, organization.slug),
+    locations: locations.read(rows.slice(plan.queries.length), organization.id).locations }
 }

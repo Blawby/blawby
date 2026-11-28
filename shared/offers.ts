@@ -121,3 +121,13 @@ export function offer(id: OfferId): Offer {
 export function planOffers(entitlements: Record<string, unknown>): Offer[] {
   return OFFERS.filter(item => 'entitlement' in item.unlock && entitlements[item.unlock.entitlement] !== true)
 }
+
+export const offerPlanName = (plan: string) => plan.charAt(0).toUpperCase() + plan.slice(1)
+
+export function offerSummary(item: Offer): string {
+  return 'plan' in item.unlock ? `${item.name} comes with ${offerPlanName(item.unlock.plan)}.` : item.line
+}
+
+export function offerDestination(item: Offer, base: string): string {
+  return 'plan' in item.unlock ? `${base}/billing/upgrade?plan=${item.unlock.plan}` : `${base}/${item.path}`
+}

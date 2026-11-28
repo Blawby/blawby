@@ -1,9 +1,10 @@
+import { publishBusinessInvalidation } from '~/server/cloudflare/guest-inbox-events'
 import { SURCHARGE_POLICY } from '~/shared/billing-model'
 import { defineHandler, HTTPError } from 'nitro'
-import { getDashboardContext } from '~/server/utils/dashboard-context'
-import { assertRoleAllows } from '~/server/utils/member-access'
+import { dashboardOrgQueryParam, readDashboardMemberResources } from '~/server/utils/dashboard-context'
+import { BATCH_VIEWER, assertRoleAllows } from '~/server/utils/member-access'
 import { jsonResponse } from '~/server/utils/api-response'
-import { getStripeConnectedAccount, paymentsStripe } from '~/server/utils/stripe-connect'
+import { stripeConnectedAccountQuery, stripeConnectedAccountFromRow, STRIPE_CONNECT_ONBOARDING_COUNTRIES, refreshStripeConnectedAccount, paymentsStripe } from '~/server/utils/stripe-connect'
 
 /** The payout method as Airbnb shows it: the bank on file and when Stripe sends, read live from the connected account. */
 export interface ConnectPayoutMethod {
@@ -14,11 +15,22 @@ export interface ConnectPayoutMethod {
 }
 
 export default defineHandler(async (event) => {
-  const { env, db, organization } = await getDashboardContext(event, {})
+  const { env, db, organization, rows } = await readDashboardMemberResources(event, { slug: dashboardOrgQueryParam(event) ?? '' }, [
+    stripeConnectedAccountQuery({ sql: BATCH_VIEWER.organization }),
+    { query: `SELECT json_extract(payload_json, '$.source.details.country') AS country FROM onboarding_drafts
+      WHERE organization_id = ${BATCH_VIEWER.organization} AND status = 'committed' ORDER BY committed_at DESC, id DESC LIMIT 1`, params: [] },
+  ])
   // Connecting the organization's Stripe account is an integration change:
   // owner and admin, per utils/organization-access.ts.
   await assertRoleAllows({ organizationId: organization.id, role: organization.role, permissions: { payments: ['integration'] } })
-  const account = await getStripeConnectedAccount(db, organization.id)
+  let account = stripeConnectedAccountFromRow(rows[0]!.results[0])
+  if (account?.stripe_account_id && account.status !== 'ready') {
+    account = await refreshStripeConnectedAccount(db, paymentsStripe(env, account.livemode), account)
+    await publishBusinessInvalidation(env, organization.id)
+  }
+  const answer = (rows[1]!.results[0] as { country: string | null } | undefined)?.country
+  const countries = STRIPE_CONNECT_ONBOARDING_COUNTRIES
+  const suggested_country = answer && countries.includes(answer) ? answer : null
   let payout: ConnectPayoutMethod | null = null
   if (account?.stripe_account_id && account.status === 'ready') {
     const stripe = paymentsStripe(env, account.livemode)
@@ -36,5 +48,5 @@ export default defineHandler(async (event) => {
     if (bank?.object === 'bank_account' && schedule) payout = { bank_name: bank.bank_name ?? null, last4: bank.last4, currency: bank.currency.toUpperCase(), schedule: { interval: schedule.interval, delay_days: schedule.delay_days } }
 
   }
-  return jsonResponse({ success: true, account, payout, surcharge_policy: SURCHARGE_POLICY })
+  return jsonResponse({ success: true, account, payout, countries, suggested_country, surcharge_policy: SURCHARGE_POLICY })
 })

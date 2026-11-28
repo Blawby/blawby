@@ -3,11 +3,12 @@ import {getQuery} from 'nitro/h3'
 import {getDashboardContext} from '~/server/utils/dashboard-context'
 import {jsonResponse} from '~/server/utils/api-response'
 import {listPayments,paymentSummary,readPaymentDetails,authorizePayments} from '~/server/domain/payments'
-import {paymentPayoutExport,payoutFilters,paymentPayoutDetail,paymentPayouts,paymentTransactionDestination,paymentTransactions} from '~/server/domain/payments/earnings'
-import { readDashboardBookingValue, readDashboardEarnings, readDashboardEarningsOverview, readDashboardPayoutAccount } from '~/server/utils/dashboard-earnings'
+import {paymentPayoutExport,payoutFilters,paymentPayoutDetail,paymentPayouts,paymentTransactionDestination} from '~/server/domain/payments/earnings'
+import { readDashboardTransactions, readDashboardBookingValue, readDashboardEarnings, readDashboardEarningsOverview, readDashboardPayoutAccount } from '~/server/utils/dashboard-earnings'
 import {queryAll,queryFirst} from '~/server/db'
 export default defineHandler(async event=>{
  const query=getQuery(event)
+ if(query.view==='transactions' && typeof query.payment_id!=='string')return jsonResponse(await readDashboardTransactions(event,query),{headers:{'cache-control':'private, no-store'}})
  if(query.view==='booking_value')return jsonResponse(await readDashboardBookingValue(event,query),{headers:{'cache-control':'private, no-store'}})
  if(query.view==='overview')return jsonResponse(await readDashboardEarningsOverview(event,query),{headers:{'cache-control':'private, no-store'}})
  if(query.view==='performance' && typeof query.payment_id!=='string' && (query.after===undefined || (typeof query.after==='string' && query.after))) return jsonResponse(await readDashboardEarnings(event,query))
@@ -32,7 +33,7 @@ export default defineHandler(async event=>{
   if(query.view==='destination')return jsonResponse(await paymentTransactionDestination(db,organization.id,organization.slug,query.payment_id))
   return jsonResponse(await readPaymentDetails(db,env,organization.id,query.payment_id))
  }
- if(query.view==='transactions')return jsonResponse(await paymentTransactions(db,principal,organization.slug,await listPayments(db,principal,{from,to,after,location_id:typeof query.location_id==='string'&&query.location_id?query.location_id:undefined,earnings_type:query.earnings_type==='paid'||query.earnings_type==='refunded'?query.earnings_type:undefined})))
+
  if(query.view==='refunds' || query.view==='disputes'){
   if(query.view==='disputes') await authorizePayments(principal,'disputes')
   const table=query.view==='refunds'?'payment_refunds':'payment_disputes'

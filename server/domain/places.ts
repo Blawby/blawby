@@ -139,8 +139,9 @@ function placesIdentityQueries(org: BatchQuery, userId: string | { sql: string }
   }]
 }
 
-export function placesPresenceQuery(organization: BatchQuery, userId: string | { sql: string }): BatchQuery {
-  const places = placesIdentityQueries(organization, userId)
+export function placesPresenceQuery(organization: BatchQuery, userId: string | { sql: string }, kind?: PlaceKind): BatchQuery {
+  const all = placesIdentityQueries(organization, userId)
+  const places = kind === 'offering' ? [all[1]!] : kind === 'location' ? [all[0]!] : all
   const visible = places.map(place => `EXISTS (SELECT 1 FROM (${place.query}) WHERE assigned = 1)`).join(' OR ')
   return { query: `SELECT (${visible}) AS has_places`, params: places.flatMap(place => place.params ?? []) }
 }

@@ -1,51 +1,40 @@
 import { HTTPError } from 'nitro'
-import type { DbClient } from '~/server/db'
-import { execute, queryFirst } from '~/server/db'
+import { execute } from '~/server/db'
 import type { OfferingSetupAnswer, OfferingSetupResponse } from '~/shared/offering-setup'
 import { PRODUCT_LIMITS } from '~/shared/product-limits'
 import { majorAmountToMinor, minorAmountToMajor } from '~/shared/prices'
 import { mediaStillUrl } from '~/shared/media-placement-contract'
 import { firstMenuSectionSetupPath } from '~/server/utils/dashboard-links'
-import { getLocation } from '~/server/utils/location-management'
-import { getMediaPlacements, setSingleMediaPlacement } from '~/server/utils/media-placement'
-import { firstMenuSetupApplies, firstMenuSkipsByDish, parseOnboardingDraftPayload } from '~/server/utils/onboarding-drafts'
-import { createCollection, createProduct, listCollectionProducts, listCollections, listLocationProducts, organizationDefaultCurrency, resolveVariantPrice, setCollectionProducts, updateCollection, updateProduct } from '~/server/utils/product-management'
+import { setSingleMediaPlacement } from '~/server/utils/media-placement'
+import { firstMenuSetupApplies, parseOnboardingDraftPayload } from '~/server/utils/onboarding-drafts'
+import { createCollection, createProduct, listCollectionProducts, resolveVariantPrice, setCollectionProducts, updateCollection, updateProduct } from '~/server/utils/product-management'
 import { requireTrimmedProductString } from '~/server/utils/product-validation'
-import { currencySymbol, invalidOfferingAnswer, offeringDestination, offeringField, offeringProductCreation, offeringScreen, offeringSetupChanged, offeringToday, submittedValue, type OfferingSetupContext } from '~/server/utils/offering-setup'
+import { currencySymbol, invalidOfferingAnswer, offeringDestination, offeringField, offeringScreen, offeringSetupChanged, offeringToday, submittedValue, type OfferingSetupContext } from '~/server/utils/offering-setup'
 
 const menuKey = (locationId: string) => `first-menu-setup:${locationId}`
 const stages = ['section', 'dish', 'photo', 'description', 'price'] as const
 type Step = typeof stages[number]
 
-async function readMenuSetup(db: DbClient, organizationId: string, locationId: string) {
-  const [draft, sections, products, creation, currency] = await Promise.all([
-    queryFirst<{ id: string; payload_json: string }>(db, "SELECT id, payload_json FROM onboarding_drafts WHERE organization_id = ? AND status = 'committed'", [organizationId]),
-    listCollections(db, { organizationId }),
-    listLocationProducts(db, { organizationId, locationId, kind: 'dish' }),
-    offeringProductCreation(db, organizationId, menuKey(locationId)),
-    organizationDefaultCurrency(db, organizationId),
-  ])
+function readMenuSetup(context: OfferingSetupContext, locationId: string) {
+  const { draft, collections: sections, currency, photos } = context.read
+  const products = context.read.products.filter(product => product.locations.some(row => row.location_id === locationId))
+  const creation = context.read.creation(menuKey(locationId))
   const payload = draft ? parseOnboardingDraftPayload(draft.payload_json) : null
   if (!draft || !payload || !firstMenuSetupApplies(payload)) return null
   const menuSections = sections.filter(section => section.location_id === locationId || section.location_id === null)
   const draftDishes = products.filter(product => product.variants.length === 1 && !product.publications.some(row => row.published)
     && product.locations.some(row => row.location_id === locationId && row.active && !row.published))
-  const skipsByDish = firstMenuSkipsByDish(payload.first_menu_skips)
-  const dishesWithSkips = draftDishes.filter(product => skipsByDish?.[product.id])
-  const dish = creation.productId ? draftDishes.find(product => product.id === creation.productId)
-    : (dishesWithSkips.length === 1 ? dishesWithSkips[0] : undefined)
-      ?? (draftDishes.length === 1 && products.length === 1 ? draftDishes[0] : undefined)
+  const skipsByDish = payload.first_menu_skips
+  const dish = creation.productId ? draftDishes.find(product => product.id === creation.productId) : undefined
   if (products.length && !dish) return null
   const selectedSectionId = payload.first_menu_section_ids?.[locationId]
-  const section = menuSections.find(candidate => candidate.id === selectedSectionId
-    && (!dish || dish.collections.some(row => row.collection_id === candidate.id)))
-    ?? (dish ? menuSections.find(candidate => dish.collections.some(row => row.collection_id === candidate.id)) : undefined)
-    ?? (menuSections.length === 1 ? menuSections[0] : undefined)
+  const eligibleSections = dish ? menuSections.filter(section => dish.collections.some(row => row.collection_id === section.id)) : menuSections
+  const section = selectedSectionId ? eligibleSections.find(section => section.id === selectedSectionId)
+    : eligibleSections.length === 1 ? eligibleSections[0] : undefined
+  if (selectedSectionId && !section || dish && !section) throw offeringSetupChanged('collection_id')
   const variant = dish?.variants[0]
   const price = variant ? resolveVariantPrice(variant, { currency, location_id: locationId, billing: { type: 'one_time' } }) : null
-  const photo = dish ? (await getMediaPlacements(db, {
-    organizationId, ownerType: 'product', ownerIds: [dish.id], slot: 'image',
-  })).get(dish.id)?.[0] : undefined
+  const photo = dish ? photos.get(dish.id)?.[0] : undefined
   const skips = dish ? skipsByDish?.[dish.id] : undefined
   const resume: Step | undefined = !dish
     ? section ? 'dish' : 'section'
@@ -58,13 +47,13 @@ async function readMenuSetup(db: DbClient, organizationId: string, locationId: s
 export async function firstMenuSetup(context: OfferingSetupContext, locationId: string | undefined, requested: string | undefined, answer: OfferingSetupAnswer | null): Promise<OfferingSetupResponse> {
   const { db, env, organizationId, orgSlug, actorId, principal } = context
   if (!locationId) throw invalidOfferingAnswer('Choose a location for the menu')
-  const location = await getLocation(env.DB, organizationId, locationId)
+  const location = context.read.fullLocations.get(locationId)
   if (location?.id !== locationId || location.status !== 'active') {
-    throw new HTTPError({ statusCode: 404, statusMessage: 'Active location not found' })
+    throw new HTTPError({ statusCode: 404, statusMessage: 'Active location not found', data: { code: 'LOCATION_NOT_FOUND', field: 'location_id' } })
   }
   const today = offeringToday(orgSlug)
   const exitTo = context.exitTo ?? today
-  const state = await readMenuSetup(db, organizationId, locationId)
+  const state = readMenuSetup(context, locationId)
   if (!state) return { to: answer?.action === 'exit' ? exitTo : `${today}/products?kind=menu` }
   const { draft, menuSections, section, chosenSectionId, creationKey, dish, variant, currency, price, photo, resume } = state
   if (!resume && dish) return answer?.action === 'exit' ? { to: exitTo } : offeringDestination(orgSlug, 'menu', dish.id, locationId)
@@ -170,10 +159,7 @@ export async function firstMenuSetup(context: OfferingSetupContext, locationId: 
     if (!value) {
       const result = await execute(db, `UPDATE onboarding_drafts
         SET payload_json = json_set(payload_json, '$.first_menu_skips', json_patch(
-          CASE WHEN json_type(payload_json, '$.first_menu_skips.dish_id') = 'text'
-            THEN json_object(json_extract(payload_json, '$.first_menu_skips.dish_id'),
-              json_remove(json_extract(payload_json, '$.first_menu_skips'), '$.dish_id'))
-            ELSE COALESCE(json_extract(payload_json, '$.first_menu_skips'), json('{}')) END,
+          COALESCE(json_extract(payload_json, '$.first_menu_skips'), json('{}')),
           json_object(?, json_object(?, json('true')))))
         WHERE id = ? AND organization_id = ? AND status = 'committed'`, [dish.id, step, draft.id, organizationId])
       if (result.meta.changes !== 1) throw offeringSetupChanged()

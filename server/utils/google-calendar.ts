@@ -1,6 +1,5 @@
-import type { H3Event } from 'nitro'
-import { requireOrganizationAccess } from '~/server/utils/location-access'
-import { memberCalendarCoverageQuery } from '~/server/domain/member-scheduling'
+import { HTTPError, type H3Event } from 'nitro'
+import { calendarCoverageQuery, memberCalendarCoverageQuery } from '~/server/domain/member-scheduling'
 import { MEMBER_NAME_SQL } from '~/shared/member-scheduling'
 import type { GoogleCalendarIntegration } from '~/shared/organization-settings'
 import { execute, executeBatch, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
@@ -14,7 +13,9 @@ import { scheduleBusinessWake } from '~/server/cloudflare/guest-inbox-events'
 import { hasOrganizationEntitlement } from '~/server/utils/billing'
 import { z } from 'zod'
 import { oncePerRequest } from '~/server/utils/request-scope'
-import { getDashboardContext } from '~/server/utils/dashboard-context'
+import { getDashboardContext, readDashboardMemberResources } from '~/server/utils/dashboard-context'
+import { assertOrganizationWideAccess, BATCH_VIEWER, memberAccessPrincipal } from '~/server/utils/member-access'
+import { roleMatchesSql, rolesAllowing } from '~/utils/organization-access'
 
 export interface CalendarChoice { id: string; summary: string; accessRole: string; description?: string; primary?: boolean }
 export class CalendarSelectionConflict extends Error {}
@@ -190,22 +191,27 @@ export async function readCalendarIntegration(db: DbClient, organizationId: stri
 export function calendarConnectionQuery(organizationId: string | { sql: string }) {
   const organization = typeof organizationId === 'string' ? '?' : organizationId.sql
   return {
-    query: `SELECT calendar.*, CASE WHEN calendar.status = 'disabled' THEN EXISTS (
+    query: `SELECT calendar.*, owner.name AS connected_name, owner.email AS connected_email, CASE WHEN calendar.status = 'disabled' THEN EXISTS (
       SELECT 1 FROM google_calendar_event_links WHERE organization_id = ${organization} AND state <> 'deleted'
-    ) ELSE 0 END AS cleanup_pending FROM (${calendarIntegrationSql(organization)}) calendar`,
+    ) ELSE 0 END AS cleanup_pending FROM (${calendarIntegrationSql(organization)}) calendar
+      LEFT JOIN account linked ON linked.id = calendar.account_id AND linked.providerId = 'google'
+      LEFT JOIN user owner ON owner.id = linked.userId`,
     params: typeof organizationId === 'string' ? [organizationId, organizationId] : [],
   }
 }
 
-function calendarConnectionFromRow(row: (GoogleCalendarIntegration & { cleanup_pending: number }) | undefined) {
-  if (!row) return { calendar: null, cleanup_pending: false }
-  const { cleanup_pending, ...calendar } = row
-  return { calendar, cleanup_pending: Boolean(cleanup_pending) }
+type CalendarConnectionRow = GoogleCalendarIntegration & { cleanup_pending: number; connected_name: string | null; connected_email: string | null }
+
+function calendarConnectionFromRow(row: CalendarConnectionRow | undefined) {
+  if (!row) return { calendar: null, cleanup_pending: false, connected_through: null }
+  const { cleanup_pending, connected_name, connected_email, ...calendar } = row
+  if (!connected_name?.trim() || !connected_email?.trim()) throw new HTTPError({ statusCode: 409, message: 'The connected Google account could not be read', data: { code: 'INTEGRATION_ACCOUNT_MISSING', field: 'account_id' } })
+  return { calendar, cleanup_pending: Boolean(cleanup_pending), connected_through: { name: connected_name, email: connected_email } }
 }
 
 export async function readCalendarConnection(db: DbClient, organizationId: string) {
   const { query, params } = calendarConnectionQuery(organizationId)
-  return calendarConnectionFromRow(await queryFirst<GoogleCalendarIntegration & { cleanup_pending: number }>(db, query, params) ?? undefined)
+  return calendarConnectionFromRow(await queryFirst<CalendarConnectionRow>(db, query, params) ?? undefined)
 }
 
 // The canonical subject query serves both changed-subject batches and one
@@ -464,9 +470,12 @@ export async function drainCalendarCleanup(env: CloudflareEnv, organizationId: s
 }
 
 export async function readGoogleCalendarSettings(event: H3Event, organizationId: string, includeCoverage: boolean) {
-  const { db, organization } = await requireOrganizationAccess(event, organizationId)
-  if (!includeCoverage) return readCalendarConnection(db, organization.id)
-  return readCalendarSettingsForMember(db, organization.membership)
+  const queries = [calendarConnectionQuery({ sql: BATCH_VIEWER.organization }),
+    ...(includeCoverage ? [calendarCoverageQuery({ organization: BATCH_VIEWER.organization, user: BATCH_VIEWER.user,
+      admin: roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ members: ['read'] })) })] : [])]
+  const { db, env, organization, rows } = await readDashboardMemberResources(event, organizationId, queries)
+  await assertOrganizationWideAccess(db, memberAccessPrincipal(organization, { env, event }))
+  return includeCoverage ? calendarSettingsFromRows(rows) : calendarConnectionFromRow(rows[0]!.results[0] as CalendarConnectionRow | undefined)
 }
 
 export async function readCalendarSettingsForMember(db: DbClient, membership: Parameters<typeof memberCalendarCoverageQuery>[0]) {
@@ -484,7 +493,7 @@ export function readCalendarSettingsDocument(event: H3Event, orgSlug: string, pr
 }
 
 export function calendarSettingsFromRows([calendarResult, coverageResult]: D1Result[]) {
-  const connection = calendarConnectionFromRow(calendarResult!.results[0] as (GoogleCalendarIntegration & { cleanup_pending: number }) | undefined)
+  const connection = calendarConnectionFromRow(calendarResult!.results[0] as CalendarConnectionRow | undefined)
   const coverage = connection.calendar && connection.calendar.status !== 'disabled'
     ? coverageResult!.results[0] as { members: number; checking: number } : null
   return { ...connection, coverage }

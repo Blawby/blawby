@@ -436,14 +436,14 @@ export async function listAvailabilityRules(
   return queryAll<ProductAvailabilityRule>(db, query.query, query.params)
 }
 
-export function availabilityRulesQuery(organizationId: string | { sql: string }, productId: string, locationId?: string) {
+export function availabilityRulesQuery(organizationId: string | { sql: string }, productId: string | BatchQuery, locationId?: string) {
   return {
     query: `
     SELECT id, organization_id, product_id, location_id, timezone, weekday, start_time, capacity
     FROM product_availability_rules
-    WHERE organization_id = ${typeof organizationId === 'string' ? '?' : organizationId.sql} AND product_id = ? ${locationId ? 'AND location_id=?' : ''}
+    WHERE organization_id = ${typeof organizationId === 'string' ? '?' : organizationId.sql} AND product_id ${typeof productId === 'string' ? '= ?' : `IN (${productId.query})`} ${locationId ? 'AND location_id=?' : ''}
     ORDER BY weekday, start_time, id
-  `, params: [...(typeof organizationId === 'string' ? [organizationId] : []), productId, ...(locationId ? [locationId] : [])],
+  `, params: [...(typeof organizationId === 'string' ? [organizationId] : []), ...(typeof productId === 'string' ? [productId] : productId.params ?? []), ...(locationId ? [locationId] : [])],
   }
 }
 

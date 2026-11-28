@@ -1,5 +1,5 @@
 import { HTTPError } from 'nitro'
-import { execute, queryFirst, type DbClient } from '~/server/db'
+import { execute, executeBatch, type DbClient } from '~/server/db'
 import { hydrateMediaAssetRefs, mediaAssetRefsQuery, resolveMediaAssetRefs, type MediaAsset } from '~/server/utils/media-asset-manager'
 import { creationDedupeKey, creationRequestHash } from '~/server/utils/organization-events'
 import type { ViewerTerms } from '~/server/utils/member-access'
@@ -87,8 +87,15 @@ type Draft = StayHomeDraftInput & { revision: string; finishHash?: string }
 export const stayHomeDraftChanged = () => new HTTPError({ statusCode: 409, message: 'Your home setup changed. Reopen it to continue.', data: { code: 'STAY_HOME_DRAFT_CHANGED' } })
 
 export async function readStayHomeSetupDraft(db: DbClient, organization: Scope) {
-  const row = await queryFirst<{ payload_json: string; revision: string }>(db, 'SELECT payload_json, revision FROM stay_home_setup_drafts WHERE organization_id = ? AND member_id = ?', [organization.id, organization.memberId])
-  return readSetupDraft(row)
+  const plan = prepareStayHomeSetupDraft(organization.id, organization.memberId)
+  return plan.read((await executeBatch(db, [plan.query], { operation: 'Read home setup draft' }))[0]!)
+}
+
+export function prepareStayHomeSetupDraft(organization: string | { sql: string }, member: string | { sql: string }) {
+  return { query: { query: `SELECT payload_json, revision FROM stay_home_setup_drafts WHERE organization_id = ${typeof organization === 'string' ? '?' : organization.sql} AND member_id = ${typeof member === 'string' ? '?' : member.sql}`,
+    params: [...typeof organization === 'string' ? [organization] : [], ...typeof member === 'string' ? [member] : []] },
+    read(result: D1Result) { return readSetupDraft(result.results[0] as { payload_json: string; revision: string } | undefined) },
+  }
 }
 
 function readSetupDraft(row: { payload_json: string; revision: string } | null | undefined) {

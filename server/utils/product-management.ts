@@ -196,7 +196,7 @@ function parseJsonObject(value: unknown, field: string): Record<string, string> 
   return parsed as Record<string, string>
 }
 
-const PRODUCT_COLUMNS = `
+export const PRODUCT_COLUMNS = `
   p.id, p.organization_id, p.name, p.slug, p.description, p.active, p.order_url, p.unit_label,
   p.marketing_features, p.metadata, p.tax_code, p.options, p.processing_days, p.made_to_order_days, p.source,
   p.kind, p.details_json, p.created_at, p.updated_at, p.created_by, p.updated_by,
@@ -329,7 +329,7 @@ function prepareProductRelations(organization: string | { sql: string }, selecti
   }
 }
 
-function prepareProductRead(organizationId: string | { sql: string }, records: BatchQuery) {
+export function prepareProductRead(organizationId: string | { sql: string }, records: BatchQuery) {
   const relations = prepareProductRelations(organizationId, { query: `SELECT id FROM (${records.query})`, params: records.params })
   return {
     queries: [records, ...relations.queries],
@@ -380,9 +380,14 @@ function hydrateProductRows(
   for (const row of bookingRows) {
     const product = byId.get(String(row.product_id))
     if (!product) continue
+    const duration = row.duration_minutes === null ? null : Number(row.duration_minutes)
+    const seating = row.seating_interval_minutes === null ? null : Number(row.seating_interval_minutes)
+    const invalid = (field: string, message: string): never => { throw new HTTPError({ statusCode: 409, message, data: { code: 'INVALID_BOOKING_CONFIG', field: `booking.${field}`, product_id: product.id } }) }
+    if (duration !== null && (!Number.isSafeInteger(duration) || duration <= 0) || product.kind === 'table' && duration === null) invalid('duration_minutes', 'The offering needs a valid positive session duration')
+    if (seating !== null && (!Number.isSafeInteger(seating) || seating < 5 || seating > 1440 || product.kind !== 'table') || product.kind === 'table' && seating === null) invalid('seating_interval_minutes', 'The table needs a seating interval from 5 to 1440 minutes')
     product.booking = {
-      duration_minutes: row.duration_minutes === null ? null : Number(row.duration_minutes),
-      seating_interval_minutes: row.seating_interval_minutes === null ? null : Number(row.seating_interval_minutes),
+      duration_minutes: duration,
+      seating_interval_minutes: seating,
       default_capacity: row.default_capacity === null ? null : Number(row.default_capacity),
       confirmation_mode: row.confirmation_mode as 'instant' | 'review', online_payment_required: Number(row.online_payment_required) === 1,
       held_online: Number(row.held_online) === 1,
@@ -896,7 +901,7 @@ export async function organizationDefaultCurrency(db: DbClient, organizationId: 
   return checkedOrganizationCurrency(organizationId, organization.default_currency)
 }
 
-function checkedOrganizationCurrency(organizationId: string, currency: string | null) {
+export function checkedOrganizationCurrency(organizationId: string, currency: string | null) {
   if (!isCurrencyCode(currency)) throw new Error(`Organization ${organizationId} has an unsupported default currency`)
   return currency
 }
@@ -2479,7 +2484,7 @@ export async function bookingScheduleScopes(db: DbClient, organizationId: string
 
 type BookingScheduleScopeRow = { product_id: string; location_id: string | null }
 
-function bookingScheduleScopesQuery(organizationId: string | { sql: string }, ids: BatchQuery) {
+export function bookingScheduleScopesQuery(organizationId: string | { sql: string }, ids: BatchQuery) {
   return { query: `
     WITH configured AS (
       SELECT c.* FROM product_booking_configs c WHERE c.organization_id=${typeof organizationId === 'string' ? '?' : organizationId.sql} AND c.duration_minutes>0
@@ -2507,7 +2512,7 @@ function bookingScheduleScopesQuery(organizationId: string | { sql: string }, id
   `, params: [...(typeof organizationId === 'string' ? [organizationId] : []), ...ids.params ?? [], BOOKING_HORIZON_DAYS] }
 }
 
-function scheduleScopesFromRows(rows: BookingScheduleScopeRow[]) {
+export function scheduleScopesFromRows(rows: BookingScheduleScopeRow[]) {
   const byProduct = new Map<string, Set<string | null>>()
   for (const row of rows) {
     const scopes = byProduct.get(row.product_id) ?? new Set()
@@ -2811,7 +2816,7 @@ export function prepareEditorCatalog(input: { organizationId: string | { sql: st
         id: product.id, name: product.name, kind: product.kind, active: product.active, variants: product.variants,
         collections: product.collections, locations: product.locations, publications: product.publications, image: image ?? null,
         stay: internalName === null ? null : { internal_name: internalName },
-        booking: product.booking ? { held_online: product.booking.held_online } : null,
+        booking: product.booking ? { held_online: product.booking.held_online, duration_minutes: product.booking.duration_minutes } : null,
       })),
     }
   } }

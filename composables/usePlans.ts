@@ -1,14 +1,19 @@
 import type { Plan } from '~/server/api/billing/plans.get'
-import { formatPlanPrice } from '~/shared/billing-model'
+import { formatPlanPrice, formatPlanRecurring } from '~/shared/billing-model'
 
 export type { Plan, PlanPrice, PlanLimits } from '~/server/api/billing/plans.get'
 
-export const usePlans = async () => {
+export const usePlans = async (provided?: () => Plan[] | undefined) => {
   const nuxtApp = useNuxtApp()
   const requestEvent = useRequestEvent()
   // Taken before the read: after an await the Nuxt instance is gone.
   const buildId = useRuntimeConfig().app.buildId
   const { data, status, error } = await useAsyncData<Plan[]>('billing-plans', async () => {
+    if (provided) {
+      const plans = provided()
+      if (!plans) throw new Error('The billing screen has no plan catalog')
+      return plans
+    }
     if (import.meta.server) {
       if (!requestEvent) throw createError({ statusCode: 500, statusMessage: 'Request event not available' })
       const [{ cloudflareEnv }, { getCachedPlans }] = await Promise.all([
@@ -51,10 +56,7 @@ export const usePlans = async () => {
   const formatPrice = formatPlanPrice
 
   /** A monthly charge in Stripe's pricing phrasing: "$49/mo", "$2,000/mo". The catalog sells in USD only, monthly only. */
-  function formatRecurring(cents: number, currency: string): string {
-    if (currency.toUpperCase() !== 'USD') throw new Error(`Plan prices are sold in USD, not ${currency}`)
-    return `${formatPrice(cents)}/mo`
-  }
+  const formatRecurring = formatPlanRecurring
 
   /**
    * What this plan charges each month, as Stripe returned it — or null when

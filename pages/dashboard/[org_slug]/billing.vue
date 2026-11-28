@@ -4,12 +4,8 @@
       <p v-if="!dashboard.canUpdateBilling.value" class="mb-6 text-sm text-muted" data-testid="billing-owner-line">
         Only the organization owner can manage billing.<template v-if="owner"> Contact {{ owner }} to change or cancel your plan.</template>
       </p>
-      <UAlert v-if="billingError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(billingError, 'Failed to load billing')" />
+      <UAlert v-if="screenError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(screenError, 'Plan and billing could not be loaded')" />
       <p v-if="dashboard.hasFeature('stays') && homesPending" role="status" class="mb-6 text-sm text-muted">Loading home cost…</p>
-      <UAlert v-else-if="homesError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(homesError, 'Homes could not be loaded')" />
-      <UAlert v-if="servicesError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(servicesError, 'Services could not be loaded')" />
-      <UAlert v-if="methodsError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(methodsError, 'Payment methods could not be loaded')" />
-      <UAlert v-if="ownerError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(ownerError, 'The owner could not be loaded')" />
       <UAlert v-if="errorMessage" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="errorMessage" />
       <UAlert v-if="successMessage" class="mb-6" color="success" variant="soft" icon="i-lucide-circle-check" :description="successMessage" />
 
@@ -65,7 +61,7 @@ import { offer } from '~/shared/offers'
 import { authClient } from '~/lib/auth-client'
 import { classifyStripePlanChange } from '~/shared/stripe-ga4'
 import { SERVICE_PRICES, SERVICES, STARTER_PLAN_ID, isNewSalePlan } from '~/shared/billing-model'
-import { cardBrandLabel, useHomesQuote, useOrganizationBilling, useOrganizationServices, usePaymentMethods } from '~/composables/usePaymentsSettings'
+import { cardBrandLabel, useOrganizationBillingScreen } from '~/composables/usePaymentsSettings'
 
 definePageMeta({ layout: 'dashboard', tab: 'menu', back: 'menu' })
 useSeoMeta({ title: 'Plan and billing | Blawby', robots: 'noindex, nofollow' })
@@ -77,24 +73,17 @@ const dashboard = useDashboardOrganization()
 const { trackSubscriptionCheckoutSuccess } = useAnalytics()
 const { startOrganizationCheckout, openBillingPortal } = useOrganizationSubscription()
 const { formatExactDateTime } = useHumanTime()
-const { plans, formatPrice, formatRecurring } = await usePlans()
 
 const organizationId = useDashboardOrganizationId()
-const [{ billing, billingError, refreshBilling }, { services, servicesError }, { methods, methodsError }, { quote: homes, quoteError: homesError, quotePending: homesPending, refreshQuote: refreshHomes }] = await Promise.all([
-  useOrganizationBilling(), useOrganizationServices(), usePaymentMethods(), useHomesQuote(organizationId, 0),
-])
-
-// Admins read billing and do not change it; the line names who does.
-const { data: owner, error: ownerError } = await useAsyncData(`billing-owner:${String(route.params.org_slug)}`, async () => {
-  if (dashboard.canUpdateBilling.value) return null
-  const organizationId = dashboard.organization.value?.id
-  if (!organizationId) throw new Error('Organization context is unavailable')
-  const listed = await authClient.organization.listMembers({ query: { organizationId, filterField: 'role', filterOperator: 'eq', filterValue: 'owner' } })
-  if (listed.error) throw new Error(listed.error.message ?? 'The owner could not be loaded')
-  const found = listed.data?.members[0]
-  if (!found) throw new Error('This organization has no owner')
-  return found.user.name || found.user.email
-})
+const { data: screen, error: screenError, status: screenStatus, refresh: refreshBilling } = await useOrganizationBillingScreen(organizationId)
+if (screenError.value) throw screenError.value
+const { plans, formatPrice, formatRecurring } = await usePlans(() => screen.value?.plans)
+const billing = computed(() => screen.value?.billing ?? null)
+const services = computed(() => screen.value?.services)
+const methods = computed(() => screen.value ? { payment_methods: screen.value.payment_methods } : null)
+const homes = computed(() => screen.value?.homes)
+const owner = computed(() => screen.value?.owner_name)
+const homesPending = computed(() => screenStatus.value === 'pending')
 
 const errorMessage = ref('')
 const successMessage = ref('')
@@ -128,7 +117,7 @@ const planLine = computed(() => {
     if (status.cancelAtPeriodEnd) parts.push(`${planName.value} ends with the trial`)
     else if (scheduledPlan.value) parts.push(`Changes to ${nameOf(scheduledPlan.value.plan)} on ${formatExactDateTime(scheduledPlan.value.at)}`)
     // Only a card list that loaded can say there is no card; a failed load shows its own error above.
-    else if (methods.value && !methodsError.value && !card.value) parts.push(TRIAL_WITHOUT_CARD[trial.missing_payment_method](planName.value))
+    else if (methods.value && !screenError.value && !card.value) parts.push(TRIAL_WITHOUT_CARD[trial.missing_payment_method](planName.value))
   } else if (status.status === 'past_due') parts.push('Payment past due')
   else if (scheduledPlan.value) parts.push(`Changes to ${nameOf(scheduledPlan.value.plan)} on ${formatExactDateTime(scheduledPlan.value.at)}`)
   else if (status.periodEnd) parts.push(`${status.cancelAtPeriodEnd ? 'Ends' : 'Renews'} ${formatExactDateTime(status.periodEnd)}`)
@@ -211,7 +200,7 @@ async function keepPlan() {
     if (!organizationId) throw new Error('Organization context is unavailable')
     const restored = await authClient.subscription.restore({ referenceId: organizationId, customerType: 'organization' })
     if (restored.error) throw new Error(restored.error.message ?? 'Your plan could not be kept')
-    await Promise.all([refreshBilling(), refreshHomes()])
+    await refreshBilling()
   } catch (error) {
     errorMessage.value = getErrorMessage(error, 'Your plan could not be kept')
   } finally {

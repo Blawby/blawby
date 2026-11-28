@@ -29,11 +29,18 @@
 
       <!-- The business's one list for the person looking. -->
       <template v-else-if="business">
-        <DashboardEmptyState v-if="!business.cards.length && !pending && !loadError" illustration="/images/offers/calendar.webp" :title="business.title" data-testid="today-title" />
+        <DashboardEmptyState v-if="!business.cards.length && !business.website && !pending && !loadError" illustration="/images/offers/calendar.webp" :title="business.title" data-testid="today-title" />
         <h2 v-else class="wtitle" data-testid="today-title">{{ business.title }}</h2>
         <ul v-if="business.cards.length" class="wgrid" role="list" data-testid="today-list">
           <li v-for="item in business.cards" :key="item.id"><TodayItemCard :item="item" :busy="closing === item.id" @done="markDone" /></li>
         </ul>
+        <UCard v-if="business.website" class="mx-auto mt-4 max-w-[380px]" data-testid="today-website">
+          <p class="mb-3 text-sm text-muted">{{ business.website.status_label }}</p>
+          <div class="flex flex-wrap gap-3">
+            <UButton :to="business.website.preview_url" target="_blank" icon="i-lucide-external-link" color="neutral" variant="soft">{{ business.website.preview_label }}</UButton>
+            <UButton :to="business.website.action.to" :target="business.website.action.type === 'visit' ? '_blank' : undefined" color="neutral">{{ business.website.action.label }}</UButton>
+          </div>
+        </UCard>
       </template>
 
       <div v-if="pending && !loadError" class="flex min-h-24 items-center justify-center" aria-live="polite">
@@ -52,8 +59,6 @@ import { getErrorMessage } from '~/utils/errors'
 import { agendaToTodayCard, todayFeedSchema, type BusinessToday, type TodayCard, type TodayFeedPayload, type TodayItem } from '~/shared/dashboard-today'
 import { businessChanged } from '~/composables/useDashboardInvalidations'
 import type { AgendaPayload } from '~/server/utils/dashboard-agenda'
-import { authClient } from '~/lib/auth-client'
-import type { organizationRoles } from '~/utils/organization-access'
 import { addLocalDays, localDateAt } from '~/utils/timezone'
 
 useSeoMeta({ title: 'Today | Blawby', robots: 'noindex, nofollow' })
@@ -68,13 +73,8 @@ const realtime = useDashboardInvalidations()
 const orgSlug = computed(() => props.personalScope ? 'account' : String(route.params.org_slug ?? ''))
 const organizationId = props.personalScope ? null : useDashboardOrganizationId()
 const dashboardApi = props.personalScope ? applicationFetch : useDashboardApi()
-const { organization, hasFeature } = useDashboardOrganization()
-const roleAllows = (permissions: Parameters<typeof authClient.organization.checkRolePermission>[0]['permissions']) => {
-  const role = organization.value?.role as keyof typeof organizationRoles | undefined
-  return Boolean(role && authClient.organization.checkRolePermission({ role, permissions }))
-}
-const canAddStay = computed(() => !props.personalScope && hasFeature('stays') && roleAllows({ operations: ['update'] }))
-const canCreate = computed(() => !props.personalScope && roleAllows({ task: ['create'] }))
+const canAddStay = computed(() => !props.personalScope && business.value?.actions.add_stay === true)
+const canCreate = computed(() => !props.personalScope && business.value?.actions.add_task === true)
 const createOpen = ref(false)
 const addStayPath = computed(() => `/dashboard/${encodeURIComponent(orgSlug.value)}/bookings/stay/new`)
 const addItems = computed(() => [

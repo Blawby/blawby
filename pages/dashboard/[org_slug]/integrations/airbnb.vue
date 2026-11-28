@@ -23,7 +23,6 @@
       items-title="Choose listings to sync"
       items-lead="Checked listings keep their calendar, prices and guest messages in sync with Airbnb and take bookings on your site. Uncheck one any time to stop; it stays here as a free draft."
       :items-loading="listingsPending"
-      :items-error="listingsError"
       items-empty="Airbnb returned no listings for this account. Check that you connected your hosting account."
       :items-status="itemsStatus"
       :applying="applying || pending"
@@ -120,7 +119,7 @@ interface AirbnbAccount {
 interface AirbnbStatus extends AirbnbAccount { connections: AirbnbAccount[] }
 
 type ListingImport = { status: 'not_imported' } | ({ status: 'imported'; product_id: string; stage: ImportStage; syncing: boolean; own_rate_plan: boolean } & ListingPriceAdjustment)
-interface AirbnbListing { id: string; channel_id: string; title: string; city: string; country_code: string; import: ListingImport }
+interface AirbnbListing { id: string; channel_id: string; title: string; city: string; country_code: string; import: ListingImport; review_required: boolean }
 interface MissingAirbnbListing { listing_id: string; product_id: string; internal_name: string }
 interface SyncRequest { sync?: Array<{ listing_id: string; product_id?: string; own_home?: true; details?: Record<string, string> }>; stop_listing_ids: string[] }
 
@@ -159,6 +158,7 @@ const isStatus = (value: unknown): value is AirbnbStatus =>
   isAccount(value) && 'connections' in value && Array.isArray(value.connections) && value.connections.every(isAccount)
 const isListing = (value: unknown): value is AirbnbListing =>
   isRecord(value) && typeof value.id === 'string' && typeof value.channel_id === 'string' && typeof value.title === 'string' && isRecord(value.import)
+  && typeof value.review_required === 'boolean'
   && (value.import.status === 'not_imported' || (value.import.status === 'imported' && typeof value.import.product_id === 'string' && isStage(value.import.stage) && typeof value.import.syncing === 'boolean'))
 const isListings = (value: unknown): value is { listings: AirbnbListing[]; missing_listings: MissingAirbnbListing[] } =>
   isRecord(value) && Array.isArray(value.listings) && value.listings.every(isListing)
@@ -176,16 +176,23 @@ const isDetails = (value: unknown): value is AirbnbListingDetails =>
 const isStart = (value: unknown): value is { authorization_url: string } => isRecord(value) && typeof value.authorization_url === 'string'
 const isDisconnect = (value: unknown): value is { disconnected: boolean } => isRecord(value) && typeof value.disconnected === 'boolean'
 
+type SyncedHome = { product_id: string; internal_name: string; currency: CurrencyCode; channel: { status: string } | null }
+const isSyncedHome = (home: unknown): home is SyncedHome => isRecord(home)
+  && typeof home.product_id === 'string' && typeof home.internal_name === 'string' && typeof home.currency === 'string' && isCurrencyCode(home.currency)
+  && (home.channel === null || (isRecord(home.channel) && typeof home.channel.status === 'string'))
 type AirbnbWorkspace = {
+  home_context: { homes: SyncedHome[] }
   connection: AirbnbStatus
   inventory: { listings: AirbnbListing[]; missing_listings: MissingAirbnbListing[] } | null
-  inventory_error: string | null
+  listing_details: Array<AirbnbListingDetails & { id: string }>
   jobs: SyncChange[]
 }
 const isAirbnbWorkspace = (value: unknown): value is AirbnbWorkspace =>
-  isRecord(value) && isStatus(value.connection) && (value.inventory === null || isListings(value.inventory))
-  && (value.inventory_error === null || typeof value.inventory_error === 'string')
+  isRecord(value) && isStatus(value.connection) && (value.connection.status === 'connected' ? isListings(value.inventory) : value.inventory === null)
+  && Array.isArray(value.listing_details) && value.listing_details.every(detail => isRecord(detail) && typeof detail.id === 'string' && isDetails(detail))
+  && (value.inventory === null || isListings(value.inventory) && value.inventory.listings.every(listing => !listing.review_required || (value.listing_details as Array<{ id: string }>).some(detail => detail.id === listing.id)))
   && Array.isArray(value.jobs) && value.jobs.every(isChange)
+  && isRecord(value.home_context) && Array.isArray(value.home_context.homes) && value.home_context.homes.every(isSyncedHome)
 
 const { data: workspace, error: statusError, pending: listingsPending, refresh: refreshWorkspace } = await useAsyncData(
   () => `integration-airbnb-workspace:${integrations.organizationId}`,
@@ -198,17 +205,7 @@ function accountsListingName(channelId: string) {
   return workspace.value?.inventory?.listings.find(listing => listing.channel_id === channelId)?.title ?? 'Airbnb account'
 }
 const listings = computed(() => workspace.value?.inventory?.listings ?? [])
-type SyncedHome = { product_id: string; internal_name: string; currency: CurrencyCode; channel: { status: string } | null }
-/** Homes a listing can share: those that already sync, as iOS lists them. */
-const { data: stayHomes, error: homesError, refresh: refreshHomes } = await useAsyncData(
-  () => `integration-airbnb-homes:${integrations.organizationId}`,
-  () => connected.value && canManage.value ? dashboardApi('/api/dashboard/stay-homes', {
-    validate: (value): value is { homes: SyncedHome[] } => isRecord(value) && Array.isArray(value.homes) && value.homes.every(home => isRecord(home)
-      && typeof home.product_id === 'string' && typeof home.internal_name === 'string' && typeof home.currency === 'string' && isCurrencyCode(home.currency) && (home.channel === null || (isRecord(home.channel) && typeof home.channel.status === 'string'))),
-  }) : Promise.resolve(null),
-  { watch: [connected] },
-)
-const syncedHomes = computed(() => stayHomes.value?.homes.filter(home => home.channel?.status === 'connected') ?? [])
+const syncedHomes = computed(() => workspace.value?.home_context.homes.filter(home => home.channel?.status === 'connected') ?? [])
 /** The existing home the host chose for a listing, by listing id; sent as its product_id when the change applies. */
 const assigned = ref<Record<string, string>>({})
 /** Listings sharing a home the host chose to give their own home again; sent as own_home. */
@@ -230,7 +227,6 @@ function priceNote(listing: AirbnbListing): string | null {
   return `Home’s price ${value > 0 ? '+' : '−'} ${amount}`
 }
 const missingListings = computed(() => workspace.value?.inventory?.missing_listings ?? [])
-const listingsError = computed(() => workspace.value?.inventory_error ?? null)
 
 const { data: changes, error: changesError, refresh: refreshChanges, clear: clearChanges } = useAsyncData(
   () => `integration-airbnb-sync:${integrations.organizationId}`,
@@ -283,9 +279,10 @@ watch(listings, value => { checked.value = value.filter(listing => syncing(listi
 /** What the host entered for listings Airbnb left details out of, by listing id, and the details each listing reported. */
 const entered = ref<Record<string, Record<string, string>>>({})
 const details = ref<Record<string, AirbnbListingDetails>>({})
+watch(() => workspace.value?.listing_details, value => { if (value) details.value = Object.fromEntries(value.map(detail => [detail.id, detail])) }, { immediate: true })
 const needsDetails = (listing: AirbnbListing) => {
   const known = details.value[listing.id]
-  return (listing.import.status === 'not_imported' || ownHome.value.includes(listing.id)) && known !== undefined && !entered.value[listing.id] && !assigned.value[listing.id]
+  return (listing.review_required || ownHome.value.includes(listing.id)) && known !== undefined && !entered.value[listing.id] && !assigned.value[listing.id]
     && known.missing_fields.length > 0
 }
 
@@ -322,7 +319,7 @@ const resolving = ref(new Set<string>())
 /** Where the listings stand, on the checklist's heading: a failed change first, then changes in progress, else how many sync. */
 const itemsStatus = computed<IntegrationLeafItemsStatus | null>(() => {
   // A sync read that failed is the panel's error; a count the page cannot know is not shown.
-  if (!connected.value || listingsPending.value || listingsError.value || changesError.value) return null
+  if (!connected.value || listingsPending.value || changesError.value) return null
   // The failure shown is one Retry can clear when there is one; otherwise the first, without Retry.
   const retryable = [...retryBatch.value.sync, ...retryBatch.value.stop]
   const firstFailed = retryable[0] ?? failed.value[0]
@@ -343,7 +340,6 @@ const failure = ref('')
 const panelError = computed(() => failure.value
   || (statusError.value ? getErrorMessage(statusError.value, 'Could not load the Airbnb connection.') : '')
   || (changesError.value ? getErrorMessage(changesError.value, 'Could not read the sync’s progress.') : '')
-  || (homesError.value ? getErrorMessage(homesError.value, 'Could not load your homes to link a listing to.') : '')
   || integrations.failure.value)
 
 /**
@@ -353,7 +349,7 @@ const panelError = computed(() => failure.value
  */
 async function choose(id: string, chosen: boolean) {
   const listing = listings.value.find(candidate => candidate.id === id)
-  if (!chosen || !listing || (listing.import.status !== 'not_imported' && !ownHome.value.includes(id)) || assigned.value[id]) return
+  if (!chosen || !listing || (!listing.review_required && !ownHome.value.includes(id)) || assigned.value[id]) return
   failure.value = ''
   resolving.value = new Set([...resolving.value, id])
   try {
@@ -560,7 +556,6 @@ async function refreshSync() {
   assigned.value = Object.fromEntries(Object.entries(assigned.value).filter(([id, productId]) => !listings.value.some(listing => listing.id === id && listing.import.status === 'imported' && listing.import.product_id === productId)))
   // A listing now alone on its home has its own home.
   ownHome.value = ownHome.value.filter(id => listings.value.some(listing => listing.id === id && sharesHome(listing)))
-  await refreshHomes()
 }
 
 function follow(delay = 3000) {

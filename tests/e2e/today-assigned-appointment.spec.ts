@@ -122,7 +122,7 @@ test('an assigned staff member reviews a consultation from Calendar while Today 
     const today = await body<BusinessToday>(await memberContext.request.get('/api/dashboard/today', { params: { org: SLUG } }), 200)
     expect([today.title, today.cards]).toEqual(['You have 1 request', [{
       id: `booking:${bookingId}`, when: `${when({ weekday: 'short', month: 'short', day: 'numeric' })} · ${when({ hour: 'numeric', minute: '2-digit' })}`, image_url: null, icon: 'i-lucide-scale', done: null,
-      headline: `${guestFirstName} wants to book`, line: `${product.name} · Online`, action: { title: 'Review the request', detail: 'Accept or decline' }, to: conversationPath, draft: null,
+      headline: `${guestFirstName} wants to book`, line: `${product.name} · Online`, action: { title: 'Review the request', detail: 'Accept or decline' }, to: conversationPath, destination: null, draft: null,
     }]])
     // The consultation is the Calendar's: it is on its day there.
     const agenda = await body<{ items: Array<{ id: string; conversation_id: string; booking_id: string; starts_at: string; to: string }> }>(await memberContext.request.get('/api/dashboard/agenda', { params: { org: SLUG, from: day, to: new Date(Date.parse(day) + 86_400_000).toISOString().slice(0, 10) } }), 200)

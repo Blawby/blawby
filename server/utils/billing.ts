@@ -1,3 +1,7 @@
+import { prepareServices, type ServiceAgreement } from '~/server/utils/organization-services'
+import { strategyFromSubscription } from '~/server/utils/strategy-service'
+import { listCustomerCards } from '~/server/utils/billing-customer'
+import { getCachedPlans } from '~/server/utils/billing-plans'
 import type Stripe from 'stripe'
 import { HTTPError } from 'nitro';
 import { executeBatch, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
@@ -6,13 +10,46 @@ import { hasPermission } from 'better-auth/plugins'
 import { organizationAdapter } from '~/server/utils/member-access'
 import { getPlanEntitlements, type EntitlementsMap } from '~/server/utils/billing-entitlements'
 import { entitlingSubscription, getOrganizationEntitlements, planFromSubscriptions, prepareOrganizationSubscriptionTerms, readOrganizationSubscriptions, type OrganizationSubscriptionTerms } from '~/server/utils/billing-access'
-import { BASIC_HOMES, BILLING_METER_KEYS, isKnownRecurringPlan, type BillingMeterKey } from '~/shared/billing-model'
+import { BASIC_HOMES, BILLING_METER_KEYS, isKnownRecurringPlan, billingPlanActions, SERVICES as offers, type BillingMeterKey } from '~/shared/billing-model'
 import { isCurrencyCode, type CurrencyCode } from '~/shared/currencies'
 import { createStripeClient } from '~/server/utils/stripe-client'
 import { stripeMeterContract, reportStripeMeterUsage } from '~/server/utils/stripe-meter-usage'
 import { createStripePlanLoader } from '~/server/utils/better-auth-stripe'
 import { planSubscriptionItem, recurringPriceAmount } from '~/server/utils/stripe-catalog'
-import { organizationAccessControl, organizationRoles } from '~/utils/organization-access'
+import { organizationAccessControl, organizationRoles, roleMatchesSql } from '~/utils/organization-access'
+
+/** Plan and billing's full screen, reused by a service's permitted plan review. */
+export function prepareOrganizationBillingScreen(organization: string | { sql: string }) {
+  const plan = prepareOrganizationBillingStatus(organization)
+  const services = prepareServices(organization)
+  const queries = [...plan.queries, services.query, {
+    query: `SELECT u.name,u.email FROM member m JOIN user u ON u.id=m.userId WHERE m.organizationId=${typeof organization === 'string' ? '?' : organization.sql} AND ${roleMatchesSql('m.role', ['owner'])} ORDER BY m.id`,
+    params: typeof organization === 'string' ? [organization] : [],
+  }]
+  return { queries,
+    status: (rows: D1Result[], organizationId: string) => plan.read(rows.slice(0, plan.queries.length), organizationId),
+    services: (rows: D1Result[]) => rows[plan.queries.length]!.results as ServiceAgreement[],
+    async read(rows: D1Result[], organization: { id: string; name: string; role: string }, env: CloudflareEnv, buildId: string, subscription?: Stripe.Subscription | null) {
+      const status = plan.read(rows.slice(0, plan.queries.length), organization.id)
+      const stripe = getStripe(env, env.DB)
+      const native = subscription !== undefined ? subscription : status.stripeSubscriptionId
+        ? await stripe.subscriptions.retrieve(status.stripeSubscriptionId, { expand: ['items.data.price.product', 'items.data.price.tiers'] }) : null
+      const serviceRows = rows[plan.queries.length]!.results as ServiceAgreement[]
+      const owners = rows[plan.queries.length + 1]!.results as Array<{ name: string; email: string }>
+      if (!owners.length) throw new Error('This organization has no owner')
+      const [subscription_price, scheduled_plan, plans, payment_methods, homes] = await Promise.all([
+        getOrganizationSubscriptionPrice(env, status, native ?? undefined), status.stripeScheduleId ? scheduledPlanChange(env, status.stripeScheduleId) : null,
+        getCachedPlans(env, buildId), status.stripeCustomerId ? listCustomerCards(stripe, status.stripeCustomerId) : [],
+        plan.homes.read(rows.slice(1, plan.queries.length), env, organization.id, 0, native ?? undefined),
+      ])
+      return { success: true, user_role: organization.role, organization_name: organization.name, owner_name: owners.map(owner => owner.name || owner.email).join(', '),
+        billing: { ...status, subscription_price, scheduled_plan, organization_id: organization.id,
+          can_update: await hasBillingUpdatePermission(organization.id, organization.role), actions: billingPlanActions(status, scheduled_plan) },
+        plans, homes, payment_methods, services: { ...services.read(serviceRows), strategy: strategyFromSubscription(native, serviceRows.some(row => row.service as string === 'strategy')) }, offers,
+      }
+    },
+  }
+}
 
 export interface BillingEnv {
   STRIPE_SECRET_KEY?: string
@@ -58,44 +95,34 @@ export async function getOrganizationBillingStatus(
   db: DbClient,
   organizationId: string,
 ): Promise<OrganizationBillingStatus> {
-  const adapter = await organizationAdapter(env)
-  // One read of the subscription rows answers both questions asked of them
-  // here: which subscription this organization is billed on, and which plan it
-  // is entitled to. Those are different rules — a past_due row is the current
-  // subscription but grants nothing — so both are applied to the same rows
-  // rather than read twice.
-  const [organization, subscriptionsByOrganization, homes] = await Promise.all([
-    adapter.findOrganizationById(organizationId),
-    readOrganizationSubscriptions(env, [organizationId]),
-    countActiveHomes(db, organizationId),
-  ])
-  if (!organization) throw new HTTPError({ statusCode: 404, statusMessage: 'Organization not found' })
-  const subscriptions = subscriptionsByOrganization.get(organizationId) ?? []
-  // Better Auth reserves an incomplete row before opening Checkout. Stripe has
-  // no subscription or billing interval for that row until Checkout completes.
-  const current = subscriptions.filter(row => row.status !== 'canceled' && row.status !== 'incomplete_expired'
-    && (row.status !== 'incomplete' || row.stripeSubscriptionId))
-  if (current.length > 1) throw new Error('Organization has multiple current subscriptions')
-  const subscription = current[0]
-  const plan = planFromSubscriptions(organizationId, subscriptions)
-  const customerId = 'stripeCustomerId' in organization && typeof organization.stripeCustomerId === 'string'
-    ? organization.stripeCustomerId
-    : undefined
-  if (subscription?.stripeCustomerId && subscription.stripeCustomerId !== customerId) {
-    throw new Error('Subscription customer does not match its organization')
-  }
-  return {
-    plan,
-    stripeCustomerId: customerId,
-    stripeSubscriptionId: subscription?.stripeSubscriptionId ?? undefined,
-    status: subscription?.status ?? undefined,
-    periodEnd: subscription?.periodEnd?.toISOString(),
-    cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd,
-    stripeScheduleId: subscription?.stripeScheduleId ?? undefined,
-    billingInterval: billingInterval(subscription?.billingInterval),
-    usage: { plan, homes },
-    entitlements: getPlanEntitlements(plan),
-  }
+  const plan = prepareOrganizationBillingStatus(organizationId)
+  return plan.read(await executeBatch(db, plan.queries, { operation: 'Read organization billing' }), organizationId)
+}
+
+/** The plan, subscription and live-home facts share the screen's membership batch. */
+export function prepareOrganizationBillingStatus(organizationId: string | { sql: string }) {
+  const homes = prepareHomesQuote(organizationId)
+  const terms = prepareOrganizationSubscriptionTerms(organizationId)
+  const org: BatchQuery = { query: `SELECT stripeCustomerId FROM organization WHERE id = ${typeof organizationId === 'string' ? '?' : organizationId.sql}`,
+    params: typeof organizationId === 'string' ? [organizationId] : [] }
+  return { queries: [org, ...homes.queries], homes, read([organizationRows, usageRows, subscriptionRows]: D1Result[], resolvedId: string): OrganizationBillingStatus {
+    const organization = organizationRows!.results[0] as { stripeCustomerId: string | null } | undefined
+    if (!organization) throw new HTTPError({ statusCode: 404, statusMessage: 'Organization not found' })
+    const usage = usageRows!.results[0] as { used: number } | undefined
+    if (!usage) throw new Error('Billing usage could not be read')
+    const subscriptions = terms.read(subscriptionRows!)
+    const current = subscriptions.filter(row => row.status !== 'canceled' && row.status !== 'incomplete_expired'
+      && (row.status !== 'incomplete' || row.stripeSubscriptionId))
+    if (current.length > 1) throw new Error('Organization has multiple current subscriptions')
+    const subscription = current[0]
+    const plan = planFromSubscriptions(resolvedId, subscriptions)
+    const customerId = organization.stripeCustomerId ?? undefined
+    if (subscription?.stripeCustomerId && subscription.stripeCustomerId !== customerId) throw new Error('Subscription customer does not match its organization')
+    return { plan, stripeCustomerId: customerId, stripeSubscriptionId: subscription?.stripeSubscriptionId ?? undefined,
+      status: subscription?.status, periodEnd: subscription?.periodEnd?.toISOString(), cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd,
+      stripeScheduleId: subscription?.stripeScheduleId ?? undefined, billingInterval: billingInterval(subscription?.billingInterval ?? undefined),
+      usage: { plan, homes: usage.used }, entitlements: getPlanEntitlements(plan) }
+  } }
 }
 
 
@@ -103,9 +130,10 @@ export async function getOrganizationBillingStatus(
 export async function getOrganizationSubscriptionPrice(
   env: CloudflareEnv,
   status: OrganizationBillingStatus,
+  subscription?: Stripe.Subscription,
 ): Promise<OrganizationBillingStatus['subscription_price']> {
   if (!status.stripeSubscriptionId) return undefined
-  const native = await getStripe(env).subscriptions.retrieve(status.stripeSubscriptionId, { expand: ['items.data.price.product', 'items.data.price.tiers'] })
+  const native = subscription ?? await getStripe(env).subscriptions.retrieve(status.stripeSubscriptionId, { expand: ['items.data.price.product', 'items.data.price.tiers'] })
   const customerId = typeof native.customer === 'string' ? native.customer : native.customer.id
   if (customerId !== status.stripeCustomerId) throw new Error('Stripe subscription customer does not match its organization')
   const item = planSubscriptionItem(native)
@@ -353,11 +381,11 @@ export function prepareHomesQuote(organizationId: string | { sql: string }) {
   const usage: BatchQuery = { query: `SELECT (${ACTIVE_HOMES_SQL.replace('?', scope)}) AS used, (${DRAFT_HOMES_SQL.replace('?', scope)}) AS drafts`,
     params: typeof organizationId === 'string' ? [organizationId, organizationId] : [] }
   const subscriptions = prepareOrganizationSubscriptionTerms(organizationId)
-  return { queries: [usage, subscriptions.query], async read([usageRows, subscriptionRows]: D1Result[], env: CloudflareEnv, resolvedId: string, adding: number): Promise<HomesQuote> {
+  return { queries: [usage, subscriptions.query], async read([usageRows, subscriptionRows]: D1Result[], env: CloudflareEnv, resolvedId: string, adding: number, native?: Stripe.Subscription): Promise<HomesQuote> {
     const usage = usageRows!.results[0] as { used: number; drafts: number } | undefined
     if (!usage) throw new Error('Billing usage could not be read')
     const allowance = homeAllowanceFrom(resolvedId, usage.used, subscriptions.read(subscriptionRows!), adding)
-    return await priceHomesQuote(env, allowance, usage.drafts, adding)
+    return await priceHomesQuote(env, allowance, usage.drafts, adding, native)
   } }
 }
 
@@ -366,13 +394,13 @@ export async function homesQuote(env: CloudflareEnv, db: DbClient, organizationI
   return await plan.read(preloaded ?? await executeBatch(db, plan.queries, { operation: 'Read homes quote facts' }), env, organizationId, adding)
 }
 
-async function priceHomesQuote(env: CloudflareEnv, { plan, used, subscription, allowed }: ReturnType<typeof homeAllowanceFrom<OrganizationSubscriptionTerms>>, drafts: number, adding: number): Promise<HomesQuote> {
+async function priceHomesQuote(env: CloudflareEnv, { plan, used, subscription, allowed }: ReturnType<typeof homeAllowanceFrom<OrganizationSubscriptionTerms>>, drafts: number, adding: number, preloaded?: Stripe.Subscription): Promise<HomesQuote> {
   const stripe = getStripe(env, env.DB)
   let terms: { included: number; additional: number }
   let trialEnd: string | null = null
   if (subscription) {
     if (!subscription.stripeSubscriptionId) throw new Error(`Subscription ${subscription.id} has no Stripe subscription`)
-    const native = await stripe.subscriptions.retrieve(subscription.stripeSubscriptionId, { expand: ['items.data.price.product', 'items.data.price.tiers'] })
+    const native = preloaded ?? await stripe.subscriptions.retrieve(subscription.stripeSubscriptionId, { expand: ['items.data.price.product', 'items.data.price.tiers'] })
     const customerId = typeof native.customer === 'string' ? native.customer : native.customer.id
     if (customerId !== subscription.stripeCustomerId) throw new Error('Stripe subscription customer does not match its organization')
     const homes = native.items.data.find(row => typeof row.price.product !== 'string' && !row.price.product.deleted && row.price.product.metadata.product_family === 'homes')

@@ -4,7 +4,7 @@ import { accountRows, describeDevice, paymentAmountLabel, paymentHeadline, payme
 import type { CatalogScreen } from '~/shared/catalog-screen'
 import { cloudflareEnv, jsonResponse } from '~/server/utils/api-response'
 import { createAuth, getAuthSession } from '~/server/utils/auth'
-import { formatTimestamp } from '~/utils/timezone'
+import { formatTimestamp, isValidTimezone } from '~/utils/timezone'
 import { queryFirst } from '~/server/db'
 import { getNotificationPreferences } from '~/server/domain/notification-preferences'
 import { buyerPayments } from '~/server/domain/payments/buyer'
@@ -67,14 +67,24 @@ export default defineHandler(async event => {
         group: paymentYearLabel(entry),
       })),
     }
-  } else if (view === 'account-devices') {
-    // Device history: every session Better Auth holds for this account, this one first. The
-    // others carry their token so the app can log that device out.
+  } else if (view === 'account-devices' || view === 'account-login') {
     const timezone = getQuery(event).timezone
-    if (typeof timezone !== 'string' || !timezone) throw new HTTPError({ statusCode: 400, message: 'Name the timezone to show times in', data: { code: 'TIMEZONE_REQUIRED' } })
-    const sessions = await createAuth(env).api.listSessions({ headers: event.req.headers })
-    const current = session.session.token
-    screen = {
+    if (typeof timezone !== 'string' || !isValidTimezone(timezone)) throw new HTTPError({ statusCode: 400, message: 'Choose a valid timezone', data: { code: 'INVALID_TIMEZONE', field: 'timezone' } })
+    const auth = createAuth(env)
+    const [sessions, linked_accounts] = await Promise.all([
+      auth.api.listSessions({ headers: event.req.headers }),
+      view === 'account-login' ? auth.api.listUserAccounts({ headers: event.req.headers }) : null,
+    ])
+    screen = deviceScreen(sessions, session.session.token, timezone)
+    if (view === 'account-login') return jsonResponse({ linked_accounts, devices: screen }, { headers: { 'cache-control': 'private, no-store' } })
+  } else {
+    throw new HTTPError({ statusCode: 404, message: 'Account screen not found', data: { code: 'ACCOUNT_SCREEN_NOT_FOUND' } })
+  }
+  return jsonResponse(screen, { headers: { 'cache-control': 'private, no-store' } })
+})
+
+function deviceScreen(sessions: Awaited<ReturnType<ReturnType<typeof createAuth>['api']['listSessions']>>, current: string, timezone: string): CatalogScreen {
+  return {
       title: 'Device history',
       fields: [],
       rows: sessions
@@ -86,9 +96,5 @@ export default defineHandler(async event => {
           summary: item.current ? 'Current session' : formatTimestamp(item.updatedAt, 'en', timezone),
           ...(item.current ? {} : { query: { token: item.token } }),
         })),
-    }
-  } else {
-    throw new HTTPError({ statusCode: 404, message: 'Account screen not found', data: { code: 'ACCOUNT_SCREEN_NOT_FOUND' } })
   }
-  return jsonResponse(screen, { headers: { 'cache-control': 'private, no-store' } })
-})
+}

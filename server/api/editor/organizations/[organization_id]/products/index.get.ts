@@ -1,3 +1,4 @@
+import { prepareCalendarCapabilities } from '~/server/utils/dashboard-context-service'
 import { jsonResponse, rethrowHttpError } from '~/server/utils/api-response'
 import { requireOrganizationMembership } from '~/server/utils/location-access'
 import { BATCH_VIEWER, roleAllows, assertRoleAllows } from '~/server/utils/member-access'
@@ -12,7 +13,7 @@ export default defineHandler(async (event) => {
   if (!organizationId) return jsonResponse({ error: 'Organization ID is required' }, { status: 400 })
   try {
     const query = getQuery(event)
-    if (query.include === 'collections') {
+    if (query.include === 'collections' || query.view === 'session-calendars') {
       if (query.location_id !== undefined && (typeof query.location_id !== 'string' || !query.location_id.trim())) {
         return jsonResponse({ error: 'Invalid location_id' }, { status: 400 })
       }
@@ -20,9 +21,20 @@ export default defineHandler(async (event) => {
         organizationId: { sql: BATCH_VIEWER.organization }, assignedUserId: { user: BATCH_VIEWER.user, unrestricted: roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ products: ['read'] })) },
         kind: query.kind === 'dish' ? 'dish' : undefined, locationId: query.location_id,
       })
-      const { organization, rows } = await readDashboardMemberResources(event, organizationId, plan.queries)
+      const capabilities = prepareCalendarCapabilities({ query: BATCH_VIEWER.organization, params: [] }, { sql: BATCH_VIEWER.user })
+      const { organization, rows } = await readDashboardMemberResources(event, organizationId, [...plan.queries, capabilities.query])
       if (!await roleAllows({ ...organization, permissions: { products: ['read'] } })) await assertRoleAllows({ ...organization, permissions: { products: ['assigned'] } })
-      return jsonResponse({ success: true, ...plan.read(rows), organization_id: organizationId })
+      const catalog = plan.read(rows.slice(0, -1))
+      if (query.view === 'session-calendars') {
+        const products = catalog.products.filter(product => (product.kind === 'experience' || product.kind === 'service') && product.booking !== null)
+        return jsonResponse({ success: true, organization_id: organizationId, products, calendar: capabilities.read(rows.at(-1)!),
+          screen: { title: 'Bookable times', fields: [], empty_title: 'No session calendars', rows: products.map(product => ({
+            id: product.id, label: product.name, summary: [product.booking!.duration_minutes === null ? 'Set the session duration' : `${product.booking!.duration_minutes} minutes`, product.booking!.held_online ? 'Online' : null].filter(Boolean).join(' · '), native: 'session-calendar', query: { product_id: product.id },
+            to: `/dashboard/${encodeURIComponent(organization.slug)}/calendar?product_id=${encodeURIComponent(product.id)}`,
+          })) },
+        })
+      }
+      return jsonResponse({ success: true, ...catalog, organization_id: organizationId })
     }
     const { db, organization } = await requireOrganizationMembership(event, organizationId)
     // Everything this site carries, published or withheld: the editor decides

@@ -204,9 +204,16 @@ export async function stopAirbnbSyncForPlanEnd(db: DbClient, env: CloudflareEnv,
 
 /** Every listing this organization asked to sync or stop, with where each stands. */
 export async function readAirbnbSync(db: DbClient, organizationId: string): Promise<AirbnbSyncListing[]> {
-  const rows = await queryAll<JobRow & { stage: ImportStage | null; mapped_product_id: string | null }>(db, `SELECT j.*, m.import_stage AS stage, m.product_id AS mapped_product_id FROM airbnb_sync_jobs j
+  const plan = prepareAirbnbSync(organizationId)
+  return plan.read(await queryAll(db, plan.query.query, plan.query.params))
+}
+
+export function prepareAirbnbSync(organization: string | { sql: string }) {
+  return { query: { query: `SELECT j.*, m.import_stage AS stage, m.product_id AS mapped_product_id FROM airbnb_sync_jobs j
     LEFT JOIN ${AIRBNB_MAPPINGS} m ON m.organization_id = j.organization_id AND m.provider = 'channex' AND m.listing_id = j.listing_id
-    WHERE j.organization_id = ? ORDER BY j.created_at, j.listing_id`, [organizationId])
+    WHERE j.organization_id = ${typeof organization === 'string' ? '?' : organization.sql} ORDER BY j.created_at, j.listing_id`, params: typeof organization === 'string' ? [organization] : [] },
+    read(values: unknown[]): AirbnbSyncListing[] {
+      const rows = values as Array<JobRow & { stage: ImportStage | null; mapped_product_id: string | null }>
   return rows.map(row => ({
     listing_id: row.listing_id,
     product_id: row.state === 'failed' ? row.product_id : row.product_id ?? row.mapped_product_id,
@@ -218,6 +225,8 @@ export async function readAirbnbSync(db: DbClient, organizationId: string): Prom
     error: row.last_error_code && row.last_error ? { code: row.last_error_code, message: row.last_error } : null,
     updated_at: row.updated_at,
   }))
+    },
+  }
 }
 
 type Step = 'done' | 'continue' | 'later'

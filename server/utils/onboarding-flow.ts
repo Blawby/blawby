@@ -1,3 +1,6 @@
+import { isAPIError } from 'better-auth/api'
+import { createAuth, type CloudflareEnv } from '~/server/utils/auth'
+import { isSystemSubdomainSpent, platformHostname } from '~/server/utils/domains'
 import { z } from 'zod'
 import { LODGING_BOOKING_CHOICES, LODGING_CONFIRMATION_MODES } from '~/shared/lodging-booking'
 import { ONBOARDING_STEP_IDS, type OnboardingFlow, type OnboardingStep, type OnboardingStepField } from '~/shared/onboarding-flow'
@@ -127,14 +130,15 @@ export function onboardingFlow(answers: z.infer<typeof onboardingAnswers>, optio
     })
   }
 
+  const subdomain_validation = answers.savedSubdomain ? 'not_required' : options.subdomainTaken === true ? 'taken' : options.subdomainTaken === false ? 'available' : 'pending'
   const firstIncomplete = steps.findIndex(step => !step.canAdvance)
   const paused = steps.findIndex(step => step.id === answers.pausedStep)
   const furthest = firstIncomplete === -1 ? steps.length - 1 : firstIncomplete
   return {
-    steps,
+    steps, subdomain_validation,
     resumeStep: steps[paused === -1 ? furthest : Math.min(paused, furthest)]!.id,
     canSave: answers.vertical !== null,
-    canFinish: firstIncomplete === -1,
+    canFinish: firstIncomplete === -1 && subdomain_validation !== 'pending',
     exitLabel: answers.vertical ? 'Save & exit' : 'Exit',
     backLabel: 'Back',
     proposedTimezone,
@@ -152,4 +156,21 @@ export function onboardingFlow(answers: z.infer<typeof onboardingAnswers>, optio
     languages: PLATFORM_LOCALES.map(({ locale, label }) => ({ value: locale, label, icon: 'i-lucide-languages' })),
     businessTypes: ALL_VERTICALS.map(value => ({ value, ...presentation[value] })),
   }
+}
+
+/** The first read and later answers evaluate the same flow and organization slug rules. */
+export async function readOnboardingFlow(env: CloudflareEnv, answers: z.infer<typeof onboardingAnswers>, options: { validateSubdomain: boolean } = { validateSubdomain: true }) {
+  const slug = proposedOnboardingSubdomain(answers)
+  let subdomainTaken: boolean | undefined
+  if (options.validateSubdomain && answers.name.trim() && !answers.savedSubdomain && isOnboardingSubdomain(slug)) {
+    try {
+      await createAuth(env).api.checkOrganizationSlug({ body: { slug } })
+      subdomainTaken = await isSystemSubdomainSpent(env, env.DB, slug)
+    } catch (error) {
+      if (!isAPIError(error) || error.body?.code !== 'ORGANIZATION_SLUG_ALREADY_TAKEN') throw error
+      subdomainTaken = true
+    }
+  }
+  const domain = platformHostname(env)
+  return onboardingFlow(answers, { includedDomain: domain.includes('.') && !domain.includes(':') ? domain : undefined, subdomainTaken })
 }

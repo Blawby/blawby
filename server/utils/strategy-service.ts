@@ -53,9 +53,12 @@ async function planSubscription(env: CloudflareEnv, db: DbClient, organizationId
 /** What the business is on, read from its subscription; null without a plan or without the item. */
 export async function readStrategy(env: CloudflareEnv, db: DbClient, organizationId: string): Promise<StrategyService | null> {
   const found = await planSubscription(env, db, organizationId)
-  if (!found) return null
-  const item = strategyItem(found.subscription)
   const agreement = await queryFirst<{ id: string }>(db, "SELECT id FROM organization_services WHERE organization_id=? AND service='strategy' AND ended_at IS NULL", [organizationId])
+  return strategyFromSubscription(found?.subscription ?? null, Boolean(agreement))
+}
+
+export function strategyFromSubscription(subscription: Stripe.Subscription | null, agreement: boolean): StrategyService | null {
+  const item = subscription ? strategyItem(subscription) : null
   if (!item) {
     if (agreement) throw new Error('A strategy agreement is recorded but its Stripe item is missing')
     return null

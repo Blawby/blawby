@@ -1,17 +1,33 @@
+import { billingPlanActions } from '~/shared/billing-model'
 import { defineHandler, HTTPError } from 'nitro'
 import { getQuery } from 'nitro/h3'
 import { cloudflareEnv, jsonResponse } from '~/server/utils/api-response'
-import { resolveRequestedOrganization } from '~/server/utils/dashboard-context'
+import { useRuntimeConfig } from 'nitro/runtime-config'
+import { BATCH_VIEWER, assertRoleAllows  } from '~/server/utils/member-access'
+import { prepareOrganizationBillingScreen, getOrganizationBillingStatus, getOrganizationSubscriptionPrice, hasBillingUpdatePermission, scheduledPlanChange  } from '~/server/utils/billing'
+import { readDashboardMemberResources, resolveRequestedOrganization } from '~/server/utils/dashboard-context'
 import { getAuthSession } from '~/server/utils/auth'
-import { assertRoleAllows } from '~/server/utils/member-access'
-import { getOrganizationBillingStatus, getOrganizationSubscriptionPrice, hasBillingUpdatePermission, scheduledPlanChange } from '~/server/utils/billing'
-import { billingPlanActions } from '~/shared/billing-model'
 
 /** The same organization plan and permitted choices for the dashboard and native account screen. */
 export default defineHandler(async (event) => {
   const env = cloudflareEnv(event)
   const db = env.DB
   if (!db) throw new HTTPError({ statusCode: 503, statusMessage: 'Billing storage is unavailable', data: { code: 'BILLING_UNAVAILABLE', field: 'database' } })
+  const screenQuery = getQuery(event)
+  if (screenQuery.view !== undefined && screenQuery.view !== 'screen') throw new HTTPError({ statusCode: 400, message: 'Choose a valid billing view', data: { code: 'INVALID_QUERY', field: 'view' } })
+  if (screenQuery.view === 'screen') {
+    if (typeof screenQuery.organization_id !== 'string' || !screenQuery.organization_id.trim()) throw new HTTPError({ statusCode: 400, message: 'Choose a workspace', data: { code: 'ORGANIZATION_REQUIRED', field: 'organization_id' } })
+    const plan = prepareOrganizationBillingScreen({ sql: BATCH_VIEWER.organization })
+    const { organization, rows } = await readDashboardMemberResources(event, screenQuery.organization_id, plan.queries)
+    if (screenQuery.org !== undefined && screenQuery.org !== organization.slug) throw new HTTPError({ statusCode: 400, message: 'Organization context conflict', data: { code: 'ORGANIZATION_CONTEXT_CONFLICT', field: 'org' } })
+    await assertRoleAllows({ ...organization, permissions: { billing: ['read'] } })
+    try {
+      return jsonResponse(await plan.read(rows, organization, env, useRuntimeConfig().app.buildId), { headers: { 'cache-control': 'private, no-store' } })
+    } catch (cause) {
+      if (cause instanceof HTTPError) throw cause
+      throw new HTTPError({ statusCode: 502, message: 'Plan and billing could not be read', data: { code: 'BILLING_SCREEN_UNAVAILABLE', field: 'billing' }, cause })
+    }
+  }
   const session = await getAuthSession(event, env)
   if (!session?.user.id) throw new HTTPError({ statusCode: 401, statusMessage: 'Sign in to read billing', data: { code: 'AUTHENTICATION_REQUIRED', field: 'session' } })
   const query = getQuery(event)

@@ -1,12 +1,14 @@
+import { prepareCalendarCapabilities } from '~/server/utils/dashboard-context-service'
+import { ChannexConnection, prepareChannexStatus } from '~/server/integrations/channex/channel-connection'
 import { calendarPresentation } from '~/shared/dashboard-presentation'
 import { listingGrantSql } from '~/server/domain/listing-access'
 import { assignedOperationsRoles, roleMatchesSql, rolesAllowing } from '~/utils/organization-access'
 import type { H3Event } from 'nitro'
 import { HTTPError } from 'nitro'
 import { getRouterParam } from 'nitro/h3'
-import { executeBatch, queryFirst, type BatchQuery } from '~/server/db'
+import { executeBatch, type BatchQuery } from '~/server/db'
 import { agreementQueries, bookingAgreementFromRows } from '~/server/domain/agreements'
-import { dashboardMemberQuery, dashboardOrgQueryParam, getDashboardMemberContext, readDashboardMemberResources } from '~/server/utils/dashboard-context'
+import { dashboardMemberQuery, dashboardOrgQueryParam, getDashboardMemberContext, readDashboardMemberResources, prepareOrganizationLocations } from '~/server/utils/dashboard-context'
 import { readRequiredBody } from '~/server/utils/api-response'
 import { assignedMemberSql, BATCH_VIEWER, memberAccessPrincipal, membershipBySlugQuery, roleAllows, withViewer } from '~/server/utils/member-access'
 import { bookedRecordsInRange, type BookedRecordInRange } from '~/server/domain/product-bookings'
@@ -16,7 +18,7 @@ import { pendingStayChangesFromRows, pendingStayChangesQuery } from '~/server/do
 import { calendarStays, canReleaseStayNights, dashboardStayEditQueries, prepareStayReservationHome, prepareStayHomesDocument, stayAccessFor, stayCalendarOf, stayCalendarQueries, stayDetailFrom, stayDetailQuery, stayDetailSelection, type StayHome, type StayNight, type StayReservationHome } from '~/server/domain/stays'
 import { guestThreadChannelQuery, parseGuestThreadChannel, type GuestThreadChannelRow } from '~/server/domain/guest-threads/channel-messages'
 import { sourceLocaleFromRows, sourceLocaleQuery } from '~/server/utils/localization'
-import { placesCalendarOf, placesCalendarQueries, placesPresenceQuery, placesWindow } from '~/server/domain/places'
+import { placesCalendarOf, placesCalendarQueries, placesWindow } from '~/server/domain/places'
 import { prepareStaffBookingDetails } from '~/server/utils/dashboard-booking-details'
 import { isChannelManagedStay, stayGuestFirstName } from '~/shared/bookings'
 import { messageListPage } from '~/server/domain/guest-message-schedule'
@@ -208,7 +210,6 @@ function bookingListWindow(query: BookingListQuery) {
 }
 
 type BookingWindow = ReturnType<typeof bookingListWindow>
-type DashboardBookingsContext = Awaited<ReturnType<typeof dashboardBookingsContext>>
 
 /** A visit's booking as the bookings list and the host Calendar show it, from the one read of booked records. */
 function timedBookings(records: BookedRecordInRange[], { productId, from, to }: BookingWindow) {
@@ -220,18 +221,22 @@ function timedBookings(records: BookedRecordInRange[], { productId, from, to }: 
   })
 }
 
-/** The booked records of the window the caller may see, in one statement: a member's are those of the offerings and homes they are named on. */
-async function readBookedRecords({ db, organization, userId }: DashboardBookingsContext, window: BookingWindow) {
-  const [records] = await executeBatch(db, [withViewer(membershipBySlugQuery(organization.slug, userId), bookedRecordsInRange(BATCH_VIEWER, { ...window, cancelled: window.includeCancelled, includeAssignedStays: true, includePayments: true }))], { operation: 'Read booked records' })
-  return (records!.results as BookedRecordInRange[]).filter(record => !window.locationId || record.location_id === window.locationId)
-}
-
 export async function dashboardBookingList(event: H3Event, query: BookingListQuery) {
   const window = bookingListWindow(query)
-  const context = await dashboardBookingsContext(event)
-  const records = await readBookedRecords(context, window)
-  const stays = window.unit === 'slot' ? [] : calendarStays(records, context.access.manage, window, record => !window.productId || record.product_id === window.productId)
-  return { bookings: [...(window.unit === 'nights' ? [] : timedBookings(records, window)), ...stays], manage: context.access.manage }
+  const slug = dashboardOrgQueryParam(event)
+  if (!slug) throw new HTTPError({ statusCode: 400, message: 'Organization is required', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
+  const capabilities = prepareCalendarCapabilities({ query: BATCH_VIEWER.organization, params: [] }, { sql: BATCH_VIEWER.user })
+  const locations = prepareOrganizationLocations(BATCH_VIEWER, true)
+  const { env, organization, rows: [booked, ...placeRows] } = await readDashboardMemberResources(event, { slug }, [
+    bookedRecordsInRange(BATCH_VIEWER, { ...window, cancelled: window.includeCancelled, includeAssignedStays: true, includePayments: true }),
+    ...locations.queries, capabilities.query,
+  ])
+  const access = await stayAccessFor(memberAccessPrincipal(organization, { env, event }))
+  const records = (booked!.results as BookedRecordInRange[]).filter(record => !window.locationId || record.location_id === window.locationId)
+  const stays = window.unit === 'slot' ? [] : calendarStays(records, access.manage, window, record => !window.productId || record.product_id === window.productId)
+  return { bookings: [...(window.unit === 'nights' ? [] : timedBookings(records, window)), ...stays], manage: access.manage,
+    calendar: capabilities.read(placeRows.at(-1)!), locations: locations.read(placeRows.slice(0, -1), organization.id).locations }
+
 }
 
 /**
@@ -273,15 +278,16 @@ export async function dashboardBookingSearch(event: H3Event, query: { q?: unknow
 async function dashboardPlacesCalendar(event: H3Event, window: BookingWindow, orgSlug?: string) {
   const slug = orgSlug ?? dashboardOrgQueryParam(event)
   if (!slug) throw new HTTPError({ statusCode: 400, message: 'Organization is required', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
+  const capabilities = prepareCalendarCapabilities({ query: BATCH_VIEWER.organization, params: [] }, { sql: BATCH_VIEWER.user })
   const days = placesWindow(window)
   const { env, organization, rows: [records, ...places] } = await readDashboardMemberResources(event, { slug }, [
     bookedRecordsInRange(BATCH_VIEWER, { ...window, cancelled: window.includeCancelled, includeCalendarGrants: true }),
-    ...placesCalendarQueries({ query: BATCH_VIEWER.organization, params: [] }, { sql: BATCH_VIEWER.user }, days),
+    ...placesCalendarQueries({ query: BATCH_VIEWER.organization, params: [] }, { sql: BATCH_VIEWER.user }, days), capabilities.query,
   ])
   const principal = memberAccessPrincipal(organization, { env, event })
   await stayAccessFor(principal)
-  const calendar = await placesCalendarOf(principal, days, places)
-  return { from: window.from, to: window.to, bookings: timedBookings(records!.results as BookedRecordInRange[], window), homes: [], places: calendar.places, manage: calendar.manage }
+  const calendar = await placesCalendarOf(principal, days, places.slice(0, -1))
+  return { calendar: capabilities.read(places.at(-1)!), from: window.from, to: window.to, bookings: timedBookings(records!.results as BookedRecordInRange[], window), homes: [], places: calendar.places, manage: calendar.manage }
 }
 
 /** The calendar's records, optional full home context and Better Auth session share one batch. */
@@ -290,23 +296,27 @@ async function dashboardHomesCalendar(event: H3Event, window: BookingWindow, org
   if (!slug) throw new HTTPError({ statusCode: 400, message: 'Organization is required', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
   const queries = stayCalendarQueries({ from: window.from, to: window.to, productId: window.productId ?? null, cancelled: window.unit !== 'nights' && window.includeCancelled })
   const context = includeHomes ? prepareStayHomesDocument(null) : null
+  const connection = includeHomes ? prepareChannexStatus({ sql: `CASE WHEN ${BATCH_VIEWER.organizationWide} = 1 THEN ${BATCH_VIEWER.organization} END` }) : null
+  const capabilities = prepareCalendarCapabilities({ query: BATCH_VIEWER.organization, params: [] }, { sql: BATCH_VIEWER.user })
   const unique: BatchQuery[] = [], byQuery = new Map<string, number>()
-  const positions = [...queries, ...(context?.queries ?? [])].map(query => {
+  const positions = [...queries, ...(context?.queries ?? []), ...(connection?.queries ?? [])].map(query => {
     const key = JSON.stringify([query.query, query.params])
     let index = byQuery.get(key)
     if (index === undefined) { index = unique.length; byQuery.set(key, index); unique.push(query) }
     return index
   })
-  const { env, organization, rows: results } = await readDashboardMemberResources(event, { slug }, unique)
+  const { env, organization, userId, rows: results } = await readDashboardMemberResources(event, { slug }, [...unique, capabilities.query])
   const rows = positions.map(index => results[index]!)
   const access = await stayAccessFor(memberAccessPrincipal(organization, { env, event }))
   const calendar = stayCalendarOf(rows.slice(0, queries.length), access.manage, window)
   if (window.productId && !calendar.homes.length) throw new HTTPError({ statusCode: 404, message: 'That place to stay is not in this organization', data: { code: 'HOME_NOT_FOUND' } })
+  const airbnb = connection && access.manage && organization.vertical === 'lodging' && calendar.homes.length === 0
+    ? await new ChannexConnection(env.DB, env, organization.id, userId).status(connection.read(rows.slice(queries.length + context!.queries.length))) : null
   const homes = calendar.homes.map(entry => ({ ...entry, nights: entry.nights.map(dashboardCalendarNight) }))
-  return { from: window.from, to: window.to,
+  return { calendar: capabilities.read(results.at(-1)!), from: window.from, to: window.to,
     bookings: window.unit === 'nights' ? calendar.stays : [...timedBookings((rows[3]!.results as BookedRecordInRange[]).filter(record => !window.locationId || record.location_id === window.locationId), window), ...calendar.stays],
     homes, places: [], manage: access.manage, presentation: calendarPresentation,
-    ...(context ? { home_context: { homes: context.read(rows.slice(queries.length)), manage: access.manage } } : {}),
+    ...(context ? { home_context: { homes: context.read(rows.slice(queries.length, queries.length + context.queries.length)), manage: access.manage, airbnb } } : {}),
   }
 }
 
@@ -318,12 +328,17 @@ export async function dashboardBookingCalendar(event: H3Event, query: BookingLis
 }
 
 export async function readCalendarPlacePresence(event: H3Event, orgSlug?: string) {
-  const { db, env, organization, userId } = await getDashboardMemberContext(event, { organizationSlug: orgSlug })
+  const slug = orgSlug ?? dashboardOrgQueryParam(event)
+  if (!slug) throw new HTTPError({ statusCode: 400, message: 'Choose a workspace', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
+  const preloaded = event.context.dashboardCalendarPresence as { slug: string; has_places: boolean; calendar: import('~/shared/bookings').CalendarCapabilities } | undefined
+  if (preloaded?.slug === slug) {
+    const { env, organization } = await getDashboardMemberContext(event, { organizationSlug: slug })
+    await stayAccessFor(memberAccessPrincipal(organization, { env, event }))
+    return { has_places: preloaded.has_places, calendar: preloaded.calendar }
+  }
+  const capabilities = prepareCalendarCapabilities({ query: BATCH_VIEWER.organization, params: [] }, { sql: BATCH_VIEWER.user })
+  const { env, organization, rows } = await readDashboardMemberResources(event, { slug }, [capabilities.query])
   await stayAccessFor(memberAccessPrincipal(organization, { env, event }))
-  const preloaded = event.context.dashboardCalendarPresence as { slug: string; has_places: boolean } | undefined
-  if (preloaded?.slug === organization.slug) return { has_places: preloaded.has_places }
-  const { query, params } = placesPresenceQuery({ query: '?', params: [organization.id] }, userId)
-  const row = await queryFirst<{ has_places: number }>(db, query, params)
-  if (!row) throw new Error('Calendar places could not be read')
-  return { has_places: row.has_places === 1 }
+  const calendar = capabilities.read(rows[0]!)
+  return { has_places: calendar.has_places, calendar }
 }

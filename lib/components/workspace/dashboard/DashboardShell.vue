@@ -126,6 +126,7 @@
 </template>
 
 <script setup lang="ts">
+import { WEBSITE_ONBOARDING_CREATE_ACTION } from '~/shared/onboarding-flow'
 import DashboardTopNav from '~/lib/components/workspace/dashboard/DashboardTopNav.vue'
 import DashboardMenuSlideover from '~/lib/components/workspace/dashboard/DashboardMenuSlideover.vue'
 import type { DashboardScopeHeaderModel } from '~/lib/components/workspace/dashboard/DashboardScopeHeader.vue'
@@ -338,7 +339,7 @@ const scopeHeaderModel = computed<DashboardScopeHeaderModel>(() => {
         ? { to: `/dashboard/${encodeURIComponent(org.slug)}` }
         : { onSelect: () => void selectOrganization(org) }),
     }))],
-    createAction: { label: 'New organization', to: '/dashboard/onboarding' }
+    createAction: WEBSITE_ONBOARDING_CREATE_ACTION
   }
 })
 

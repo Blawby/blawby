@@ -42,10 +42,21 @@ async function templateText(env: CloudflareEnv, r2Key: string): Promise<string> 
 
 /** The listing's template text, or null when it has none. */
 export async function readAgreementTemplate(env: CloudflareEnv, db: DbClient, organizationId: string, productId: string): Promise<string | null> {
-  const row = await queryFirst<{ r2_key: string | null }>(db, templateQuery, [organizationId, productId])
-  if (!row) return null
-  if (!row.r2_key) throw new Error('The agreement template has no stored file')
-  return templateText(env, row.r2_key)
+  const plan = prepareAgreementTemplate(organizationId, productId)
+  return plan.read(env, (await executeBatch(db, [plan.query]))[0]!)
+}
+
+export function prepareAgreementTemplate(organization: string | { sql: string }, productId: string) {
+  return { query: { query: templateQuery.replace('mp.organization_id = ?', `mp.organization_id = ${typeof organization === 'string' ? '?' : organization.sql}`),
+    params: [...typeof organization === 'string' ? [organization] : [], productId] },
+    async read(env: CloudflareEnv, result: D1Result): Promise<string | null> {
+      if (result.results.length > 1) throw new Error('The offering has multiple agreement templates')
+      const row = result.results[0] as { r2_key: string | null } | undefined
+      if (!row) return null
+      if (!row.r2_key) throw new Error('The agreement template has no stored file')
+      return templateText(env, row.r2_key)
+    },
+  }
 }
 
 /** Save the listing's template; the file and its placement commit together. Null removes it. */

@@ -31,7 +31,7 @@
     </div>
 
     <!-- Airbnb's "Create a new listing": the first thing the plan lacks, offered once, to someone who can take it. -->
-    <OfferCard v-if="offer" :offer="offer" />
+    <OfferCard v-if="offer" :offer="offer" :summary="menu?.promo?.summary" :to="menu?.promo?.to" />
 
     <!-- PWA install banner: shown only on browsers offering an install prompt -->
     <div
@@ -65,11 +65,9 @@
 <script setup lang="ts">
 import DashboardSurface from '~/components/dashboard/DashboardSurface.vue'
 import { dashboardPresentation } from '~/shared/dashboard-presentation'
-import { dashboardMenuSchema, type DashboardMenu } from '~/shared/dashboard-menu'
 import EditorNavigationList from '~/components/dashboard/EditorNavigationList.vue'
 import OfferCard from '~/components/dashboard/OfferCard.vue'
-import { planOffers } from '~/shared/offers'
-import { dashboardFetch } from '~/composables/dashboardFetch'
+import { offer as canonicalOffer, type OfferId } from '~/shared/offers'
 import { isAccountActivityResponse, type AccountActivityResponse } from '~/shared/account-activity'
 import { readActiveWebsiteDraft } from '~/composables/useOnboardingDraft'
 
@@ -77,26 +75,17 @@ import { readActiveWebsiteDraft } from '~/composables/useOnboardingDraft'
 // model, so the two surfaces cannot show different menus.
 const { scopeModel, logOut, personal, organization } = useDashboardMenu()
 const { canInstall, promptInstall } = usePwaInstall()
-const dashboard = useDashboardOrganization()
-// Only the routed organization's plan is loaded here; the active one reached from Account settings is not offered anything.
-const offer = computed(() => dashboard.organization.value && dashboard.canUpdateBilling.value ? planOffers(dashboard.entitlements.value)[0] ?? null : null)
 // The shell's organization, whichever route it is drawn on — Account settings included.
 const orgBase = computed(() => organization.value ? `/dashboard/${encodeURIComponent(organization.value.slug)}` : null)
 const inOrganization = computed(() => Boolean(orgBase.value))
-const setup = useAsyncData('personal-menu-website-setup', readActiveWebsiteDraft, { enabled: personal })
+const setup = useAsyncData('personal-menu-website-setup', () => readActiveWebsiteDraft(), { enabled: personal })
 const resumeAction = computed(() => setup.data.value?.resume_action)
 const organizationSettings = useOrganizationSettingsNavigation(organization, scopeModel, resumeAction)
 const { groups, activeItem } = organizationSettings
 await Promise.all([organizationSettings.ready, setup])
 // Menu cards, ratings and chart context arrive in one authorized D1 batch.
-const { data: menu, error: menuError, status: menuStatus } = await useAsyncData(
-  () => `dashboard-menu:${organization.value?.id ?? ''}`,
-  async (_app, { signal }) => {
-    const target = organization.value
-    if (!target) return null
-    return { ...await dashboardFetch<DashboardMenu>('/api/dashboard/menu', { orgSlug: target.slug }, { signal, validate: (value): value is DashboardMenu => dashboardMenuSchema.safeParse(value).success }), organizationId: target.id }
-  },
-)
+const { menu, menuStatus, error: menuError } = organizationSettings
+const offer = computed(() => menu.value?.promo ? canonicalOffer(menu.value.promo.id as OfferId) : null)
 const { data: activity, error: activityError } = await useAsyncData(
   () => `menu-activity:${personal.value}`,
   async () => personal.value ? await applicationFetch<AccountActivityResponse>('/api/account', { validate: isAccountActivityResponse }) : null,

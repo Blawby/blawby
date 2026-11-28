@@ -4,8 +4,8 @@
       v-if="step.id === 'type'"
       class="flex flex-col gap-6 md:gap-8"
     >
-      <figure v-if="websiteExample" class="flex items-center justify-center bg-[var(--kc-coral-50)] px-8 py-6 md:py-9">
-        <div class="w-full max-w-[15rem] overflow-hidden rounded-2xl bg-white p-2 text-slate-900 shadow-xl md:max-w-[27rem] md:p-3">
+      <div v-if="websiteExample" class="flex items-center justify-center bg-[var(--kc-coral-50)] px-8 py-6 md:py-9">
+        <figure class="w-full max-w-[15rem] overflow-hidden rounded-2xl bg-white p-2 text-slate-900 shadow-xl md:max-w-[27rem] md:p-3">
           <img
             :src="websiteExample.image"
             alt=""
@@ -15,8 +15,8 @@
           <figcaption class="truncate px-2 py-2 text-sm font-semibold md:py-3" aria-live="polite">
             {{ websiteExample.name }}
           </figcaption>
-        </div>
-      </figure>
+        </figure>
+      </div>
       <div class="mx-auto w-full max-w-4xl space-y-5 px-5 pb-5 sm:px-8 md:pb-6">
         <h1 class="text-center text-2xl font-semibold tracking-tight md:text-4xl">{{ step.title }}</h1>
         <OnboardingChoiceGrid

@@ -1,10 +1,13 @@
 import { HTTPError } from 'nitro'
-import { AD_SPEND_RATE } from '~/shared/billing-model'
+import { AD_SPEND_RATE, BUSINESS_PLAN_ID } from '~/shared/billing-model'
 import { execute, queryAll, queryFirst, type DbClient } from '~/server/db'
 import { linkedAccountAccessToken, type CloudflareEnv } from '~/server/utils/auth'
 import { getOrganizationBillingStatus, getStripe } from '~/server/utils/billing'
 import { publishManagedAdSpendWake } from '~/server/domain/payments/ad-spend'
-import { paymentsUsage } from '~/server/domain/payments/usage'
+import type Stripe from 'stripe'
+import type { OrganizationIntegration } from '~/shared/organization-settings'
+import type { OrganizationBillingStatus } from '~/server/utils/billing'
+import { paymentUsagePricing } from '~/server/domain/payments/usage'
 import { readIntegration } from '~/server/utils/organization-integrations'
 import { getGoogleAdsCustomer } from '~/server/utils/google-ads'
 
@@ -26,8 +29,16 @@ export function isService(value: unknown): value is Service {
 
 /** The current agreement per service, when there is one. */
 export async function listServices(db: DbClient, organizationId: string): Promise<Record<Service, ServiceAgreement | null>> {
-  const rows = await queryAll<ServiceAgreement>(db, 'SELECT id,service,terms_version,agreed_by_user_id,agreed_at,ended_at FROM organization_services WHERE organization_id=? AND ended_at IS NULL', [organizationId])
-  return Object.fromEntries(SERVICES.map(service => [service, rows.find(row => row.service === service) ?? null])) as Record<Service, ServiceAgreement | null>
+  const plan = prepareServices(organizationId)
+  return plan.read(await queryAll<ServiceAgreement>(db, plan.query.query, plan.query.params))
+}
+
+export function prepareServices(organizationId: string | { sql: string }) {
+  return { query: { query: `SELECT id,service,terms_version,agreed_by_user_id,agreed_at,ended_at FROM organization_services WHERE organization_id=${typeof organizationId === 'string' ? '?' : organizationId.sql} AND ended_at IS NULL`, params: typeof organizationId === 'string' ? [organizationId] : [] },
+    read(rows: ServiceAgreement[]): Record<Service, ServiceAgreement | null> {
+      return Object.fromEntries(SERVICES.map(service => [service, rows.find(row => row.service === service) ?? null])) as Record<Service, ServiceAgreement | null>
+    },
+  }
 }
 
 /**
@@ -38,13 +49,18 @@ export async function listServices(db: DbClient, organizationId: string): Promis
  * and agreeing refuses unless every one holds.
  */
 export async function managedAdsRequirements(db: DbClient, env: CloudflareEnv, organizationId: string): Promise<{ business_plan: boolean; default_payment_method: boolean; google_ads_usd: boolean }> {
-  const [{ configured, pricing }, ads] = await Promise.all([paymentsUsage(db, env, organizationId), readIntegration(db, organizationId, 'google_ads')])
-  const business_plan = configured && pricing?.ad_spend_rate === AD_SPEND_RATE
-  // The card is read on any paid plan, so the row says whether one is saved whatever the plan is.
+  const [billing, ads] = await Promise.all([getOrganizationBillingStatus(env, db, organizationId), readIntegration(db, organizationId, 'google_ads')])
+  const subscription = billing.stripeSubscriptionId ? await getStripe(env).subscriptions.retrieve(billing.stripeSubscriptionId, { expand: ['items.data.price.product'] }) : null
+  return managedAdsRequirementsFrom(env, billing, subscription, ads)
+}
+
+export async function managedAdsRequirementsFrom(env: CloudflareEnv, billing: OrganizationBillingStatus, subscription: Stripe.Subscription | null, ads: OrganizationIntegration | null) {
+  if (billing.plan === BUSINESS_PLAN_ID && !subscription) throw new HTTPError({ statusCode: 409, message: 'Business subscription is missing', data: { code: 'PAYMENT_PRICING_UNAVAILABLE', field: 'stripeSubscriptionId' } })
+  const pricing = billing.plan === BUSINESS_PLAN_ID && subscription ? paymentUsagePricing(subscription) : null
+  const business_plan = pricing?.ad_spend_rate === AD_SPEND_RATE
   let default_payment_method = false
-  const billing = await getOrganizationBillingStatus(env, db, organizationId)
-  if (billing.stripeSubscriptionId && billing.stripeCustomerId) {
-    const [subscription, customer] = await Promise.all([getStripe(env).subscriptions.retrieve(billing.stripeSubscriptionId), getStripe(env).customers.retrieve(billing.stripeCustomerId)])
+  if (subscription && billing.stripeCustomerId) {
+    const customer = await getStripe(env).customers.retrieve(billing.stripeCustomerId)
     default_payment_method = !customer.deleted && Boolean(subscription.default_payment_method || customer.invoice_settings.default_payment_method)
   }
   let google_ads_usd = false

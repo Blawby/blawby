@@ -1,8 +1,10 @@
+import { agreementTemplatePresentation } from '~/shared/agreement-templates'
+import { prepareAgreementTemplate } from '~/server/domain/agreement-templates'
 import { listMediaAssetsQuery, groupMediaPlacements, mediaPlacementsQuery, type MediaAsset } from '~/server/utils/media-asset-manager'
 import { dashboardLocationQuery, readDashboardMemberResources, type DashboardLocationContextRow, type DashboardOrganizationRow } from '~/server/utils/dashboard-context'
 import { listingAccessGrantsQuery, listingAccessGrantsFromRows, staffAccessWritesEnabled } from '~/server/domain/listing-access'
 import { prepareMemberSchedulingList } from '~/server/domain/member-scheduling'
-import { availabilityRulesQuery, type ProductAvailabilityRule } from '~/server/utils/availability'
+import { availabilityRulesQuery, slotReadQueries, slotCalendars, scheduleSessions, type SlotWindow, type ProductAvailabilityRule } from '~/server/utils/availability'
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { roleMatchesSql, rolesAllowing } from '~/utils/organization-access'
 import { prepareDashboardOffering } from '~/server/utils/dashboard-offering'
@@ -42,6 +44,7 @@ import { resolveOrganizationCmsCapabilities } from '~/server/utils/cms-capabilit
 import { catalogPath, locationEditorPath } from '~/server/utils/dashboard-links'
 import { formatPostalAddress } from '~/utils/postal-address'
 import { formatPhone } from '~/utils/phone'
+import { isValidTimezone } from '~/utils/timezone'
 import { getTodayHoursLabel } from '~/shared/reservation-hours'
 import type { CatalogRow } from '~/shared/catalog-screen'
 
@@ -215,9 +218,9 @@ export type ProductEditorContext = {
 }
 
 export async function loadDashboardProduct(
-  event: H3Event, organizationId: string, locationId: string | null, productId: string, editor = false,
+  event: H3Event, organizationId: string, locationId: string | null, productId: string, editor = false, calendar?: SlotWindow, template = false,
 ) {
-  const plan = prepareDashboardProductRead(productId, editor)
+  const plan = prepareDashboardProductRead(productId, editor || calendar !== undefined, undefined, { calendar, template })
   const context = await readDashboardMemberResources(event, organizationId, plan.queries)
   return plan.read(context.rows, context, locationId)
 }
@@ -235,7 +238,7 @@ export async function presentDashboardProduct(
 }
 
 /** The same authorized product read joins either the document batch or its direct API batch. */
-export function prepareDashboardProductRead(productId: string, editor = true, saved?: Product, concerns: { members?: boolean; scheduleLocation?: string; access?: boolean } = {}) {
+export function prepareDashboardProductRead(productId: string, editor = true, saved?: Product, concerns: { members?: boolean; scheduleLocation?: string; access?: boolean; template?: boolean; calendar?: SlotWindow } = {}) {
   const assignment = assignedOfferingCondition({ user: BATCH_VIEWER.user, unrestricted: '0' })
   const update = roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ products: ['update'] }))
   const assigned = roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ products: ['assigned'] }))
@@ -245,21 +248,33 @@ export function prepareDashboardProductRead(productId: string, editor = true, sa
   const record = saved ? null : prepareOrganizationProduct(organization, productId)
   const metadata = prepareDashboardProductMetadata(organization, productId, editor, concerns)
   const recordQueries = record?.queries ?? [{ query: 'SELECT id FROM editor_product', params: [] }]
-  const queries = [...recordQueries, ...metadata.queries].map((statement): BatchQuery => {
+  const slots = concerns.calendar ? { organization: { query: organization.sql, params: [] }, products: { query: 'SELECT ?', params: [productId] }, ...concerns.calendar } : null
+  const calendarQueries = slots ? slotReadQueries(slots) : []
+  const queries = [...recordQueries, ...metadata.queries, ...calendarQueries].map((statement): BatchQuery => {
     const query = statement.query.trimStart()
     return { query: `WITH editor_product AS (${selected.query})${/^WITH\s/i.test(query) ? `, ${query.slice(5)}` : ` ${query}`}`,
       params: [...selected.params ?? [], ...statement.params ?? []] }
   })
   return { queries, async read(rows: D1Result[], context: ProductEditorContext, locationId: string | null) {
     if (!await roleAllows({ ...context.organization, permissions: { products: ['update'] } })) await assertRoleAllows({ ...context.organization, permissions: { products: ['assigned'] } })
-    if (saved && rows[0]!.results.length !== 1) throw new HTTPError({ statusCode: 404, statusMessage: 'Product not found' })
+    if (saved && rows[0]!.results.length !== 1) throw new HTTPError({ statusCode: 404, message: 'Product not found', data: { code: 'PRODUCT_NOT_FOUND', field: 'product_id' } })
     const product = saved ?? record!.read(rows.slice(0, recordQueries.length))[0]
-    if (!product || product.organization_id !== context.organization.id) throw new HTTPError({ statusCode: 404, statusMessage: 'Product not found' })
-    return metadata.read(rows.slice(recordQueries.length), product, locationId, context)
+    if (!product || product.organization_id !== context.organization.id) throw new HTTPError({ statusCode: 404, message: 'Product not found', data: { code: 'PRODUCT_NOT_FOUND', field: 'product_id' } })
+    const document = await metadata.read(rows.slice(recordQueries.length, recordQueries.length + metadata.queries.length), product, locationId, context)
+    if (!slots) return document
+    const locations = document.locations!.filter(place => product.locations.some(binding => binding.location_id === place.id))
+    for (const place of locations) if (!place.timezone || !isValidTimezone(place.timezone)) {
+      throw new HTTPError({ statusCode: 409, message: `Set an IANA timezone for ${place.title} before opening its calendar`, data: { code: 'LOCATION_TIMEZONE_REQUIRED', field: 'locations.timezone', location_id: place.id } })
+    }
+    const calendar = slotCalendars(context.env, slots, rows.slice(recordQueries.length + metadata.queries.length)).get(productId)
+    if (!calendar) throw new HTTPError({ statusCode: 409, message: 'This offering has no session calendar', data: { code: 'NO_SESSION_CALENDAR', field: 'product.booking' } })
+    return { ...document, locations, calendar: { from: slots.fromInstant, to: slots.toInstant,
+      sessions: scheduleSessions(calendar, await calendar.places(), slots) } }
   } }
 }
 
-function prepareDashboardProductMetadata(organizationId: { sql: string }, productId: string, editor: boolean, concerns: { members?: boolean; scheduleLocation?: string; access?: boolean }) {
+function prepareDashboardProductMetadata(organizationId: { sql: string }, productId: string, editor: boolean, concerns: { members?: boolean; scheduleLocation?: string; access?: boolean; template?: boolean }) {
+  const template = concerns.template ? prepareAgreementTemplate(organizationId, productId) : null
   const members = concerns.members ? prepareMemberSchedulingList(organizationId, BATCH_VIEWER) : null
   const schedule = concerns.scheduleLocation ? availabilityRulesQuery(organizationId, productId, concerns.scheduleLocation) : null
   const access = concerns.access ? listingAccessGrantsQuery({ sql: `CASE WHEN ${roleMatchesSql(BATCH_VIEWER.role!, ['owner'])} THEN ${organizationId.sql} END` }, productId) : null
@@ -273,13 +288,13 @@ function prepareDashboardProductMetadata(organizationId: { sql: string }, produc
     queries: [...media.queries, ...links.queries, ...navigation?.queries ?? [], publishedHostProfilesQuery(organizationId, {
       query: `SELECT assigned_member_id FROM product_booking_configs WHERE organization_id = ${organizationId.sql} AND product_id = ? AND unit = 'nights'`,
       params: [productId],
-    }), ...members?.queries ?? [], ...(schedule ? [schedule] : []), ...(access ? [access] : [])],
+    }), ...members?.queries ?? [], ...(schedule ? [schedule] : []), ...(access ? [access] : []), ...(template ? [template.query] : [])],
     async read(rows: D1Result[], product: Product, locationId: string | null, context: ProductEditorContext) {
       const { env, db, organization } = context
       const organizationId = organization.id
       const canPreview = await roleAllows({ organizationId, role: organization.role, permissions: { content: ['read'] } })
       if (locationId !== null && !product.locations.some(entry => entry.location_id === locationId)) {
-        throw new HTTPError({ statusCode: 404, statusMessage: 'Product not found at this location' })
+        throw new HTTPError({ statusCode: 404, message: 'Product not found at this location', data: { code: 'PRODUCT_LOCATION_NOT_FOUND', field: 'location_id' } })
       }
       const [hydrated] = await hydrateProductMedia(db, organizationId, [product], media.read(rows.slice(0, mediaEnd), organizationId))
       const { publicUrl, publicUrls } = await links.read(rows.slice(mediaEnd, linksEnd), db, env, product, organization.default_currency)
@@ -297,10 +312,13 @@ function prepareDashboardProductMetadata(organizationId: { sql: string }, produc
         previewUrl = url.toString()
       }
       return { success: true as const, product: hydrated!,
-        ...(access && organization.role.split(',').includes('owner') ? { listing_access: { staff_access_writes: staffAccessWritesEnabled(env), grants: listingAccessGrantsFromRows(rows.at(-1)!.results) } } : {}),
+        ...(template ? { agreement_template_text: await template.read(env, rows.at(-1)!),
+          ...agreementTemplatePresentation(product.kind),
+        } : {}),
+        ...(access && organization.role.split(',').includes('owner') ? { listing_access: { staff_access_writes: staffAccessWritesEnabled(env), grants: listingAccessGrantsFromRows(rows[navigationEnd + 1 + (members?.queries.length ?? 0) + (schedule ? 1 : 0)]!.results) } } : {}),
         ...(members ? { member_options: members.read(rows.slice(navigationEnd + 1)) } : {}),
         ...(schedule ? { schedule: { location_id: concerns.scheduleLocation!, rules: rows[navigationEnd + 1 + (members?.queries.length ?? 0)]!.results as ProductAvailabilityRule[] } } : {}),
-        ...(editor ? { collections: product.stay ? details!.collections : [], preview_token: previewToken, locations: details!.locations, assigned_member_name: details!.assigned_member_name } : {}),
+        ...(editor ? { collections: product.stay ? details!.collections : [], preview_token: previewToken, locations: details!.locations, assigned_member_name: details!.assigned_member_name, pricing: details!.pricing, kind_options: details!.kind_options } : {}),
         public_url: publicUrl, public_urls: publicUrls, preview_url: previewUrl, host_profile_published: hostProfilePublished,
         offering: details?.offering ?? null }
     },

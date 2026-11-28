@@ -13,10 +13,11 @@
     :home-error="homesError ? getErrorMessage(homesError, 'The places to stay could not be loaded') : ''"
     :offerings-error="offeringsError"
   />
-  <CalendarPage v-else :key="productId ?? 'agenda'" :session-product="scoped?.product" :session-locations="scoped?.locations ?? []" :offerings-error="offeringsError" :can-create-stay="Boolean(homes?.manage && homes.homes.length)" :has-homes="Boolean(homes?.homes.length)" :has-places="places?.has_places === true" />
+  <CalendarPage v-else :key="productId ?? 'agenda'" :session-product="scoped?.product" :session-locations="scoped?.locations ?? []" :offerings-error="offeringsError" :can-create-stay="places?.calendar.can_create_stay === true" :has-homes="Boolean(homes?.homes.length)" :has-places="places?.has_places === true" :capabilities="places?.calendar" />
 </template>
 
 <script setup lang="ts">
+import { calendarCapabilitiesSchema, type CalendarCapabilities } from '~/shared/bookings'
 import CalendarPage from '~/components/dashboard/CalendarPage.vue'
 import StayNightCalendar from '~/components/dashboard/StayNightCalendar.vue'
 import type { StayHome } from '~/server/domain/stays'
@@ -47,11 +48,11 @@ const isHomes = (value: unknown): value is Homes => isRecord(value) && typeof va
 const [{ data: homes, error: homesError }, { data: places, error: placesError }] = await Promise.all([
   useAsyncData(
     () => `calendar-homes:${String(route.params.org_slug)}`,
-    () => dashboard.hasFeature('stays') ? api('/api/dashboard/stay-homes', { query: { view: 'calendar' }, validate: isHomes }) : Promise.resolve(null),
+    () => hasProductScope.value && dashboard.hasFeature('stays') ? api('/api/dashboard/stay-homes', { query: { view: 'calendar' }, validate: isHomes }) : Promise.resolve(null),
   ),
   useAsyncData(
     () => `calendar-places:${String(route.params.org_slug)}`,
-    () => api('/api/dashboard/bookings/calendar', { query: { view: 'scope' }, validate: (value): value is { has_places: boolean } => isRecord(value) && typeof value.has_places === 'boolean' }),
+    () => api('/api/dashboard/bookings/calendar', { query: { view: 'scope' }, validate: (value): value is { has_places: boolean; calendar: CalendarCapabilities } => isRecord(value) && typeof value.has_places === 'boolean' && calendarCapabilitiesSchema.safeParse(value.calendar).success }),
   ),
 ])
 const knownHome = computed(() => homes.value?.homes.find(home => home.product_id === productId.value))
@@ -59,12 +60,11 @@ const { data: scoped, error: productError, pending } = await useAsyncData(
   () => `calendar-offering:${organizationId}:${productId.value ?? ''}:${Boolean(knownHome.value)}`,
   async () => {
     if (!productId.value || knownHome.value || !canReadSessions.value) return null
-    const response = await api(`/api/editor/organizations/${organizationId}/products/${productId.value}`, { validate: (value): value is { product: Product } => isRecord(value) && isProduct(value.product) })
+    const response = await api(`/api/editor/organizations/${organizationId}/products/${productId.value}`, { query: { editor: '1' }, validate: (value): value is { product: Product; locations: DashboardLocation[] } => isRecord(value) && isProduct(value.product) && Array.isArray(value.locations) })
     const product = response.product
     if (product.kind === 'stay') return { product, locations: [] as DashboardLocation[] }
     if (!['experience', 'service'].includes(product.kind) || !product.booking) throw new Error('This offering has no session availability. Choose a configured experience or legal consultation.')
-    const locations = await api('/api/dashboard/locations', { query: { organization: 'true', status: 'all' }, validate: (value): value is { locations: DashboardLocation[] } => isRecord(value) && Array.isArray(value.locations) })
-    return { product, locations: locations.locations }
+    return { product, locations: response.locations }
   },
 )
 const scopePending = computed(() => hasProductScope.value && pending.value)

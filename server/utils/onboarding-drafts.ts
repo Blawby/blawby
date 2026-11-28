@@ -1,7 +1,7 @@
 import { platformLocale } from '~/shared/platform-locales'
 import { parseOpeningHours, parseSpecialHours, type OpeningHours, type SpecialHours } from '~/shared/reservation-hours'
 import type { OrganizationVertical } from '~/utils/vertical-copy'
-import { queryAll, queryFirst, type BatchQuery } from '~/server/db'
+import { executeBatch, queryFirst, type BatchQuery } from '~/server/db'
 import { creationRequestHash } from '~/server/utils/organization-events'
 import { isCurrencyCode } from '~/shared/currencies'
 import { isValidTimezone } from '~/utils/timezone'
@@ -37,12 +37,24 @@ export interface SavedOnboardingDraft {
 }
 
 export async function readActiveOnboardingDraft(db: D1Database, userId: string, includeAbandoned = false) {
-  const rows = await queryAll<SavedOnboardingDraft>(db,
-    "SELECT * FROM onboarding_drafts d WHERE user_id = ? AND (status = 'active' OR (status = 'abandoned' AND EXISTS (SELECT 1 FROM organization WHERE (id = d.organization_id OR COALESCE(json_extract(metadata, ?), json_extract(metadata, ?)) = d.id) AND onboarding_status <> 'active'))) ORDER BY created_at, id LIMIT 2", [userId, `$.${ONBOARDING_ORGANIZATION_MARKER}`, `$.${LEGACY_ONBOARDING_ORGANIZATION_MARKER}`])
-  if (rows.length > 1) throw new HTTPError({ statusCode: 409, statusMessage: 'More than one unfinished website draft needs recovery', data: { code: 'ONBOARDING_DRAFT_CONFLICT', draft_ids: rows.map(row => row.id) } })
-  const row = rows[0]
-  if (row?.status === 'abandoned' && !includeAbandoned) throw new HTTPError({ statusCode: 409, statusMessage: 'Website draft cleanup is incomplete. Retry discarding this draft.', data: { code: 'ONBOARDING_DRAFT_DISCARD_INCOMPLETE', draft_id: row.id, organization_id: row.organization_id } })
-  return row ?? null
+  const plan = prepareActiveOnboardingDraft(userId, includeAbandoned)
+  return plan.read((await executeBatch(db, [plan.query]))[0]!)
+}
+
+export function prepareActiveOnboardingDraft(user: string | BatchQuery, includeAbandoned = false) {
+  const id = typeof user === 'string' ? { query: '?', params: [user] } : user
+  return { query: { query: `SELECT d.*, o.id AS resolved_organization_id, o.subdomain AS resolved_subdomain FROM onboarding_drafts d
+    LEFT JOIN organization o ON o.id = d.organization_id AND o.subdomain = d.subdomain_candidate AND o.onboarding_status = 'pending'
+    WHERE d.user_id = ${id.query} AND (d.status = 'active' OR (d.status = 'abandoned' AND EXISTS (SELECT 1 FROM organization WHERE (id = d.organization_id OR COALESCE(json_extract(metadata, ?), json_extract(metadata, ?)) = d.id) AND onboarding_status <> 'active'))) ORDER BY d.created_at, d.id LIMIT 2`,
+    params: [...id.params ?? [], `$.${ONBOARDING_ORGANIZATION_MARKER}`, `$.${LEGACY_ONBOARDING_ORGANIZATION_MARKER}`] },
+    read(result: D1Result) {
+      const rows = result.results as Array<SavedOnboardingDraft & { resolved_organization_id: string | null; resolved_subdomain: string | null }>
+      if (rows.length > 1) throw new HTTPError({ statusCode: 409, statusMessage: 'More than one unfinished website draft needs recovery', data: { code: 'ONBOARDING_DRAFT_CONFLICT', draft_ids: rows.map(row => row.id) } })
+      const row = rows[0]
+      if (row?.status === 'abandoned' && !includeAbandoned) throw new HTTPError({ statusCode: 409, statusMessage: 'Website draft cleanup is incomplete. Retry discarding this draft.', data: { code: 'ONBOARDING_DRAFT_DISCARD_INCOMPLETE', draft_id: row.id, organization_id: row.organization_id } })
+      return row ?? null
+    },
+  }
 }
 
 /** The batch must still belong to this unfinished draft revision. */
@@ -160,18 +172,13 @@ export function firstMenuSetupApplies(payload: OnboardingDraftPayload): boolean 
 type FirstMenuSkips = { price?: true; photo?: true; description?: true }
 type FirstMenuSkipsByDish = Record<string, FirstMenuSkips>
 
-export function firstMenuSkipsByDish(skips: OnboardingDraftPayload['first_menu_skips']): FirstMenuSkipsByDish | undefined {
-  if (!skips) return undefined
-  const legacy = (value: NonNullable<typeof skips>): value is FirstMenuSkips & { dish_id: string } => typeof value.dish_id === 'string'
-  return legacy(skips) ? { [skips.dish_id]: skips } : skips
-}
 
 export interface OnboardingDraftPayload {
   version: 3
   partial?: false
   timezone_step_visited?: boolean
   first_menu_section_ids?: Record<string, string>
-  first_menu_skips?: FirstMenuSkipsByDish | (FirstMenuSkips & { dish_id: string })
+  first_menu_skips?: FirstMenuSkipsByDish
   first_experience_photo_skipped?: string
   first_experience_venue_address?: {
     product_id: string

@@ -478,7 +478,7 @@ export interface OrganizationSettingsForm {
   seo_title: string
   seo_description: string
   canonical_url: string
-  native_consultations: boolean
+  consultation_mode: OrganizationSettingsResponse['consultation_mode']
   stay_confirmation_mode: LodgingConfirmationMode | null
 }
 
@@ -500,13 +500,16 @@ export interface OrganizationSettingsResponse {
   contact_email?: string | null
   palette: SitePalette | null
   palette_source: 'custom' | 'default' | null
-  font_preset?: OrganizationFontPreset
+  font_preset: OrganizationFontPreset
   default_currency: string
   seo_title: string | null
   seo_description: string | null
   canonical_url: string | null
   /** Null when the organization has no consultation settings, so no website booking to switch. */
   consultation_mode: 'native' | 'external_url' | 'native_disabled' | null
+  display: WebsiteSettingsDisplay
+  consultation_choices: Array<{ value: NonNullable<OrganizationSettingsResponse['consultation_mode']>; label: string; description: string }> | null
+  font_choices: Array<{ value: OrganizationFontPreset; label: string }>
   lodging_booking?: LodgingBookingPolicy
   lodging_booking_choices?: LodgingBookingChoice[]
   inquiry_questions: FormQuestion[]
@@ -542,9 +545,10 @@ export interface OrganizationSettingsEditor {
   paletteSource: ComputedRef<'custom' | 'default' | null>
   /** Returns the site to the default colors. */
   resetPalette: () => Promise<void>
-  /** The saved website booking mode, or null where the organization has no consultation settings. */
-  consultationMode: ComputedRef<OrganizationSettingsResponse['consultation_mode']>
   lodgingBookingChoices: ComputedRef<LodgingBookingChoice[]>
+  consultationChoices: ComputedRef<NonNullable<OrganizationSettingsResponse['consultation_choices']>>
+  bookingTitle: ComputedRef<string | undefined>
+  fontChoices: ComputedRef<OrganizationSettingsResponse['font_choices']>
   /** The saved logo assets' URLs, for previews before a new pick is saved. */
   mediaSummary: (assetId: string | null) => NonNullable<OrganizationSettingsResponse['media']>[number] | null
   revert: () => void
@@ -563,15 +567,14 @@ import DashboardResourceLocalization from '~/components/dashboard/DashboardResou
 import EditorNavigationList, { type EditorNavigationItem } from '~/components/dashboard/EditorNavigationList.vue'
 import { isLodgingConfirmationMode, type LodgingBookingChoice, type LodgingBookingPolicy, type LodgingConfirmationMode } from '~/shared/lodging-booking'
 import { isCurrencyCode } from '~/shared/currencies'
-import { ORGANIZATION_FONT_OPTIONS, isOrganizationFontPreset, resolveOrganizationFontPreset } from '~/shared/organization-fonts'
+import { isOrganizationFontPreset } from '~/shared/organization-fonts'
 import { parseSitePalette } from '~/shared/site-palette'
 import { getErrorMessage } from '~/utils/errors'
 import { needsWebsiteSettings } from '~/utils/dashboard-document'
 import { businessChanged } from '~/composables/useDashboardInvalidations'
 import { LOGO_SLOTS, ORIGINAL_LOGO_PRESENTATION } from '~/shared/media-placement-contract'
 import { isTenantPageListResponse, websiteSettingsKey, type PageTask, type TenantPageListRow } from '~/composables/useTenantPageDraft'
-import { getVerticalLabel } from '~/utils/vertical-copy'
-import { websitePreferencesRows } from '~/shared/organization-settings'
+import { websitePreferencesRows, type WebsiteSettingsDisplay } from '~/shared/organization-settings'
 
 const PageTasksModal = defineAsyncComponent(() => import('~/components/dashboard/PageTasksModal.vue'))
 
@@ -623,6 +626,7 @@ interface SettingsPageResource {
 
 const isSettingsResponse = (value: unknown): value is { success: boolean; settings: OrganizationSettingsResponse } =>
   isRecord(value) && typeof value.success === 'boolean' && isRecord(value.settings)
+  && isRecord(value.settings.display) && [value.settings.display.status_label, value.settings.display.font_label, value.settings.display.vertical_label, value.settings.display.booking_title, value.settings.display.booking_summary].every(field => typeof field === 'string' && field.length > 0)
   && typeof value.settings.id === 'string' && typeof value.settings.name === 'string'
   && typeof value.settings.timezone === 'string' && typeof value.settings.default_currency === 'string'
   && (value.settings.subdomain === null || typeof value.settings.subdomain === 'string')
@@ -634,7 +638,9 @@ const isSettingsResponse = (value: unknown): value is { success: boolean; settin
     && (item.kind === null || typeof item.kind === 'string'))
   && (value.settings.social_card_refresh === null || isOrganizationSocialCardRefresh(value.settings.social_card_refresh))
   && (value.settings.announcement === null || (isRecord(value.settings.announcement) && typeof value.settings.announcement.headline === 'string'))
-  && (value.settings.font_preset === undefined || isOrganizationFontPreset(value.settings.font_preset))
+  && Array.isArray(value.settings.font_choices) && value.settings.font_choices.every(item => isRecord(item) && isOrganizationFontPreset(item.value) && typeof item.label === 'string')
+  && (value.settings.consultation_choices === null || (Array.isArray(value.settings.consultation_choices) && value.settings.consultation_choices.every(item => isRecord(item) && ['native', 'native_disabled', 'external_url'].includes(String(item.value)) && typeof item.label === 'string' && typeof item.description === 'string')))
+  && isOrganizationFontPreset(value.settings.font_preset)
   && (value.settings.palette === null || isRecord(value.settings.palette))
   && (value.settings.default_currency === undefined || value.settings.default_currency === null || typeof value.settings.default_currency === 'string')
   && (value.settings.vertical !== 'lodging' || (
@@ -666,17 +672,13 @@ const form = reactive<OrganizationSettingsForm>({
   logoAssetId: null, logoPresentation: ORIGINAL_LOGO_PRESENTATION, logoDarkAssetId: null, logoDarkPresentation: ORIGINAL_LOGO_PRESENTATION,
   faviconAssetId: null, socialShareAssetId: null, contact_email: '', palette: null, font_preset: 'default',
   default_currency: null, status: 'inactive',
-  seo_title: '', seo_description: '', canonical_url: '', native_consultations: false, stay_confirmation_mode: null,
+  seo_title: '', seo_description: '', canonical_url: '', consultation_mode: null, stay_confirmation_mode: null,
 })
 
 const statusModalOpen = ref(false)
 const togglingStatus = ref(false)
 const isPublished = computed(() => form.status === 'active')
-const statusLabel = computed(() => {
-  if (form.status === 'active') return 'Published'
-  if (form.status === 'suspended') return 'Suspended'
-  return 'Draft'
-})
+const statusLabel = computed(() => loadedSettings.value?.display.status_label)
 const statusDotClass = computed(() => {
   if (form.status === 'active') return 'bg-success'
   if (form.status === 'suspended') return 'bg-error'
@@ -718,7 +720,7 @@ const brandItems = computed<EditorNavigationItem[]>(() => [
   { id: 'announcement', label: 'Announcement', summary: loadedSettings.value?.announcement?.enabled ? explicitSummary(loadedSettings.value.announcement.headline) : 'Off', icon: 'i-lucide-megaphone', to: `${brandPath.value}/announcement` },
   // Every customer site has its colors; Blawby's own site keeps fixed ones.
   ...(loadedSettings.value?.palette ? [{ id: 'color', label: 'Colors', summary: paletteSource.value === 'custom' ? 'Your colors' : 'Default colors', icon: 'i-lucide-palette', to: `${brandPath.value}/color` }] : []),
-  { id: 'font', label: 'Website font', summary: ORGANIZATION_FONT_OPTIONS.find(option => option.value === loadedSettings.value?.font_preset)?.label ?? 'Default', icon: 'i-lucide-type', to: `${brandPath.value}/font` },
+  { id: 'font', label: 'Website font', summary: loadedSettings.value?.display.font_label, icon: 'i-lucide-type', to: `${brandPath.value}/font` },
   { id: 'favicon', label: 'Favicon', summary: loadedSettings.value?.media?.some(item => item.slot === 'favicon') ? 'Icon selected' : 'Not set', icon: 'i-lucide-globe', to: `${brandPath.value}/favicon` },
   { id: 'sharing-image', label: 'Social sharing image', summary: loadedSettings.value?.media?.some(item => item.slot === 'social_share') ? 'Image selected' : 'Not set', icon: 'i-lucide-share-2', to: `${brandPath.value}/sharing-image` },
   { id: 'translations', label: 'Translations', summary: 'Translate the brand name and description', icon: 'i-lucide-languages', to: `${brandPath.value}?editMode=translations` },
@@ -786,30 +788,8 @@ function contentSubtitle(card: ContentCard) {
 
 const settingsItems = computed<EditorNavigationItem[]>(() => [])
 
-const bookingCardTitle = computed(() => {
-  const v = loadedSettings.value?.vertical || dashboard.organization.value?.vertical
-  if (v === 'service') return 'Consultation settings'
-  if (v === 'restaurant') return 'Reservation settings'
-  return 'Booking settings'
-})
-
-const bookingCardSubtitle = computed(() => {
-  const v = loadedSettings.value?.vertical || dashboard.organization.value?.vertical
-  if (v === 'service') {
-    return form.native_consultations
-      ? 'Accepting consultation requests online'
-      : 'Inquiries only (offline scheduling)'
-  }
-  if (v === 'lodging') {
-    const settings = loadedSettings.value
-    return settings?.lodging_booking_choices?.find(choice => choice.value === settings.lodging_booking?.confirmation_mode)?.label
-  }
-  const questionsCount = loadedSettings.value?.inquiry_questions?.length ?? 0
-  if (questionsCount > 0) {
-    return `${questionsCount} intake ${questionsCount === 1 ? 'question' : 'questions'} configured`
-  }
-  return 'Contact fields only'
-})
+const bookingCardTitle = computed(() => loadedSettings.value?.display.booking_title)
+const bookingCardSubtitle = computed(() => loadedSettings.value?.display.booking_summary)
 
 const brandLogoUrl = computed(() => {
   if (form.logoAssetId) return mediaSummary(form.logoAssetId)?.public_url ?? null
@@ -824,10 +804,7 @@ const brandName = computed(() =>
 
 const brandInitial = computed(() => brandName.value.charAt(0).toUpperCase())
 
-const brandVerticalLabel = computed(() => {
-  const v = loadedSettings.value?.vertical || dashboard.organization.value?.vertical || 'restaurant'
-  return getVerticalLabel(v)
-})
+const brandVerticalLabel = computed(() => loadedSettings.value?.display.vertical_label)
 
 const brandReviewsCount = computed(() => loadedSettings.value?.reviews_count ?? 0)
 
@@ -883,7 +860,7 @@ function editorSignature(key: string | null) {
     case 'currency': return JSON.stringify(form.default_currency)
     case 'status': return JSON.stringify(form.status)
     case 'search': return JSON.stringify([form.seo_title, form.seo_description, form.canonical_url])
-    case 'booking': return JSON.stringify([form.native_consultations, form.stay_confirmation_mode])
+    case 'booking': return JSON.stringify([form.consultation_mode, form.stay_confirmation_mode])
     default: return ''
   }
 }
@@ -945,7 +922,7 @@ function fillForm(settings: OrganizationSettingsResponse) {
   form.socialShareAssetId = settings.media?.find(item => item.slot === 'social_share')?.asset_id ?? null
   form.contact_email = settings.contact_email ?? ''
   form.palette = settings.palette && structuredClone(settings.palette)
-  form.font_preset = resolveOrganizationFontPreset(settings.font_preset)
+  form.font_preset = settings.font_preset
   // A stored value that is not a supported code is not this form's to reinterpret:
   // showing it as USD invited the owner to save that over whatever is really there.
   form.default_currency = isCurrencyCode(settings.default_currency) ? settings.default_currency : null
@@ -953,7 +930,7 @@ function fillForm(settings: OrganizationSettingsResponse) {
   form.seo_title = settings.seo_title ?? ''
   form.seo_description = settings.seo_description ?? ''
   form.canonical_url = settings.canonical_url ?? ''
-  form.native_consultations = settings.consultation_mode === 'native'
+  form.consultation_mode = settings.consultation_mode
   form.stay_confirmation_mode = settings.lodging_booking?.confirmation_mode ?? null
 }
 function resetDraft() {
@@ -984,15 +961,18 @@ watch(detailKey, () => resetDraft())
 
 async function patchSettings(body: Record<string, unknown>) {
   const response = await dashboardApi<{ success: boolean; settings: OrganizationSettingsResponse }>('/api/dashboard/settings', { method: 'PATCH', body, validate: isSettingsResponse })
+  applySettings(response.settings)
+}
+
+function applySettings(saved: OrganizationSettingsResponse) {
   // Website and Brand read the same settings resource; writing the response
   // through it keeps the other list's rows on the saved values.
   if (settingsResource.value) {
-    settingsResource.value = { ...settingsResource.value, settings: response.settings }
+    settingsResource.value = { ...settingsResource.value, settings: saved }
     const held = realtime.held.begin(`website:${settingsResourceKey.value}`, businessChanged)
     realtime.held.hold(held, settingsResource.value, Date.now() + 30_000, 16)
   }
   const current = dashboard.state.value
-  const saved = response.settings
   if (current?.organization.id === saved.id) {
     useNuxtData<NonNullable<typeof current>>(dashboard.contextKey.value).data.value = { ...current, organization: {
       ...current.organization, name: saved.name, status: saved.status,
@@ -1082,13 +1062,13 @@ async function saveCurrentEditor() {
           await patchSettings({ lodging_booking: { confirmation_mode: form.stay_confirmation_mode } })
           break
         }
-        const current = loadedSettings.value?.consultation_mode
-        if (!current) throw new Error('This website has no booking to switch.')
+        const mode = form.consultation_mode
+        if (!mode) throw new Error('This website has no booking to switch.')
         // The one writer of the consultation mode, shared with MCP's set_consultation_mode.
-        await dashboardApi(`/api/editor/organizations/${organizationId}/consultation`, {
-          method: 'PUT', body: { mode: form.native_consultations ? 'native' : current === 'native' ? 'native_disabled' : current }, validate: isRecord,
+        const saved = await dashboardApi(`/api/editor/organizations/${organizationId}/consultation`, {
+          method: 'PUT', query: { view: 'settings' }, body: { mode }, validate: (value): value is { settings: OrganizationSettingsResponse } => isSettingsResponse({ ...(isRecord(value) ? value : {}), success: true }),
         })
-        await refreshSettings()
+        applySettings(saved.settings)
         break
       }
     }
@@ -1116,7 +1096,9 @@ provide(organizationSettingsEditorKey, {
   vertical: computed(() => loadedSettings.value?.vertical ?? dashboard.organization.value?.vertical ?? null),
   paletteSource,
   resetPalette,
-  consultationMode: computed(() => loadedSettings.value?.consultation_mode ?? null),
+  consultationChoices: computed(() => loadedSettings.value?.consultation_choices ?? []),
+  bookingTitle: bookingCardTitle,
+  fontChoices: computed(() => loadedSettings.value?.font_choices ?? []),
   lodgingBookingChoices: computed(() => loadedSettings.value?.lodging_booking_choices ?? []),
   mediaSummary,
   // A cancelled leaf puts the loaded settings back before it closes.

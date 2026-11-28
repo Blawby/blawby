@@ -45,23 +45,23 @@
 </template>
 
 <script setup lang="ts">
-import type { Offer } from '~/shared/offers'
+import { offerDestination, offerPlanName as planName, offerSummary, type Offer } from '~/shared/offers'
 import { PAID_PLAN_PRICES, SERVICES } from '~/shared/billing-model'
 
 const props = defineProps<{
   offer: Offer
   /** The card's second line; the offer's own line when the surface has nothing more specific to say. */
   summary?: string
+  to?: string
 }>()
 
 const dashboard = useDashboardOrganization()
 const route = useRoute()
 const open = ref(false)
 const base = computed(() => `/dashboard/${encodeURIComponent(String(route.params.org_slug))}`)
-const planName = (plan: string) => plan.charAt(0).toUpperCase() + plan.slice(1)
-const summary = computed(() => props.summary ?? ('plan' in props.offer.unlock ? `${props.offer.name} comes with ${planName(props.offer.unlock.plan)}.` : props.offer.line))
+const summary = computed(() => props.summary ?? offerSummary(props.offer))
 // The offered plan travels to the upgrade leaf, so a Starter organization following a Business offer is not handed Growth.
-const actionTo = computed(() => 'plan' in props.offer.unlock ? `${base.value}/billing/upgrade?plan=${props.offer.unlock.plan}` : `${base.value}/${props.offer.path}`)
+const actionTo = computed(() => props.to ?? offerDestination(props.offer, base.value))
 const actionLabel = computed(() => 'plan' in props.offer.unlock ? `Upgrade to ${planName(props.offer.unlock.plan)}` : `See ${props.offer.name.toLowerCase()}`)
 const priceLine = computed(() => {
   const unlock = props.offer.unlock

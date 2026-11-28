@@ -557,7 +557,7 @@ function stayHomeQueries(organization: BatchQuery, product: string | BatchQuery 
            c.listing_type, c.total_floors, c.listing_floor, c.year_built, c.property_size, c.property_size_unit, c.bedrooms, c.beds, c.bathrooms, c.amenities,
            b.cancellation_policy, b.long_term_cancellation_policy, c.check_in_method, c.check_in_instructions, c.wifi_network, c.wifi_password,
            p.tax_code, b.advance_notice_minutes, b.party_size_min, b.party_size_max, b.minimum_guest_age, b.accessibility_contact_required,
-           c.directions, c.house_manual, c.checkout_instructions, json_array_length(c.turnover_checklist) AS turnover_checklist_items, b.assigned_member_id, assigned_user.name AS assigned_member_name, b.questions,
+           c.directions, c.house_manual, c.checkout_instructions, json_array_length(c.turnover_checklist) AS turnover_checklist_items, assigned_member.id AS assigned_member_id, assigned_user.name AS assigned_member_name, b.questions,
            EXISTS(SELECT 1 FROM member_scheduling ms WHERE ms.organization_id = c.organization_id
              AND ms.member_id = b.assigned_member_id AND ${PUBLISHED_PROFILE_SQL}) AS host_profile_published,
            COALESCE((SELECT pp.published FROM product_publications pp WHERE pp.organization_id = c.organization_id AND pp.product_id = c.product_id), 0) AS published,
@@ -595,7 +595,8 @@ async function stayHomeRows(db: DbClient, organizationId: string, productId: str
 /** Homes from their rows and prices, each checked as it is read. */
 function stayHomesFrom(rows: Array<Record<string, unknown>>, prices: Array<Price & { product_id: string }>): StayHomeCore[] {
   return rows.map((row) => {
-    if (row.assigned_member_id !== null && (typeof row.assigned_member_name !== 'string' || !row.assigned_member_name.trim())) fail(409, 'INVALID_HOME_RESPONSIBILITY', 'The assigned host could not be read', 'assigned_member_id')
+    // A member who has left is nobody's responsibility; the stored id waits for reconcileResponsibilities to release it.
+    if (row.assigned_member_id !== null && (typeof row.assigned_member_name !== 'string' || !row.assigned_member_name.trim())) fail(409, 'INVALID_HOME_RESPONSIBILITY', 'The assigned member has no name', 'assigned_member_id')
     if (typeof row.internal_name !== 'string' || !row.internal_name.trim()) throw new Error(`Home ${row.product_id} has no internal name`)
     const variants = JSON.parse(String(row.variant_ids)) as string[]
     if (variants.length !== 1) throw new Error(`Home ${row.product_id} has ${variants.length} variants; a home has exactly one`)

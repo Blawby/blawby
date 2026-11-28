@@ -413,7 +413,8 @@ test('members talk in team conversations, see unread state and receive recorded 
     await db.prepare("DELETE FROM member WHERE id = 'm-cook'").run()
     // An edit that leaves responsibility alone saves while the departed assignee is still recorded, and keeps it for reconciliation to release.
     await updateStayHome(env, db, manager, cabin.id, { max_guests: 4 })
-    assert.equal(await assignee(), 'm-cook')
+    assert.equal(await assignee(), null, 'a departed assignee reads as nobody')
+    assert.equal(await db.prepare('SELECT assigned_member_id FROM product_booking_configs WHERE product_id = ?').bind(cabin.id).first('assigned_member_id'), 'm-cook')
     await reconcileResponsibilities(env, db, { organizationId: ORG })
     assert.equal(await assignee(), null)
     // A home nobody looks after takes no booking-setting edit until someone is given it.

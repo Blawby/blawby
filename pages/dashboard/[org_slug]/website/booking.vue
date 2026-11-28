@@ -1,5 +1,6 @@
 <template>
   <DashboardLeafPanel
+    v-if="panelTitle"
     id="organization-website-booking"
     :title="panelTitle"
     :saving="editor.saving.value"
@@ -30,7 +31,7 @@
     </template>
 
     <URadioGroup
-      v-else-if="isService"
+      v-else-if="isService && editor.form.consultation_mode"
       v-model="editor.form.consultation_mode"
       :items="editor.consultationChoices.value"
       :aria-label="panelTitle"

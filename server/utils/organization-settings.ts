@@ -174,8 +174,8 @@ export function prepareSettingsPayload(organizationId: string | { sql: string },
     const updatedOrganization = organization!.results[0] as FullOrganizationRow & ConfigRow | undefined
     if (!updatedOrganization) throw new HTTPError({ statusCode: 404, statusMessage: 'Organization not found' })
     const id = updatedOrganization.id
+    if (updatedOrganization.font_preset_type !== null && !isOrganizationFontPreset(updatedOrganization.font_preset)) throw new HTTPError({ statusCode: 409, message: 'The website font is invalid', data: { code: 'INVALID_WEBSITE_SETTINGS', field: 'font_preset' } })
     const siteConfig = parseConfig(updatedOrganization)
-    if (siteConfig.font_preset !== undefined && !isOrganizationFontPreset(siteConfig.font_preset)) throw new HTTPError({ statusCode: 409, message: 'The website font is invalid', data: { code: 'INVALID_WEBSITE_SETTINGS', field: 'font_preset' } })
     const font_preset = resolveOrganizationFontPreset(siteConfig.font_preset)
     const site = resolvePublicSite({ themeId: updatedOrganization.theme_id }).slug
     const isLegal = isLegalPracticeSite({ vertical: updatedOrganization.vertical, themeId: updatedOrganization.theme_id })

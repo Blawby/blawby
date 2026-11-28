@@ -298,6 +298,7 @@ export class ChannexConnection {
     const rows = context.connections
     const mappings = context.mappings
     const connections = await Promise.all(rows.map(async row => {
+      if (row.status === 'connected' && (!row.channel_id || !row.group_id)) throw new HTTPError({ statusCode: 409, message: 'The connected Airbnb account has no recorded channel or group', data: { code: 'AIRBNB_CONNECTION_INVALID', field: !row.channel_id ? 'channel_id' : 'group_id' } })
       const channel = row.status === 'connected' && row.channel_id ? await this.channel(row, row.channel_id, mappings, context.properties) : null
       if (channel && row.channel_id) verified?.set(row.channel_id, channel)
       return { ...this.statusOf(row, channel), channel_id: row.channel_id }
@@ -320,11 +321,7 @@ export class ChannexConnection {
     const verified = new Map<string, Awaited<ReturnType<ChannexConnection['channel']>>>()
     const connection = await this.status(context, verified)
     if (connection.status !== 'connected') return { connection, inventory: null, inventory_error: null }
-    try {
-      return { connection, inventory: await this.listings(context, verified), inventory_error: null }
-    } catch (cause) {
-      return { connection, inventory: null, inventory_error: cause instanceof Error ? cause.message : String(cause) }
-    }
+    return { connection, inventory: await this.listings(context, verified), inventory_error: null }
   }
 
   private async ensureGroup(): Promise<string> {
@@ -486,7 +483,7 @@ export class ChannexConnection {
     [this.organizationId, d1JsonStringSet(missing.map(mapping => mapping.product_id))]) : [])
     const missing_listings = missing.map((mapping) => {
       const internal_name = homes.find(home => home.product_id === mapping.product_id)?.internal_name
-      if (!internal_name?.trim()) throw new Error(`Home ${mapping.product_id} has no internal name`)
+      if (!internal_name?.trim()) throw new HTTPError({ statusCode: 409, message: `Home ${mapping.product_id} has no internal name`, data: { code: 'AIRBNB_HOME_INVALID', field: 'inventory.missing_listings.internal_name', product_id: mapping.product_id } })
       return { listing_id: mapping.listing_id, product_id: mapping.product_id, internal_name }
     })
     return { listings, missing_listings }

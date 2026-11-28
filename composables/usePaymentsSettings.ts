@@ -1,7 +1,7 @@
 import type { Plan } from '~/server/utils/billing-plans'
 import type { StripeConnectedAccount, StripeConnectStatus, StripeCapabilityStatus, StripeConnectRequirement } from '~/server/utils/stripe-connect'
 import type { ConnectPayoutMethod } from '~/server/api/dashboard/connect/index.get'
-import { isKnownBillingPlan, isNewSalePlan, type billingPlanActions } from '~/shared/billing-model'
+import { isKnownBillingPlan, isNewSalePlan, type billingPlanActions, type billingServiceScreen } from '~/shared/billing-model'
 import { isCurrencyCode } from '~/shared/currencies'
 import { isUnpaidList } from '~/shared/unpaid'
 import { businessChanged, useDashboardInvalidations } from '~/composables/useDashboardInvalidations'
@@ -65,13 +65,24 @@ export function useHomesQuote(organizationId: string, adding: MaybeRefOrGetter<n
 export type Strategy = { item_id: string; amount: number; currency: string; interval: string; since: string }
 export type Services = { managed_ads: { id: string; agreed_at: string } | null; strategy: Strategy | null }
 const isStrategy = (value: unknown): value is Strategy => isRecord(value) && typeof value.item_id === 'string' && Number.isSafeInteger(value.amount) && isCurrencyCode(value.currency) && typeof value.since === 'string'
-type ServicesContract = { success: true; services: Services; requirements?: { strategy?: { paid_plan: boolean } } }
+type ServicesContract = { success: true; services: Services; requirements?: Partial<Record<'managed_ads' | 'strategy', Record<string, boolean>>>; screen?: ReturnType<typeof billingServiceScreen>; plan_review?: unknown; can_update?: boolean }
 export const isServices = (value: unknown): value is ServicesContract => isRecord(value) && value.success === true && isRecord(value.services) && (value.services.managed_ads === null || (isRecord(value.services.managed_ads) && typeof value.services.managed_ads.agreed_at === 'string')) && (value.services.strategy === null || isStrategy(value.services.strategy))
 
-export async function useOrganizationServices(requirements?: 'strategy') {
+export async function useOrganizationServices(requirements?: 'managed_ads' | 'strategy') {
   const route = useRoute()
   const dashboardApi = useDashboardApi()
-  const { data, error, refresh } = await useAsyncData(`dashboard-services:${String(route.params.org_slug)}:${requirements ?? 'state'}`, () => dashboardApi('/api/dashboard/services', { query: requirements ? { requirements } : undefined, validate: (value): value is ServicesContract => isServices(value) && (requirements === undefined || (isRecord(value) && isRecord(value.requirements) && isRecord(value.requirements.strategy) && typeof value.requirements.strategy.paid_plan === 'boolean')) }))
+  const { data, error, refresh } = await useAsyncData(`dashboard-services:${String(route.params.org_slug)}:${requirements ?? 'state'}`, () => dashboardApi('/api/dashboard/services', {
+    query: requirements ? { requirements, view: 'screen' } : undefined,
+    validate: (value): value is ServicesContract => {
+      if (!isServices(value)) return false
+      if (!requirements) return true
+      if (!isRecord(value.screen) || typeof value.can_update !== 'boolean' || !('plan_review' in value) || !(value.plan_review === null || isBillingResponse(value.plan_review))) return false
+      const screen = value.screen
+      if (!Array.isArray(screen.requirements) || !screen.requirements.every(row => isRecord(row) && typeof row.id === 'string' && typeof row.label === 'string' && typeof row.met === 'boolean') || typeof screen.can_agree !== 'boolean' || typeof screen.can_end !== 'boolean') return false
+      const next = screen.next_action
+      return next === null || (isRecord(next) && ['connect_google_ads', 'review_plan', 'payment_method'].includes(String(next.id)) && typeof next.label === 'string' && typeof next.detail === 'string' && (next.to === null || typeof next.to === 'string'))
+    },
+  }))
   // Unknown until read: a failed read shows its error and offers no service action.
   return { servicesResource: data, services: computed(() => data.value?.services), servicesError: error, refreshServices: refresh }
 }

@@ -1,5 +1,5 @@
 import type { Plan } from '~/server/api/billing/plans.get'
-import { formatPlanPrice } from '~/shared/billing-model'
+import { formatPlanPrice, formatPlanRecurring } from '~/shared/billing-model'
 
 export type { Plan, PlanPrice, PlanLimits } from '~/server/api/billing/plans.get'
 
@@ -56,10 +56,7 @@ export const usePlans = async (provided?: () => Plan[] | undefined) => {
   const formatPrice = formatPlanPrice
 
   /** A monthly charge in Stripe's pricing phrasing: "$49/mo", "$2,000/mo". The catalog sells in USD only, monthly only. */
-  function formatRecurring(cents: number, currency: string): string {
-    if (currency.toUpperCase() !== 'USD') throw new Error(`Plan prices are sold in USD, not ${currency}`)
-    return `${formatPrice(cents)}/mo`
-  }
+  const formatRecurring = formatPlanRecurring
 
   /**
    * What this plan charges each month, as Stripe returned it — or null when

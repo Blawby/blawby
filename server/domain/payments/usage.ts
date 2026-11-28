@@ -1,3 +1,4 @@
+import type Stripe from 'stripe'
 import { HTTPError } from 'nitro'
 import { execute, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
 import { getOrganizationBillingStatus, getStripe } from '~/server/utils/billing'
@@ -106,6 +107,11 @@ export async function paymentsUsage(db: DbClient, env: CloudflareEnv, organizati
   if (billing.plan !== BUSINESS_PLAN_ID) return { configured: false, pricing: null, pending, source: 'Stripe', refreshed_at }
   if (!billing.stripeSubscriptionId) throw new HTTPError({ statusCode: 409, statusMessage: 'Business subscription is missing', data: { code: 'PAYMENT_PRICING_UNAVAILABLE', field: 'stripeSubscriptionId' } })
   const subscription = await getStripe(env).subscriptions.retrieve(billing.stripeSubscriptionId, { expand: ['items.data.price.product'] })
+  return { configured: true, pricing: paymentUsagePricing(subscription), pending, source: 'Stripe', refreshed_at }
+}
+
+/** The metered price terms shared by Payments usage and service eligibility. */
+export function paymentUsagePricing(subscription: Stripe.Subscription) {
   planSubscriptionItem(subscription)
   const rate = (key: BillingMeterKey): number | null => {
     const item = subscription.items.data.find(row => typeof row.price.product !== 'string' && !row.price.product.deleted && row.price.product.metadata.product_family === key)
@@ -120,8 +126,6 @@ export async function paymentsUsage(db: DbClient, env: CloudflareEnv, organizati
   const adSpend = rate('ad_spend')
   if (capturedVolume === null || stripeCost === null) throw new HTTPError({ statusCode: 502, statusMessage: 'The subscription is missing required payment prices', data: { code: 'PAYMENT_PRICING_INVALID', field: capturedVolume === null ? 'captured_volume' : 'stripe_cost' } })
   return {
-    configured: true,
-    pricing: {
       currency: 'USD' as const,
       units: 'cents' as const,
       captured_volume_rate: capturedVolume,
@@ -130,9 +134,5 @@ export async function paymentsUsage(db: DbClient, env: CloudflareEnv, organizati
       ad_spend_rate: adSpend,
       ad_spend_rate_percent: adSpend === null ? null : ratePercent(adSpend),
       livemode: subscription.livemode,
-    },
-    pending,
-    source: 'Stripe',
-    refreshed_at,
   }
 }

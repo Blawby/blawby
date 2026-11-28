@@ -1,3 +1,7 @@
+import { prepareServices, type ServiceAgreement } from '~/server/utils/organization-services'
+import { strategyFromSubscription } from '~/server/utils/strategy-service'
+import { listCustomerCards } from '~/server/utils/billing-customer'
+import { getCachedPlans } from '~/server/utils/billing-plans'
 import type Stripe from 'stripe'
 import { HTTPError } from 'nitro';
 import { executeBatch, queryAll, queryFirst, type BatchQuery, type DbClient } from '~/server/db'
@@ -6,13 +10,46 @@ import { hasPermission } from 'better-auth/plugins'
 import { organizationAdapter } from '~/server/utils/member-access'
 import { getPlanEntitlements, type EntitlementsMap } from '~/server/utils/billing-entitlements'
 import { entitlingSubscription, getOrganizationEntitlements, planFromSubscriptions, prepareOrganizationSubscriptionTerms, readOrganizationSubscriptions, type OrganizationSubscriptionTerms } from '~/server/utils/billing-access'
-import { BASIC_HOMES, BILLING_METER_KEYS, isKnownRecurringPlan, type BillingMeterKey } from '~/shared/billing-model'
+import { BASIC_HOMES, BILLING_METER_KEYS, isKnownRecurringPlan, billingPlanActions, SERVICES as offers, type BillingMeterKey } from '~/shared/billing-model'
 import { isCurrencyCode, type CurrencyCode } from '~/shared/currencies'
 import { createStripeClient } from '~/server/utils/stripe-client'
 import { stripeMeterContract, reportStripeMeterUsage } from '~/server/utils/stripe-meter-usage'
 import { createStripePlanLoader } from '~/server/utils/better-auth-stripe'
 import { planSubscriptionItem, recurringPriceAmount } from '~/server/utils/stripe-catalog'
-import { organizationAccessControl, organizationRoles } from '~/utils/organization-access'
+import { organizationAccessControl, organizationRoles, roleMatchesSql } from '~/utils/organization-access'
+
+/** Plan and billing's full screen, reused by a service's permitted plan review. */
+export function prepareOrganizationBillingScreen(organization: string | { sql: string }) {
+  const plan = prepareOrganizationBillingStatus(organization)
+  const services = prepareServices(organization)
+  const queries = [...plan.queries, services.query, {
+    query: `SELECT u.name,u.email FROM member m JOIN user u ON u.id=m.userId WHERE m.organizationId=${typeof organization === 'string' ? '?' : organization.sql} AND ${roleMatchesSql('m.role', ['owner'])} ORDER BY m.id`,
+    params: typeof organization === 'string' ? [organization] : [],
+  }]
+  return { queries,
+    status: (rows: D1Result[], organizationId: string) => plan.read(rows.slice(0, plan.queries.length), organizationId),
+    services: (rows: D1Result[]) => rows[plan.queries.length]!.results as ServiceAgreement[],
+    async read(rows: D1Result[], organization: { id: string; name: string; role: string }, env: CloudflareEnv, buildId: string, subscription?: Stripe.Subscription | null) {
+      const status = plan.read(rows.slice(0, plan.queries.length), organization.id)
+      const stripe = getStripe(env, env.DB)
+      const native = subscription !== undefined ? subscription : status.stripeSubscriptionId
+        ? await stripe.subscriptions.retrieve(status.stripeSubscriptionId, { expand: ['items.data.price.product', 'items.data.price.tiers'] }) : null
+      const serviceRows = rows[plan.queries.length]!.results as ServiceAgreement[]
+      const owners = rows[plan.queries.length + 1]!.results as Array<{ name: string; email: string }>
+      if (!owners.length) throw new Error('This organization has no owner')
+      const [subscription_price, scheduled_plan, plans, payment_methods, homes] = await Promise.all([
+        getOrganizationSubscriptionPrice(env, status, native ?? undefined), status.stripeScheduleId ? scheduledPlanChange(env, status.stripeScheduleId) : null,
+        getCachedPlans(env, buildId), status.stripeCustomerId ? listCustomerCards(stripe, status.stripeCustomerId) : [],
+        plan.homes.read(rows.slice(1, plan.queries.length), env, organization.id, 0, native ?? undefined),
+      ])
+      return { success: true, user_role: organization.role, organization_name: organization.name, owner_name: owners.map(owner => owner.name || owner.email).join(', '),
+        billing: { ...status, subscription_price, scheduled_plan, organization_id: organization.id,
+          can_update: await hasBillingUpdatePermission(organization.id, organization.role), actions: billingPlanActions(status, scheduled_plan) },
+        plans, homes, payment_methods, services: { ...services.read(serviceRows), strategy: strategyFromSubscription(native, serviceRows.some(row => row.service as string === 'strategy')) }, offers,
+      }
+    },
+  }
+}
 
 export interface BillingEnv {
   STRIPE_SECRET_KEY?: string

@@ -137,10 +137,11 @@ export async function readDashboardTransactions(event: H3Event, query: Record<st
   }
   if (query.earnings_type !== undefined && query.earnings_type !== 'paid' && query.earnings_type !== 'refunded') throw new HTTPError({ statusCode: 400, message: 'Choose a valid earnings type', data: { code: 'INVALID_QUERY', field: 'earnings_type' } })
   const now = new Date()
+  const limit = query.limit === undefined ? undefined : typeof query.limit === 'string' && /^\d+$/.test(query.limit) ? Number(query.limit) : NaN
   const plan = preparePaymentTransactions({ sql: BATCH_VIEWER.organization }, {
     from: query.from as string | undefined ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString(),
     to: query.to as string | undefined ?? now.toISOString(), after: query.after as string | undefined,
-    location_id: query.location_id as string | undefined, earnings_type: query.earnings_type as 'paid' | 'refunded' | undefined,
+    limit, location_id: query.location_id as string | undefined, earnings_type: query.earnings_type as 'paid' | 'refunded' | undefined,
   })
   const locations = prepareDashboardLocationsResource({ sql: BATCH_VIEWER.organization })
   const { db, env, rows, organization, userId } = await readDashboardMemberResources(event, { slug }, [...plan.queries, ...locations.queries])

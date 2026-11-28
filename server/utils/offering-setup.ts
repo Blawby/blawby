@@ -26,7 +26,7 @@ export interface OfferingSetupContext {
 }
 
 export const invalidOfferingAnswer = (message: string) => new HTTPError({ statusCode: 400, statusMessage: message, data: { code: 'INVALID_OFFERING_ANSWER' } })
-export const offeringSetupChanged = () => new HTTPError({ statusCode: 409, statusMessage: 'Setup changed. Reopen it to continue.', data: { code: 'OFFERING_SETUP_CHANGED' } })
+export const offeringSetupChanged = (field?: string) => new HTTPError({ statusCode: 409, statusMessage: 'Setup changed. Reopen it to continue.', data: { code: 'OFFERING_SETUP_CHANGED', ...(field ? { field } : {}) } })
 export const offeringToday = (orgSlug: string) => `/dashboard/${encodeURIComponent(orgSlug)}`
 
 export function offeringDestination(orgSlug: string, kind: 'menu' | 'experience' | 'service', productId: string, locationId?: string): OfferingSetupResponse {

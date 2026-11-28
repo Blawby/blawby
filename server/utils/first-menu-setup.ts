@@ -6,7 +6,7 @@ import { majorAmountToMinor, minorAmountToMajor } from '~/shared/prices'
 import { mediaStillUrl } from '~/shared/media-placement-contract'
 import { firstMenuSectionSetupPath } from '~/server/utils/dashboard-links'
 import { setSingleMediaPlacement } from '~/server/utils/media-placement'
-import { firstMenuSetupApplies, firstMenuSkipsByDish, parseOnboardingDraftPayload } from '~/server/utils/onboarding-drafts'
+import { firstMenuSetupApplies, parseOnboardingDraftPayload } from '~/server/utils/onboarding-drafts'
 import { createCollection, createProduct, listCollectionProducts, resolveVariantPrice, setCollectionProducts, updateCollection, updateProduct } from '~/server/utils/product-management'
 import { requireTrimmedProductString } from '~/server/utils/product-validation'
 import { currencySymbol, invalidOfferingAnswer, offeringDestination, offeringField, offeringScreen, offeringSetupChanged, offeringToday, submittedValue, type OfferingSetupContext } from '~/server/utils/offering-setup'
@@ -24,17 +24,14 @@ function readMenuSetup(context: OfferingSetupContext, locationId: string) {
   const menuSections = sections.filter(section => section.location_id === locationId || section.location_id === null)
   const draftDishes = products.filter(product => product.variants.length === 1 && !product.publications.some(row => row.published)
     && product.locations.some(row => row.location_id === locationId && row.active && !row.published))
-  const skipsByDish = firstMenuSkipsByDish(payload.first_menu_skips)
-  const dishesWithSkips = draftDishes.filter(product => skipsByDish?.[product.id])
-  const dish = creation.productId ? draftDishes.find(product => product.id === creation.productId)
-    : (dishesWithSkips.length === 1 ? dishesWithSkips[0] : undefined)
-      ?? (draftDishes.length === 1 && products.length === 1 ? draftDishes[0] : undefined)
+  const skipsByDish = payload.first_menu_skips
+  const dish = creation.productId ? draftDishes.find(product => product.id === creation.productId) : undefined
   if (products.length && !dish) return null
   const selectedSectionId = payload.first_menu_section_ids?.[locationId]
-  const section = menuSections.find(candidate => candidate.id === selectedSectionId
-    && (!dish || dish.collections.some(row => row.collection_id === candidate.id)))
-    ?? (dish ? menuSections.find(candidate => dish.collections.some(row => row.collection_id === candidate.id)) : undefined)
-    ?? (menuSections.length === 1 ? menuSections[0] : undefined)
+  const eligibleSections = dish ? menuSections.filter(section => dish.collections.some(row => row.collection_id === section.id)) : menuSections
+  const section = selectedSectionId ? eligibleSections.find(section => section.id === selectedSectionId)
+    : eligibleSections.length === 1 ? eligibleSections[0] : undefined
+  if (selectedSectionId && !section || dish && !section) throw offeringSetupChanged('collection_id')
   const variant = dish?.variants[0]
   const price = variant ? resolveVariantPrice(variant, { currency, location_id: locationId, billing: { type: 'one_time' } }) : null
   const photo = dish ? photos.get(dish.id)?.[0] : undefined
@@ -162,10 +159,7 @@ export async function firstMenuSetup(context: OfferingSetupContext, locationId: 
     if (!value) {
       const result = await execute(db, `UPDATE onboarding_drafts
         SET payload_json = json_set(payload_json, '$.first_menu_skips', json_patch(
-          CASE WHEN json_type(payload_json, '$.first_menu_skips.dish_id') = 'text'
-            THEN json_object(json_extract(payload_json, '$.first_menu_skips.dish_id'),
-              json_remove(json_extract(payload_json, '$.first_menu_skips'), '$.dish_id'))
-            ELSE COALESCE(json_extract(payload_json, '$.first_menu_skips'), json('{}')) END,
+          COALESCE(json_extract(payload_json, '$.first_menu_skips'), json('{}')),
           json_object(?, json_object(?, json('true')))))
         WHERE id = ? AND organization_id = ? AND status = 'committed'`, [dish.id, step, draft.id, organizationId])
       if (result.meta.changes !== 1) throw offeringSetupChanged()

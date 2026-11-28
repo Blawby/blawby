@@ -337,11 +337,13 @@ export async function paymentTransactions(db: DbClient, principal: FinancialPrin
 }
 
 export function preparePaymentTransactions(organization: string | { sql: string }, input: PaymentListInput) {
-  const payments = preparePaymentList(organization, input)
+  const payments = preparePaymentList(organization, { ...input, newestFirst: true })
   const pictures = preparePaymentPictures(organization, { sql: `p.id IN (SELECT id FROM (${payments.query.query}))`, params: payments.query.params ?? [] }, true)
-  return { queries: [payments.query, ...pictures.queries], read(rows: D1Result[], organizationId: string, organizationSlug: string) {
+  const cursor = input.after ? { query: `SELECT id FROM payments WHERE organization_id=${typeof organization === 'string' ? '?' : organization.sql} AND id=?`, params: [...(typeof organization === 'string' ? [organization] : []), input.after] } : null
+  return { queries: [payments.query, ...pictures.queries, ...(cursor ? [cursor] : [])], read(rows: D1Result[], organizationId: string, organizationSlug: string) {
+    if (cursor && !rows.at(-1)!.results[0]) throw new HTTPError({ statusCode: 404, message: 'Transaction cursor not found', data: { code: 'PAYMENT_CURSOR_NOT_FOUND', field: 'after' } })
     const page = payments.read(rows[0]!, organizationId)
-    return paymentTransactionsFrom(organizationSlug, page, pictures.read(page.payments, rows.slice(1), organizationId))
+    return paymentTransactionsFrom(organizationSlug, page, pictures.read(page.payments, rows.slice(1, 1 + pictures.queries.length), organizationId))
   } }
 }
 

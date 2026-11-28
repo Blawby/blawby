@@ -143,8 +143,8 @@ const locations = computed(() => data.value?.locations ?? [])
 // Watched rather than written in the handler, which does not run again when the
 // server-rendered page hydrates.
 watch(data, (page) => { if (page) loaded.value = after.value ? [...loaded.value, ...page.payments] : page.payments }, { immediate: true })
-// Newest first, as Airbnb lists them.
-const rows = computed(() => [...loaded.value].sort((a, b) => b.created_at.localeCompare(a.created_at)))
+// The server orders the complete list and its cursor pages.
+const rows = computed(() => loaded.value)
 const total = computed(() => {
   const totals = new Map<string, number>()
   for (const row of rows.value) totals.set(row.currency, (totals.get(row.currency) ?? 0) + row.captured_amount - row.refunded_amount)

@@ -172,18 +172,13 @@ export function firstMenuSetupApplies(payload: OnboardingDraftPayload): boolean 
 type FirstMenuSkips = { price?: true; photo?: true; description?: true }
 type FirstMenuSkipsByDish = Record<string, FirstMenuSkips>
 
-export function firstMenuSkipsByDish(skips: OnboardingDraftPayload['first_menu_skips']): FirstMenuSkipsByDish | undefined {
-  if (!skips) return undefined
-  const legacy = (value: NonNullable<typeof skips>): value is FirstMenuSkips & { dish_id: string } => typeof value.dish_id === 'string'
-  return legacy(skips) ? { [skips.dish_id]: skips } : skips
-}
 
 export interface OnboardingDraftPayload {
   version: 3
   partial?: false
   timezone_step_visited?: boolean
   first_menu_section_ids?: Record<string, string>
-  first_menu_skips?: FirstMenuSkipsByDish | (FirstMenuSkips & { dish_id: string })
+  first_menu_skips?: FirstMenuSkipsByDish
   first_experience_photo_skipped?: string
   first_experience_venue_address?: {
     product_id: string

@@ -48,7 +48,7 @@ export function prepareCalendarCapabilities(organization: BatchQuery, userId: st
       )
     }
     return { modes, default_mode: modes.some(mode => mode.id === 'all_homes') ? 'all_homes' : modes.length ? 'bookings' : null,
-      has_homes: row.has_homes === 1, has_places: row.has_places === 1 }
+      can_create_stay: row.manages === 1 && row.has_homes === 1, has_homes: row.has_homes === 1, has_places: row.has_places === 1 }
   }
 }
 

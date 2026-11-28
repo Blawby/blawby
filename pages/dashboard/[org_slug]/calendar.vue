@@ -13,7 +13,7 @@
     :home-error="homesError ? getErrorMessage(homesError, 'The places to stay could not be loaded') : ''"
     :offerings-error="offeringsError"
   />
-  <CalendarPage v-else :key="productId ?? 'agenda'" :session-product="scoped?.product" :session-locations="scoped?.locations ?? []" :offerings-error="offeringsError" :can-create-stay="Boolean(homes?.manage && homes.homes.length)" :has-homes="Boolean(homes?.homes.length)" :has-places="places?.has_places === true" :capabilities="places?.calendar" />
+  <CalendarPage v-else :key="productId ?? 'agenda'" :session-product="scoped?.product" :session-locations="scoped?.locations ?? []" :offerings-error="offeringsError" :can-create-stay="places?.calendar.can_create_stay === true" :has-homes="Boolean(homes?.homes.length)" :has-places="places?.has_places === true" :capabilities="places?.calendar" />
 </template>
 
 <script setup lang="ts">

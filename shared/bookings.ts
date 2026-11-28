@@ -145,6 +145,6 @@ export function occurrenceKey(ruleId: string, localDate: string, localStartTime:
 export const calendarIndexModeIds = ['bookings', 'availability', 'all_homes', 'homes'] as const
 export const calendarCapabilitiesSchema = z.object({
   modes: z.array(z.object({ id: z.enum(calendarIndexModeIds), label: z.string(), symbol: z.string(), search_prompt: z.string() })),
-  default_mode: z.enum(calendarIndexModeIds).nullable(), has_homes: z.boolean(), has_places: z.boolean(),
+  default_mode: z.enum(calendarIndexModeIds).nullable(), can_create_stay: z.boolean(), has_homes: z.boolean(), has_places: z.boolean(),
 }).refine(value => value.default_mode === null ? value.modes.length === 0 : value.modes.some(mode => mode.id === value.default_mode))
 export type CalendarCapabilities = z.infer<typeof calendarCapabilitiesSchema>

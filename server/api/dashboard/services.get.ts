@@ -8,7 +8,7 @@ import { prepareServices, managedAdsRequirementsFrom } from '~/server/utils/orga
 import { strategyFromSubscription } from '~/server/utils/strategy-service'
 import { getStripe, prepareOrganizationBillingScreen } from '~/server/utils/billing'
 import { integrationsQuery, integrationsFromRows } from '~/server/utils/organization-integrations'
-import { SERVICES as offers, billingServiceScreen } from '~/shared/billing-model'
+import { SERVICES as offers, billingServiceScreen, BUSINESS_PLAN_ID, isNewSalePlan } from '~/shared/billing-model'
 
 /** Services, eligibility and the next permitted step share the screen's authorized read. */
 export default defineHandler(async event => {
@@ -40,8 +40,11 @@ export default defineHandler(async event => {
       on: Boolean(services[requested]), can_update, org_slug: organization.slug, subscription_status: status.status,
     }) : null
     const plan_review = screen?.next_action?.id === 'review_plan' ? await plan.read(billingRows, organization, env, useRuntimeConfig().app.buildId, subscription) : null
+    const changes = plan_review?.billing.actions.changes.filter(change => requested === 'managed_ads' ? change.plan === BUSINESS_PLAN_ID : isNewSalePlan(change.plan)) ?? []
+    const scopedReview = plan_review && changes.length ? { ...plan_review, billing: { ...plan_review.billing, actions: { ...plan_review.billing.actions, changes } } } : null
+    if (plan_review && !scopedReview && screen) screen.next_action = null
     return jsonResponse({ success: true, services, offers, ...(requested && requirements ? { requirements: { [requested]: requirements } } : {}),
-      ...(screen ? { screen, plan_review, can_update } : {}),
+      ...(screen ? { screen, plan_review: scopedReview, can_update } : {}),
     }, { headers: { 'cache-control': 'private, no-store' } })
   } catch (cause) {
     if (cause instanceof HTTPError) throw cause

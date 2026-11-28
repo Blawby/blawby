@@ -175,15 +175,23 @@ export async function getLocation(
   if (!row) return null
   const { getMediaPlacements } = await import('~/server/utils/media-placement')
   const placements = await getMediaPlacements(db, { organizationId, ownerType: 'business_location', ownerIds: [row.id] })
+  return locationFromRecord(row, placements.get(row.id) ?? [])
+}
+
+export function locationFromRecord(row: LocationRecord, placements: import('~/server/utils/media-asset-manager').StoredMediaPlacementItem[]) {
   return {
     ...row,
     address: parsePostalAddress(row.address),
     opening_hours: parseOpeningHours(row.opening_hours ? JSON.parse(String(row.opening_hours)) : null),
     special_hours: parseSpecialHours(row.special_hours ? JSON.parse(String(row.special_hours)) : null),
     categories: row.categories ? JSON.parse(String(row.categories)) : null,
-    media: (placements.get(row.id) ?? []).map(item => ({ asset_id: item.asset_id, slot: item.slot, public_url: item.public_url, thumbnail_url: item.thumbnail_url, kind: item.kind, sort_order: item.sort_order })),
+    media: placements.map(item => ({ asset_id: item.asset_id, slot: item.slot, public_url: item.public_url, thumbnail_url: item.thumbnail_url, kind: item.kind, sort_order: item.sort_order })),
   }
 }
+
+export const LOCATION_COLUMNS = `id, slug, title, phone, email, website_url, maps_url, latitude, longitude, google_review_url, google_place_id,
+  rating, review_count, description, short_description, status, address, stay_map_sharing, opening_hours, special_hours, categories, price_level,
+  timezone, seo_title, seo_description, canonical_url, created_at, updated_at`
 
 async function loadLocation(
   db: D1Database,
@@ -191,11 +199,7 @@ async function loadLocation(
   locationIdOrSlug: string,
   byIdOnly = false,
 ) {
-  const columns = `id, slug, title, phone, email, website_url, maps_url, latitude, longitude, google_review_url, google_place_id,
-           rating, review_count, description, short_description, status,
-           address, stay_map_sharing, opening_hours, special_hours, categories, price_level,
-           timezone, seo_title, seo_description, canonical_url,
-           created_at, updated_at`;
+  const columns = LOCATION_COLUMNS;
   // Check id first so a slug that happens to collide with another row's id can
   // never shadow the row actually addressed by that id.
   const byId = await queryFirst<LocationRecord>(

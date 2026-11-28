@@ -196,7 +196,7 @@ function parseJsonObject(value: unknown, field: string): Record<string, string> 
   return parsed as Record<string, string>
 }
 
-const PRODUCT_COLUMNS = `
+export const PRODUCT_COLUMNS = `
   p.id, p.organization_id, p.name, p.slug, p.description, p.active, p.order_url, p.unit_label,
   p.marketing_features, p.metadata, p.tax_code, p.options, p.processing_days, p.made_to_order_days, p.source,
   p.kind, p.details_json, p.created_at, p.updated_at, p.created_by, p.updated_by,
@@ -329,7 +329,7 @@ function prepareProductRelations(organization: string | { sql: string }, selecti
   }
 }
 
-function prepareProductRead(organizationId: string | { sql: string }, records: BatchQuery) {
+export function prepareProductRead(organizationId: string | { sql: string }, records: BatchQuery) {
   const relations = prepareProductRelations(organizationId, { query: `SELECT id FROM (${records.query})`, params: records.params })
   return {
     queries: [records, ...relations.queries],
@@ -901,7 +901,7 @@ export async function organizationDefaultCurrency(db: DbClient, organizationId: 
   return checkedOrganizationCurrency(organizationId, organization.default_currency)
 }
 
-function checkedOrganizationCurrency(organizationId: string, currency: string | null) {
+export function checkedOrganizationCurrency(organizationId: string, currency: string | null) {
   if (!isCurrencyCode(currency)) throw new Error(`Organization ${organizationId} has an unsupported default currency`)
   return currency
 }
@@ -2484,7 +2484,7 @@ export async function bookingScheduleScopes(db: DbClient, organizationId: string
 
 type BookingScheduleScopeRow = { product_id: string; location_id: string | null }
 
-function bookingScheduleScopesQuery(organizationId: string | { sql: string }, ids: BatchQuery) {
+export function bookingScheduleScopesQuery(organizationId: string | { sql: string }, ids: BatchQuery) {
   return { query: `
     WITH configured AS (
       SELECT c.* FROM product_booking_configs c WHERE c.organization_id=${typeof organizationId === 'string' ? '?' : organizationId.sql} AND c.duration_minutes>0
@@ -2512,7 +2512,7 @@ function bookingScheduleScopesQuery(organizationId: string | { sql: string }, id
   `, params: [...(typeof organizationId === 'string' ? [organizationId] : []), ...ids.params ?? [], BOOKING_HORIZON_DAYS] }
 }
 
-function scheduleScopesFromRows(rows: BookingScheduleScopeRow[]) {
+export function scheduleScopesFromRows(rows: BookingScheduleScopeRow[]) {
   const byProduct = new Map<string, Set<string | null>>()
   for (const row of rows) {
     const scopes = byProduct.get(row.product_id) ?? new Set()

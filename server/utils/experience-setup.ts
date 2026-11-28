@@ -1,25 +1,23 @@
 import { HTTPError } from 'nitro'
 import type { OfferingSetupAnswer, OfferingSetupResponse } from '~/shared/offering-setup'
 import { majorAmountToMinor, minorAmountToMajor, selectPrice } from '~/shared/prices'
-import { type DbClient, execute, queryFirst } from '~/server/db'
-import { memberSchedulingList } from '~/server/domain/member-scheduling'
+import { execute } from '~/server/db'
 import { createSession, setProductBookingConfig } from '~/server/utils/availability'
-import { listDashboardLocations } from '~/server/utils/dashboard-context'
 import { firstExperienceSetupPath } from '~/server/utils/dashboard-links'
-import { createLocation, getLocation, type LocationRecord } from '~/server/utils/location-management'
-import { getMediaPlacements, setSingleMediaPlacement } from '~/server/utils/media-placement'
+import { createLocation, type LocationRecord } from '~/server/utils/location-management'
+import { setSingleMediaPlacement } from '~/server/utils/media-placement'
 import { parseOnboardingDraftPayload, type OnboardingDraftPayload } from '~/server/utils/onboarding-drafts'
 import { creationRequestHash } from '~/server/utils/organization-events'
 import { offeringAddressFields, offeringHasStreetAddress, saveOfferingAddress } from '~/server/utils/offering-address'
 import {
-  createProduct, getProduct, listOrganizationProducts, organizationDefaultCurrency,
+  createProduct,
   setProductLocation, updateProduct,
 } from '~/server/utils/product-management'
 import { PRODUCT_LIMITS, requireTrimmedProductString } from '~/server/utils/product-validation'
 import { purgePublicResourceCacheNow } from '~/server/utils/public-resource-cache'
 import { mediaStillUrl } from '~/shared/media-placement-contract'
 import {
-  currencySymbol, invalidOfferingAnswer, offeringDestination, offeringField, offeringProductCreation, offeringScreen, offeringSetupChanged,
+  currencySymbol, invalidOfferingAnswer, offeringDestination, offeringField, offeringScreen, offeringSetupChanged,
   offeringTimezone, offeringToday, submittedValue, type OfferingSetupContext,
 } from '~/server/utils/offering-setup'
 import { formatPostalAddress } from '~/utils/postal-address'
@@ -33,27 +31,13 @@ const sessionKey = (productId: string) => `first-experience-setup:${productId}`
 const addVenue = 'new'
 const editVenuePrefix = 'edit:'
 
-async function experienceCompletion(db: DbClient, organizationId: string, productId: string) {
-  const [published, session] = await Promise.all([
-    queryFirst(db, 'SELECT 1 FROM product_publications WHERE organization_id = ? AND product_id = ? AND published = 1', [organizationId, productId]),
-    queryFirst(db, 'SELECT 1 FROM product_sessions WHERE organization_id = ? AND product_id = ? LIMIT 1', [organizationId, productId]),
-  ])
-  return Boolean(published || session)
-}
-
-async function loadSetup(context: OfferingSetupContext) {
-  const { db, organizationId, env, actorId } = context
-  const creation = await offeringProductCreation(db, organizationId, productKey)
-  const existing = creation.productId ? [] : await listOrganizationProducts(db, { organizationId, kind: 'experience', window: { limit: 1, offset: 0 } })
-  const product = creation.productId ? await getProduct(db, organizationId, creation.productId) : null
-  const [currency, workspaceLocations, { members }, draft, placements, complete] = await Promise.all([
-    organizationDefaultCurrency(db, organizationId),
-    listDashboardLocations(db, organizationId),
-    memberSchedulingList({ env, organizationId, userId: actorId }),
-    queryFirst<{ id: string; payload_json: string }>(db, "SELECT id, payload_json FROM onboarding_drafts WHERE organization_id = ? AND status = 'committed' AND vertical = 'experience'", [organizationId]),
-    product ? getMediaPlacements(db, { organizationId, ownerType: 'product', ownerIds: [product.id], slot: 'image' }) : null,
-    product ? experienceCompletion(db, organizationId, product.id) : false,
-  ])
+function loadSetup(context: OfferingSetupContext) {
+  const { read } = context
+  const creation = read.creation(productKey)
+  const existing = creation.productId ? [] : read.products.slice(0, 2)
+  const product = creation.productId ? read.product(creation.productId) : null
+  const { currency, locations: workspaceLocations, members, draft, photos: placements } = read
+  const complete = Boolean(product && (product.publications.some(row => row.published) || read.sessions.has(product.id)))
   const payload = draft ? parseOnboardingDraftPayload(draft.payload_json) : null
   const photo = product ? placements?.get(product.id)?.[0] : undefined
   const locations = workspaceLocations.filter(location => isValidTimezone(location.timezone))
@@ -69,7 +53,7 @@ async function loadSetup(context: OfferingSetupContext) {
   const storedAddress = payload?.first_experience_venue_address
   const venueAddress = storedAddress?.product_id === product?.id && storedAddress?.location_id === location?.id ? storedAddress : undefined
   const savedAddress = venueAddress?.partial && location
-    ? await getLocation(env.DB, organizationId, location.id) : null
+    ? read.fullLocations.get(location.id) ?? null : null
   const partialAddress = savedAddress && savedAddress.updated_at === venueAddress?.partial?.location_revision ? venueAddress?.partial : undefined
   const pendingMeetingStep = venueAddress?.pending_method === 'street' ? 'venue-street'
     : venueAddress?.pending_method === 'directions' ? 'venue-directions' : undefined
@@ -102,7 +86,7 @@ function positiveInteger(value: string, label: string) {
 
 export async function firstExperienceSetup(context: OfferingSetupContext, requested: string | undefined, answer: OfferingSetupAnswer | null): Promise<OfferingSetupResponse> {
   const { db, env, organizationId, orgSlug, actorId, principal } = context
-  const state = await loadSetup(context)
+  const state = loadSetup(context)
   const { product, resume, booking, location, host, locations, members, photo, currency, price, variant, meetingPoint, hasStreet, needsHost, storedAddress, savedAddress, partialAddress, meetingStep, partial, partialVenue, partialSession } = state
   const exitTo = context.exitTo ?? offeringToday(orgSlug)
   if (product && state.complete) return answer?.action === 'exit' ? { to: exitTo } : offeringDestination(orgSlug, 'experience', product.id)
@@ -125,7 +109,7 @@ export async function firstExperienceSetup(context: OfferingSetupContext, reques
     ? requestedIndex : resumeIndex
   const step = steps[index]!
   const stepPath = (next?: Step) => firstExperienceSetupPath(orgSlug, next)
-  const addressLocation = step === 'venue-street' && location ? savedAddress ?? await getLocation(env.DB, organizationId, location.id) : null
+  const addressLocation = step === 'venue-street' && location ? savedAddress ?? context.read.fullLocations.get(location.id) ?? null : null
   const addressRevision = addressLocation?.updated_at
   const revision = JSON.stringify([
     product?.id, product?.updated_at, location?.id, addressRevision, booking?.assigned_member_id,

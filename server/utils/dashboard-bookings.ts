@@ -327,7 +327,11 @@ export async function readCalendarPlacePresence(event: H3Event, orgSlug?: string
   const slug = orgSlug ?? dashboardOrgQueryParam(event)
   if (!slug) throw new HTTPError({ statusCode: 400, message: 'Choose a workspace', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
   const preloaded = event.context.dashboardCalendarPresence as { slug: string; has_places: boolean } | undefined
-  if (preloaded?.slug === slug) return { has_places: preloaded.has_places }
+  if (preloaded?.slug === slug) {
+    const { env, organization } = await getDashboardMemberContext(event, { organizationSlug: slug })
+    await stayAccessFor(memberAccessPrincipal(organization, { env, event }))
+    return { has_places: preloaded.has_places }
+  }
   const { env, organization, rows } = await readDashboardMemberResources(event, { slug }, [placesPresenceQuery({ query: BATCH_VIEWER.organization, params: [] }, { sql: BATCH_VIEWER.user })])
   await stayAccessFor(memberAccessPrincipal(organization, { env, event }))
   const row = rows[0]!.results[0] as { has_places: number } | undefined

@@ -1,19 +1,32 @@
 import { applicationFetch } from '~/composables/dashboardFetch'
 import { ApiClientError, isRecord } from '~/utils/api-clients'
-import { ONBOARDING_STEP_IDS, WEBSITE_ONBOARDING_PATH, type OnboardingFlow, type OnboardingStepId, type WebsiteOnboardingResumeAction } from '~/shared/onboarding-flow'
+import { ONBOARDING_STEP_IDS, ONBOARDING_SUBDOMAIN_VALIDATION_STATES, WEBSITE_ONBOARDING_PATH, type OnboardingFlow, type OnboardingStepId, type WebsiteOnboardingResumeAction } from '~/shared/onboarding-flow'
 import { isLodgingConfirmationMode } from '~/shared/lodging-booking'
 import { isCurrencyCode } from '~/shared/currencies'
-import { emptyOnboardingState, useOnboardingState, type OnboardingPlacePreview } from '~/composables/useOnboardingFlow'
+import { emptyOnboardingState, useOnboardingState, useOnboardingPlan, type OnboardingPlacePreview } from '~/composables/useOnboardingFlow'
 import { ALL_VERTICALS, type OrganizationVertical } from '~/utils/vertical-copy'
 
-type ActiveWebsiteDraft = { success: true } & (
+type ActiveWebsiteDraft = { success: true; flow?: OnboardingFlow } & (
   | { draft: null; resume_action: null }
   | { draft: Record<string, unknown>; resume_action: WebsiteOnboardingResumeAction }
 )
 
-export function readActiveWebsiteDraft() {
+function isOnboardingFlow(value: unknown): value is OnboardingFlow {
+  return isRecord(value)
+        && ONBOARDING_SUBDOMAIN_VALIDATION_STATES.some(state => state === value.subdomain_validation)
+        && Array.isArray(value.steps) && typeof value.resumeStep === 'string'
+        && typeof value.canSave === 'boolean' && typeof value.canFinish === 'boolean' && typeof value.exitLabel === 'string'
+        && typeof value.backLabel === 'string' && Array.isArray(value.businessTypes) && Array.isArray(value.languages)
+        && isRecord(value.neutralWebsiteExample) && typeof value.neutralWebsiteExample.name === 'string' && typeof value.neutralWebsiteExample.image === 'string'
+        && isRecord(value.businessLookup) && typeof value.businessLookup.importLabel === 'string'
+        && typeof value.businessLookup.manualLabel === 'string' && typeof value.businessLookup.searchPlaceholder === 'string'
+        && Array.isArray(value.bookingChoices) && Array.isArray(value.countries) && Array.isArray(value.currencies) && Array.isArray(value.timezones)
+}
+
+export function readActiveWebsiteDraft(screen = false) {
   return applicationFetch<ActiveWebsiteDraft>('/api/dashboard/onboarding/drafts/active', {
-    validate: (value): value is ActiveWebsiteDraft => isRecord(value) && value.success === true
+    query: screen ? { view: 'screen' } : undefined,
+    validate: (value): value is ActiveWebsiteDraft => isRecord(value) && value.success === true && (!screen || isOnboardingFlow(value.flow))
       && (value.draft === null ? value.resume_action === null : isRecord(value.draft)
         && isRecord(value.resume_action)
         && typeof value.resume_action.label === 'string' && value.resume_action.to === WEBSITE_ONBOARDING_PATH),
@@ -26,6 +39,7 @@ export function readActiveWebsiteDraft() {
  */
 export function useOnboardingDraft() {
   const state = useOnboardingState()
+  const plan = useOnboardingPlan()
   const busy = ref(false)
   const error = ref<string | null>(null)
   const subdomainConflict = ref(false)
@@ -42,14 +56,7 @@ export function useOnboardingDraft() {
       method: 'POST',
       body: answers,
       signal,
-      validate: (value): value is OnboardingFlow => isRecord(value)
-        && Array.isArray(value.steps) && typeof value.resumeStep === 'string'
-        && typeof value.canSave === 'boolean' && typeof value.canFinish === 'boolean' && typeof value.exitLabel === 'string'
-        && typeof value.backLabel === 'string' && Array.isArray(value.businessTypes) && Array.isArray(value.languages)
-        && isRecord(value.neutralWebsiteExample) && typeof value.neutralWebsiteExample.name === 'string' && typeof value.neutralWebsiteExample.image === 'string'
-        && isRecord(value.businessLookup) && typeof value.businessLookup.importLabel === 'string'
-        && typeof value.businessLookup.manualLabel === 'string' && typeof value.businessLookup.searchPlaceholder === 'string'
-        && Array.isArray(value.bookingChoices) && Array.isArray(value.countries) && Array.isArray(value.currencies) && Array.isArray(value.timezones),
+      validate: isOnboardingFlow,
     })
   }
 
@@ -172,7 +179,9 @@ export function useOnboardingDraft() {
 
   /** Read the unfinished draft back into the flow. Returns false when there is none. */
   async function restore(): Promise<boolean> {
-    const { draft } = await readActiveWebsiteDraft()
+    const { draft, flow } = await readActiveWebsiteDraft(true)
+    if (!flow) throw new Error('Website setup plan is unavailable')
+    plan.value = flow
     if (!draft) {
       state.value = emptyOnboardingState()
       return false

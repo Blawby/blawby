@@ -15,6 +15,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
+import { parseArgs } from 'node:util'
 import Stripe from 'stripe'
 import { getBetterAuthStripePlans } from '../server/utils/better-auth-stripe.ts'
 
@@ -34,9 +35,13 @@ const d1 = <T>(sql: string): T[] => {
 const sqlString = (value: string) => `'${value.replaceAll("'", "''")}'`
 
 type Row = { id: string; referenceId: string; plan: string; stripeSubscriptionId: string | null; stripeCustomerId: string | null; name: string | null; organizationCustomerId: string | null }
+const { values } = parseArgs({ options: { 'organization-id': { type: 'string', multiple: true } }, strict: true })
+const organizations = values['organization-id']
+if (organizations?.some(id => !id.trim())) throw new Error('Provide non-empty organization IDs.')
 const rows = d1<Row>(`SELECT s.id, s.referenceId, s.plan, s.stripeSubscriptionId, s.stripeCustomerId, o.name, o.stripeCustomerId AS organizationCustomerId
   FROM subscription s LEFT JOIN organization o ON o.id = s.referenceId
- WHERE s.status NOT IN ('canceled', 'incomplete_expired') AND s.stripeSubscriptionId IS NOT NULL`)
+ WHERE s.status NOT IN ('canceled', 'incomplete_expired') AND s.stripeSubscriptionId IS NOT NULL
+   ${organizations ? `AND s.referenceId IN (${organizations.map(sqlString).join(',')})` : ''}`)
 
 // Each plan's price as the app configures Better Auth with it: the first entry is
 // an offered plan's current offer, and a retired plan's contract price, which is
@@ -65,6 +70,8 @@ for (const row of rows) {
     // Only the row's own subscription settles its organization's customer.
     if (customerOf(existing) !== row.stripeCustomerId) throw new Error(`Subscription ${existing.id} belongs to ${customerOf(existing)}, not ${row.referenceId}'s customer ${row.stripeCustomerId}`)
     if (row.organizationCustomerId !== row.stripeCustomerId) d1(`UPDATE organization SET stripeCustomerId = ${sqlString(row.stripeCustomerId)} WHERE id = ${sqlString(row.referenceId)}`)
+    if (existing.metadata.subscriptionId && existing.metadata.subscriptionId !== row.id) throw new Error(`Subscription ${existing.id} belongs to a different Better Auth subscription`)
+    if (!existing.metadata.subscriptionId) await stripe.subscriptions.update(existing.id, { metadata: { subscriptionId: row.id } })
     continue
   }
   const plan = plans.get(row.plan)
@@ -97,7 +104,7 @@ for (const row of rows) {
       metadata: { ...source, blawby_source_subscription: row.stripeSubscriptionId!, referenceId: row.referenceId, plan: row.plan },
     }, { idempotencyKey: `test-mode-billing:subscription:v4:${row.stripeSubscriptionId}` })
   // A subscription found by its source ID is used only if it is the one made for this row.
-  if (customerOf(subscription) !== customer.id || subscription.metadata.referenceId !== row.referenceId || subscription.metadata.plan !== row.plan || !['active', 'trialing', 'past_due'].includes(subscription.status)) {
+  if (customerOf(subscription) !== customer.id || subscription.metadata.referenceId !== row.referenceId || subscription.metadata.plan !== row.plan || (subscription.metadata.subscriptionId && subscription.metadata.subscriptionId !== row.id) || !['active', 'trialing', 'past_due'].includes(subscription.status)) {
     throw new Error(`Test-mode subscription ${subscription.id} does not match ${row.referenceId}'s ${row.plan} subscription`)
   }
   // One made by an earlier run is brought to this run's prices: the catalog may have changed since.
@@ -110,6 +117,7 @@ for (const row of rows) {
   }
   d1(`UPDATE subscription SET stripeCustomerId = ${sqlString(customer.id)}, stripeSubscriptionId = ${sqlString(subscription.id)}, stripeScheduleId = NULL WHERE id = ${sqlString(row.id)};
 UPDATE organization SET stripeCustomerId = ${sqlString(customer.id)} WHERE id = ${sqlString(row.referenceId)};`)
+  if (!subscription.metadata.subscriptionId) await stripe.subscriptions.update(subscription.id, { metadata: { subscriptionId: row.id } })
   provisioned++
   console.log(`${row.name ?? row.referenceId}: ${row.plan} → ${subscription.id}`)
 }

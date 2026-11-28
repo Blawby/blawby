@@ -130,14 +130,15 @@ export function onboardingFlow(answers: z.infer<typeof onboardingAnswers>, optio
     })
   }
 
+  const subdomain_validation = answers.savedSubdomain ? 'not_required' : options.subdomainTaken === true ? 'taken' : options.subdomainTaken === false ? 'available' : 'pending'
   const firstIncomplete = steps.findIndex(step => !step.canAdvance)
   const paused = steps.findIndex(step => step.id === answers.pausedStep)
   const furthest = firstIncomplete === -1 ? steps.length - 1 : firstIncomplete
   return {
-    steps,
+    steps, subdomain_validation,
     resumeStep: steps[paused === -1 ? furthest : Math.min(paused, furthest)]!.id,
     canSave: answers.vertical !== null,
-    canFinish: firstIncomplete === -1,
+    canFinish: firstIncomplete === -1 && subdomain_validation !== 'pending',
     exitLabel: answers.vertical ? 'Save & exit' : 'Exit',
     backLabel: 'Back',
     proposedTimezone,
@@ -158,10 +159,10 @@ export function onboardingFlow(answers: z.infer<typeof onboardingAnswers>, optio
 }
 
 /** The first read and later answers evaluate the same flow and organization slug rules. */
-export async function readOnboardingFlow(env: CloudflareEnv, answers: z.infer<typeof onboardingAnswers>) {
+export async function readOnboardingFlow(env: CloudflareEnv, answers: z.infer<typeof onboardingAnswers>, options: { validateSubdomain: boolean } = { validateSubdomain: true }) {
   const slug = proposedOnboardingSubdomain(answers)
-  let subdomainTaken = false
-  if (answers.name.trim() && !answers.savedSubdomain && isOnboardingSubdomain(slug)) {
+  let subdomainTaken: boolean | undefined
+  if (options.validateSubdomain && answers.name.trim() && !answers.savedSubdomain && isOnboardingSubdomain(slug)) {
     try {
       await createAuth(env).api.checkOrganizationSlug({ body: { slug } })
       subdomainTaken = await isSystemSubdomainSpent(env, env.DB, slug)

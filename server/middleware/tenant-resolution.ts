@@ -413,6 +413,7 @@ function prepareDashboardTenant(event: H3Event, db: D1Database, env: ReturnType<
   const catalogEditor = rendersCatalogEditor(panel)
   const productId = dashboardProductId(panel)
   const product = productId ? prepareDashboardProductRead(productId, true, undefined, {
+    template: /^\/products\/[^/]+\/agreement(?:\/|$)/.test(panel),
     access: /^\/products\/[^/]+\/team(?:\/|$)/.test(panel),
     members: /^\/products\/[^/]+\/(?:booking|team)(?:\/|$)/.test(panel),
     scheduleLocation: /^\/products\/[^/]+\/booking(?:\/|$)/.test(panel) && typeof query.location_id === 'string' && query.location_id !== 'online' ? query.location_id : undefined,

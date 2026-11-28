@@ -36,7 +36,11 @@ interface OnboardingChoice {
   icon: string
 }
 
+export const ONBOARDING_SUBDOMAIN_VALIDATION_STATES = ['pending', 'available', 'taken', 'not_required'] as const
+export type OnboardingSubdomainValidation = typeof ONBOARDING_SUBDOMAIN_VALIDATION_STATES[number]
+
 export interface OnboardingFlow {
+  subdomain_validation: OnboardingSubdomainValidation
   steps: OnboardingStep[]
   resumeStep: OnboardingStepId
   canSave: boolean

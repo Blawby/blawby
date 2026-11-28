@@ -53,10 +53,9 @@ const position = computed(() => plan.value?.steps.findIndex(step => step.id === 
 const currentStep = computed(() => plan.value?.steps[position.value])
 const isWelcome = computed(() => requestedId.value === 'type')
 
-const nuxtApp = useNuxtApp()
 const { data: initialPlan, error: restoreError } = await useAsyncData('onboarding-flow', async () => {
   await draft.restore()
-  return nuxtApp.runWithContext(() => draft.readFlow({ ...draft.flowAnswers.value, pausedStep: state.value.pausedStep }))
+  return plan.value
 })
 plan.value = initialPlan.value ?? null
 
@@ -100,6 +99,10 @@ async function goNext() {
     if (router.currentRoute.value !== startingRoute) return
     plan.value = flow
     flowError.value = null
+    if (flow.subdomain_validation === 'taken') {
+      await router.push(stepPath(flow.resumeStep))
+      return
+    }
     const index = flow.steps.findIndex(step => step.id === stepId)
     const step = flow.steps[index]
     if (!step?.canAdvance) return

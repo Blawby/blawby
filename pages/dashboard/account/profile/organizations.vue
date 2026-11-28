@@ -68,7 +68,7 @@ type OrganizationMark = { id: string; image_url: string | null; vertical: string
 const isOrganizationList = (value: unknown): value is { organizations: OrganizationMark[] } => isRecord(value) && Array.isArray(value.organizations) && value.organizations.every(row => isRecord(row) && typeof row.id === 'string' && (row.image_url === null || typeof row.image_url === 'string') && typeof row.vertical === 'string' && typeof row.role === 'string')
 const [{ data: marksData, error: marksError }, { data: setup, error: setupError, refresh: refreshSetup }] = await Promise.all([
   useAsyncData('account-organizations', () => applicationFetch<{ organizations: OrganizationMark[] }>('/api/account/organizations', { validate: isOrganizationList })),
-  useAsyncData('account-organization-setup', readActiveWebsiteDraft),
+  useAsyncData('account-organization-setup', () => readActiveWebsiteDraft()),
 ])
 const marks = computed(() => new Map((marksData.value?.organizations ?? []).map(row => [row.id, row])))
 const items = computed(() => organizations.value.map(organization => ({

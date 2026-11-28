@@ -32,7 +32,7 @@ export default defineHandler(async (event) => {
   const row = plan.read((auth.results ?? await executeBatch(db, [plan.query]))[0]!)
 
   const screen = getQuery(event).view === 'screen'
-  const initial = () => readOnboardingFlow(env, onboardingAnswers.parse({ vertical: null, source: null, placeId: null, name: '', sourceLocale: null, country: '', timezone: '', currency: null }))
+  const initial = () => readOnboardingFlow(env, onboardingAnswers.parse({ vertical: null, source: null, placeId: null, name: '', sourceLocale: null, country: '', timezone: '', currency: null }), { validateSubdomain: false })
   if (!row) return jsonResponse({ ...noDraft, ...(screen ? { flow: await initial() } : {}) })
   if (row.status === 'abandoned') {
     if (!row.organization_id || !row.subdomain_candidate) throw new HTTPError({ statusCode: 409, statusMessage: 'Website draft cleanup has no recorded organization or address. Its native ownership must be verified.', data: { code: 'ONBOARDING_DRAFT_DISCARD_INCOMPLETE', draft_id: row.id } })
@@ -67,7 +67,7 @@ export default defineHandler(async (event) => {
     country: payload.source.details.country ?? '', timezone: payload.source.details.timezone ?? '',
     timezoneStepVisited: payload.timezone_step_visited ?? false, pausedStep: payload.partial ? payload.paused_step : undefined,
     currency: payload.source.details.currency, confirmationMode: payload.source.details.confirmation_mode,
-  })) : null
+  }), { validateSubdomain: false }) : null
   return jsonResponse({
     ...(screen ? { flow } : {}),
     success: true,

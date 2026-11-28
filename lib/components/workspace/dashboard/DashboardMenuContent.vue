@@ -81,7 +81,7 @@ const offer = computed(() => dashboard.organization.value && dashboard.canUpdate
 // The shell's organization, whichever route it is drawn on — Account settings included.
 const orgBase = computed(() => organization.value ? `/dashboard/${encodeURIComponent(organization.value.slug)}` : null)
 const inOrganization = computed(() => Boolean(orgBase.value))
-const setup = useAsyncData('personal-menu-website-setup', readActiveWebsiteDraft, { enabled: personal })
+const setup = useAsyncData('personal-menu-website-setup', () => readActiveWebsiteDraft(), { enabled: personal })
 const resumeAction = computed(() => setup.data.value?.resume_action)
 const organizationSettings = useOrganizationSettingsNavigation(organization, scopeModel, resumeAction)
 const { groups, activeItem } = organizationSettings

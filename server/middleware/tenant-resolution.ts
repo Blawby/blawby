@@ -397,9 +397,9 @@ function prepareDashboardTenant(event: H3Event, db: D1Database, env: ReturnType<
   const user = { sql: BATCH_VIEWER.user }
   const host = platformTenantQuery()
   const workspace = prepareDashboardWorkspaceAccess({ sql: BATCH_VIEWER.organization }, user, true)
-  const today = panel === '' ? prepareToday(db, {
+  const today = panel === '' ? prepareToday({
     slug, membership, now: new Date(), range: event.url.searchParams.get('range') === 'upcoming' ? 'upcoming' : 'today',
-    staffAccessWrites: staffAccessWritesEnabled(env),
+    staffAccessWrites: staffAccessWritesEnabled(env), presentation: { env, event },
   }) : null
   const managedOrg = { sql: `CASE WHEN ${BATCH_VIEWER.organizationWide} = 1 THEN ${BATCH_VIEWER.organization} END` }
   const connections = /^\/integrations(?:\/|$)/.test(panel) ? prepareConnectionSummary(managedOrg) : null
@@ -797,7 +797,7 @@ function setResolvedTenantContext(
   }
 }
 
-const SESSION_SCOPED_API_PREFIXES = ["/api/dashboard", "/api/organizations", "/api/editor/organizations", "/api/messages", "/api/mcp", "/api/integrations/channex"] as const;
+const SESSION_SCOPED_API_PREFIXES = ["/api/billing", "/api/account", "/api/dashboard", "/api/organizations", "/api/editor/organizations", "/api/messages", "/api/mcp", "/api/integrations/channex"] as const;
 
 export default defineHandler(async (event) => {
   // Nested self-fetches (i18n/icon/internal API calls during SSR) never carry

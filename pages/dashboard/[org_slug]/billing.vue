@@ -65,7 +65,7 @@ import { offer } from '~/shared/offers'
 import { authClient } from '~/lib/auth-client'
 import { classifyStripePlanChange } from '~/shared/stripe-ga4'
 import { SERVICE_PRICES, SERVICES, STARTER_PLAN_ID, isNewSalePlan } from '~/shared/billing-model'
-import { cardBrandLabel, useHomesQuote, useOrganizationBilling, useOrganizationServices, usePaymentMethods } from '~/composables/usePaymentsSettings'
+import { cardBrandLabel, useOrganizationBillingScreen } from '~/composables/usePaymentsSettings'
 
 definePageMeta({ layout: 'dashboard', tab: 'menu', back: 'menu' })
 useSeoMeta({ title: 'Plan and billing | Blawby', robots: 'noindex, nofollow' })
@@ -77,24 +77,17 @@ const dashboard = useDashboardOrganization()
 const { trackSubscriptionCheckoutSuccess } = useAnalytics()
 const { startOrganizationCheckout, openBillingPortal } = useOrganizationSubscription()
 const { formatExactDateTime } = useHumanTime()
-const { plans, formatPrice, formatRecurring } = await usePlans()
 
 const organizationId = useDashboardOrganizationId()
-const [{ billing, billingError, refreshBilling }, { services, servicesError }, { methods, methodsError }, { quote: homes, quoteError: homesError, quotePending: homesPending, refreshQuote: refreshHomes }] = await Promise.all([
-  useOrganizationBilling(), useOrganizationServices(), usePaymentMethods(), useHomesQuote(organizationId, 0),
-])
-
-// Admins read billing and do not change it; the line names who does.
-const { data: owner, error: ownerError } = await useAsyncData(`billing-owner:${String(route.params.org_slug)}`, async () => {
-  if (dashboard.canUpdateBilling.value) return null
-  const organizationId = dashboard.organization.value?.id
-  if (!organizationId) throw new Error('Organization context is unavailable')
-  const listed = await authClient.organization.listMembers({ query: { organizationId, filterField: 'role', filterOperator: 'eq', filterValue: 'owner' } })
-  if (listed.error) throw new Error(listed.error.message ?? 'The owner could not be loaded')
-  const found = listed.data?.members[0]
-  if (!found) throw new Error('This organization has no owner')
-  return found.user.name || found.user.email
-})
+const { data: screen, error: screenError, status: screenStatus, refresh: refreshBilling } = await useOrganizationBillingScreen(organizationId)
+const { plans, formatPrice, formatRecurring } = await usePlans(() => screen.value?.plans)
+const billing = computed(() => screen.value?.billing ?? null)
+const services = computed(() => screen.value?.services)
+const methods = computed(() => screen.value ? { payment_methods: screen.value.payment_methods } : null)
+const homes = computed(() => screen.value?.homes)
+const owner = computed(() => screen.value?.owner_name)
+const billingError = screenError, servicesError = screenError, methodsError = screenError, homesError = screenError, ownerError = screenError
+const homesPending = computed(() => screenStatus.value === 'pending')
 
 const errorMessage = ref('')
 const successMessage = ref('')
@@ -211,7 +204,7 @@ async function keepPlan() {
     if (!organizationId) throw new Error('Organization context is unavailable')
     const restored = await authClient.subscription.restore({ referenceId: organizationId, customerType: 'organization' })
     if (restored.error) throw new Error(restored.error.message ?? 'Your plan could not be kept')
-    await Promise.all([refreshBilling(), refreshHomes()])
+    await refreshBilling()
   } catch (error) {
     errorMessage.value = getErrorMessage(error, 'Your plan could not be kept')
   } finally {

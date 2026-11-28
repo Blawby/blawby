@@ -1,3 +1,4 @@
+import type { Plan } from '~/server/utils/billing-plans'
 import type { StripeConnectedAccount, StripeConnectStatus, StripeCapabilityStatus, StripeConnectRequirement } from '~/server/utils/stripe-connect'
 import type { ConnectPayoutMethod } from '~/server/api/dashboard/connect/index.get'
 import { isKnownBillingPlan, isNewSalePlan, type billingPlanActions } from '~/shared/billing-model'
@@ -159,4 +160,20 @@ export async function usePaymentMethods() {
     },
   )
   return { methods: data, methodsError: error, refreshMethods: refresh }
+}
+
+/** One initial Plan and billing read, including every visible summary. */
+export function useOrganizationBillingScreen(organizationId: string) {
+  const api = useDashboardApi()
+  type Screen = { success: true; billing: BillingStatus; plans: Plan[]; homes: HomesQuote; services: Services; payment_methods: PaymentMethodRow[]; owner_name: string }
+  return useAsyncData(`billing-screen:${organizationId}`, () => api('/api/billing/status', {
+    query: { organization_id: organizationId, view: 'screen' },
+    validate: (value): value is Screen => {
+      if (!isRecord(value)) return false
+      const { homes, owner_name, plans } = value
+      return isBillingResponse(value) && isServices(value) && isMethods(value)
+        && isHomesQuote(homes) && typeof owner_name === 'string'
+        && Array.isArray(plans) && validateApiArrayItems<Plan>({ id: 'string', name: 'string', tagline: 'string', highlighted: 'boolean', prices: 'array', features: 'array', limits: 'object', cta: { label: 'string', href: 'string' } })(plans)
+    },
+  }))
 }

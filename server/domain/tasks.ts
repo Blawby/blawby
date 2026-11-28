@@ -571,8 +571,11 @@ interface Context {
  * the task read: `listed` is a query of task rows, so no statement waits on
  * another's result. `taskContext` reads their results in this order.
  */
-function taskContextQueries(organizationId: string, listed: { sql: string; params: unknown[] }, userId: string): BatchQuery[] {
-  const query = (select: string): BatchQuery => ({ query: `WITH listed AS (${listed.sql}), scope(organization_id) AS (SELECT ?) ${select}`, params: [...listed.params, organizationId] })
+function taskContextQueries(organizationId: string | { sql: string }, listed: { sql: string; params: unknown[] }, userId: string | { sql: string }): BatchQuery[] {
+  const organization = typeof organizationId === 'string' ? { sql: '?', params: [organizationId] } : { ...organizationId, params: [] }
+  const user = typeof userId === 'string' ? { sql: '?', params: [userId] } : { ...userId, params: [] }
+  const prefix = `WITH listed AS (${listed.sql}), scope(organization_id, user_id) AS (SELECT ${organization.sql}, ${user.sql})`
+  const query = (select: string): BatchQuery => ({ query: `${prefix} ${select}`, params: [...listed.params, ...organization.params, ...user.params] })
   const org = '(SELECT organization_id FROM scope)'
   const subjects = (type: string) => `(SELECT subject_id FROM listed WHERE subject_type = '${type}')`
   // The bookings the cards show: a booking task's own, a failed message's, a private consultation's.
@@ -593,7 +596,7 @@ function taskContextQueries(organizationId: string, listed: { sql: string; param
   const closure = `SELECT t.id AS task_id, m.id AS message_id, m.body FROM listed t
       JOIN messages m ON m.organization_id = t.organization_id AND m.dedupe_key = 'task-closed:' || t.id || ':' || t.version
       JOIN conversations c ON c.organization_id = m.organization_id AND c.id = m.conversation_id
-      WHERE t.closed_at IS NOT NULL AND c.kind = 'team' AND ${conversationMemberSql('c', '?')}
+      WHERE t.closed_at IS NOT NULL AND c.kind = 'team' AND ${conversationMemberSql('c', '(SELECT user_id FROM scope)')}
         AND json_extract(m.payload_json, '$.task_outcome') = 1`
   const outcomePhotos = messagePhotoRowsSql("mp.owner_type = 'message' AND mp.owner_id IN (SELECT message_id FROM closure)", '', ', mp.sort_order')
   return [
@@ -614,10 +617,10 @@ function taskContextQueries(organizationId: string, listed: { sql: string; param
     query(`SELECT p.id, p.kind, CASE WHEN p.kind = 'stay' THEN c.internal_name ELSE p.name END AS name, ${checklistColumnsSql('c')}
       FROM products p LEFT JOIN product_stay_configs c ON c.organization_id = p.organization_id AND c.product_id = p.id
       WHERE p.organization_id = ${org} AND p.id IN (${productIds})`),
-    { query: `WITH listed AS (${listed.sql}), scope(organization_id) AS (SELECT ?) ${pictures.query}`, params: [...listed.params, organizationId, ...pictures.params!] },
-    { query: `WITH listed AS (${listed.sql}), closure AS (${closure})
+    { query: `${prefix} ${pictures.query}`, params: [...listed.params, ...organization.params, ...user.params, ...pictures.params!] },
+    { query: `${prefix}, closure AS (${closure})
       SELECT closure.*, photos.* FROM closure LEFT JOIN (${outcomePhotos}) photos ON photos.owner_id = closure.message_id
-      ORDER BY closure.task_id, photos.sort_order`, params: [...listed.params, userId] },
+      ORDER BY closure.task_id, photos.sort_order`, params: [...listed.params, ...organization.params, ...user.params] },
     query(`SELECT m.id, m.body, m.conversation_id, json_extract(c.payload_json, '$.guest.name') AS guest_name, json_extract(c.payload_json, '$.participant.title') AS participant
       FROM messages m JOIN conversations c ON c.organization_id = m.organization_id AND c.id = m.conversation_id
       WHERE m.organization_id = ${org} AND m.id IN ${subjects('message')}`),
@@ -1009,33 +1012,36 @@ const TODAY_ORDER: Record<TaskKind, number> = { message_delivery: 0, turnover: 1
 
 /** Today: open work due or starting today or earlier, or with no date; then what was closed today. Upcoming: open work later than today, by day. */
 export async function listTasks(db: DbClient, viewer: TaskViewer, query: TaskListQuery, now = new Date()): Promise<{ sections: TaskSection[]; resolved_at: string }> {
-  const organizationId = viewer.principal.organizationId
-  const scope = scopeSql(viewer)
+  const plan = prepareTaskList(query, now)
+  const member = membershipByIdQuery(viewer.principal.organizationId, viewer.principal.userId)
+  return plan.read(await executeBatch(db, plan.queries.map(statement => withViewer(member, statement)), { operation: 'List tasks' }), viewer)
+}
+
+/** Task cards can be included in the screen's authorization and data batch. */
+export function prepareTaskList(query: TaskListQuery, now = new Date()) {
+  const organization = BATCH_VIEWER.organization
   const filters: string[] = []
   const params: unknown[] = []
-  if (query.assignee === 'me') {
-    filters.push('t.assigned_member_id = ?')
-    params.push(viewer.memberId)
-  } else if (query.assignee !== 'all') {
-    if (!viewer.manage && query.assignee !== viewer.memberId) fail(403, 'TASK_SCOPE_DENIED', 'You can list your own tasks only', 'assignee')
-    filters.push('t.assigned_member_id = ?')
-    params.push(query.assignee)
-  }
+  if (query.assignee === 'me') filters.push(`t.assigned_member_id = ${BATCH_VIEWER.member}`)
+  else if (query.assignee !== 'all') { filters.push('t.assigned_member_id = ?'); params.push(query.assignee) }
   if (query.location_id) { filters.push('t.location_id = ?'); params.push(query.location_id) }
   if (query.kind) { filters.push('t.kind = ?'); params.push(query.kind) }
-  // Closed work is shown on the day it was closed; two days covers every zone's today.
   const closedSince = new Date(now.getTime() - 2 * 86_400_000).toISOString()
-  // A turnover whose next guests have arrived is not open work; asked for open tasks by name, it is listed as Not marked done.
   const statusSql = query.status ? 't.status = ?' : `((t.status = 'open' AND NOT ${lapsedTurnoverSql('t', '?')}) OR (? = 'today' AND t.status IN ('done', 'skipped') AND t.closed_at >= ?))`
   const statusParams = query.status ? [query.status] : [now.toISOString(), query.range, closedSince]
-  // The tasks and everything their cards show, in one round trip.
   const listed = { sql: `SELECT t.*, COALESCE(s.actual_check_out_date, s.ends_at) AS checkout_at, s.timezone AS checkout_timezone FROM tasks t
     LEFT JOIN bookings s ON t.kind = 'turnover' AND t.starts_at IS NULL AND s.organization_id = t.organization_id AND s.id = t.subject_id
-    WHERE t.organization_id = ? AND ${scope.sql} AND ${statusSql}${filters.map(sql => ` AND ${sql}`).join('')}`, params: [organizationId, ...scope.params, ...statusParams, ...params] }
-  const [read, ...related] = await executeBatch(db, [
+    WHERE t.organization_id = ${organization} AND ${taskScopeSql('t', () => ({ ...BATCH_VIEWER, organizationWide: roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ task: ['assign'] })) }))} AND ${statusSql}${filters.map(sql => ` AND ${sql}`).join('')}`, params: [...statusParams, ...params] }
+  const queries = [
     { query: `${listed.sql} ORDER BY COALESCE(t.starts_at, t.due_at, t.created_at), t.id`, params: listed.params },
-    ...taskContextQueries(organizationId, listed, viewer.principal.userId),
-  ], { operation: 'List tasks' })
+    ...taskContextQueries({ sql: organization }, listed, { sql: BATCH_VIEWER.user }),
+  ]
+  return { queries, read: (rows: D1Result[], viewer: TaskViewer) => presentTaskList(rows, viewer, query, now) }
+}
+
+async function presentTaskList([read, ...related]: D1Result[], viewer: TaskViewer, query: TaskListQuery, now: Date): Promise<{ sections: TaskSection[]; resolved_at: string }> {
+  const organizationId = viewer.principal.organizationId
+  if (query.assignee !== 'all' && query.assignee !== 'me' && !viewer.manage && query.assignee !== viewer.memberId) fail(403, 'TASK_SCOPE_DENIED', 'You can list your own tasks only', 'assignee')
   const rows = read!.results as Array<TaskRow & { checkout_at: string | null; checkout_timezone: string | null }>
   const today = (row: TaskRow) => localDateAt(now, row.timezone)
   const dayOf = (instant: string | null, row: TaskRow) => instant === null ? null : localDateAt(new Date(instant), row.timezone)

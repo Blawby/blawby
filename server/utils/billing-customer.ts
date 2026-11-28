@@ -30,13 +30,13 @@ export interface PaymentMethodRow { id: string; brand: string; last4: string; ex
 /** The customer's cards, the default first, as Stripe holds them. */
 export async function listCustomerCards(stripe: Stripe, customerId: string, options: Stripe.RequestOptions = {}): Promise<PaymentMethodRow[]> {
   const [methods, customer] = await Promise.all([
-    stripe.customers.listPaymentMethods(customerId, { type: 'card', limit: 20 }, options),
+    stripe.customers.listPaymentMethods(customerId, { type: 'card', limit: 100 }, options).autoPagingToArray({ limit: 10000 }),
     stripe.customers.retrieve(customerId, {}, options),
   ])
   if (customer.deleted) throw new HTTPError({ statusCode: 409, statusMessage: 'The billing customer was deleted at Stripe', data: { code: 'BILLING_CUSTOMER_UNAVAILABLE', field: 'billing.customer' } })
   const fallback = customer.invoice_settings?.default_payment_method
   const defaultId = typeof fallback === 'string' ? fallback : fallback?.id ?? null
-  return methods.data.flatMap((method): PaymentMethodRow[] => method.card
+  return methods.flatMap((method): PaymentMethodRow[] => method.card
     ? [{ id: method.id, brand: method.card.brand, last4: method.card.last4, exp_month: method.card.exp_month, exp_year: method.card.exp_year, default: method.id === defaultId }]
     : [])
     .sort((a, b) => Number(b.default) - Number(a.default))

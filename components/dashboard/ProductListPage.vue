@@ -13,14 +13,6 @@
     <UAlert v-if="loadError" color="error" variant="soft" icon="i-lucide-triangle-alert" title="Catalog could not be loaded" :description="loadError" />
     <template v-else>
       <DashboardFilterPills id="catalog-kind" v-model="kind" label="Kind" :items="kindFilters" class="mb-8" />
-      <UAlert
-        v-if="loadsHomeSetup && setupError"
-        color="error"
-        variant="soft"
-        class="mb-6"
-        title="Home setup could not be loaded"
-        :description="getErrorMessage(setupError, 'The request failed')"
-      />
       <UButton v-if="kind === 'stay' && setup?.resume_home_setup && !firstHomeSetup" :to="setup.resume_home_setup.to" color="neutral" variant="outline" class="mb-6" :label="setup.resume_home_setup.label" />
       <section v-if="showFirstHomeSetup && firstHomeSetup" class="mx-auto max-w-2xl space-y-5" data-testid="first-home-setup">
         <h2 class="text-2xl font-semibold tracking-tight sm:text-3xl">{{ firstHomeSetup.title }}</h2>
@@ -39,8 +31,14 @@
           </NuxtLink>
         </div>
       </section>
+      <ul v-if="readonlyRows.length" class="divide-y divide-default">
+        <li v-for="row in readonlyRows" :key="row.id" class="py-4">
+          <p class="font-semibold">{{ row.label }}</p>
+          <p v-if="row.summary" class="mt-1 text-sm text-muted">{{ row.summary }}</p>
+        </li>
+      </ul>
       <OrganizationLocationSelector
-        v-else-if="items.length"
+        v-if="items.length"
         :items="items"
         :active-item="level.child.value"
         :label-heading-level="2"
@@ -48,7 +46,7 @@
         missing-image-hint="Add one in this item’s photo editor."
         data-testid="catalog-grid"
       />
-      <DashboardEmptyState v-else-if="catalogStatus === 'success' && (!showFirstHomeSetup || (!setupPending && !setupError))" :illustration="kind === 'stay' ? '/images/offers/home.webp' : '/images/empty-states/documents.webp'" :title="`No ${activeFilterLabel.toLowerCase()} yet`" />
+      <DashboardEmptyState v-else-if="catalogStatus === 'success' && !readonlyRows.length" :illustration="kind === 'stay' ? '/images/offers/home.webp' : '/images/empty-states/documents.webp'" :title="`No ${activeFilterLabel.toLowerCase()} yet`" />
     </template>
   </DashboardIndexPanel>
 </template>
@@ -64,10 +62,16 @@ interface CatalogView {
   filters: Array<{ value: string; label: string }>
   can_create: boolean
   has_stays: boolean
+  listing_context: { first_home_setup: FirstHomeSetup | null; resume_home_setup: HomeSetupAction | null } | null
 }
 function isCatalogView(value: unknown): value is CatalogView {
   return isRecord(value) && isRecord(value.screen) && Array.isArray(value.screen.rows) && Array.isArray(value.filters)
     && typeof value.kind === 'string' && typeof value.can_create === 'boolean' && typeof value.has_stays === 'boolean'
+    && (value.listing_context === null || isRecord(value.listing_context)
+      && (value.listing_context.resume_home_setup === null || isHomeSetupAction(value.listing_context.resume_home_setup))
+      && (value.listing_context.first_home_setup === null || isRecord(value.listing_context.first_home_setup) && typeof value.listing_context.first_home_setup.title === 'string'
+        && isHomeSetupAction(value.listing_context.first_home_setup.manual) && isRecord(value.listing_context.first_home_setup.airbnb)
+        && typeof value.listing_context.first_home_setup.airbnb.can_connect === 'boolean' && isHomeSetupAction(value.listing_context.first_home_setup.airbnb)))
 }
 
 const level = useRouteLevel()
@@ -100,7 +104,8 @@ const kindFilters = computed(() => catalog.value?.filters ?? [])
 const canCreate = computed(() => catalog.value?.can_create === true)
 const newProductTo = computed(() => router.resolve({ path: `${level.path.value}/new`, query: kind.value === 'all' ? {} : { kind: kind.value === 'menu' ? 'dish' : kind.value } }).fullPath)
 const activeFilterLabel = computed(() => catalog.value?.filters.find(item => item.value === catalog.value?.kind)?.label ?? 'offerings')
-const items = computed<OrganizationLocationSelectorItem[]>(() => (catalog.value?.screen.rows ?? []).map(row => {
+const readonlyRows = computed(() => (catalog.value?.screen.rows ?? []).filter(row => !row.to && !row.native))
+const items = computed<OrganizationLocationSelectorItem[]>(() => (catalog.value?.screen.rows ?? []).filter(row => row.to || row.native).map(row => {
   if (!row.to) throw new Error('The Catalog row has no dashboard destination')
   return { id: row.id, label: row.label, imageUrl: row.image ?? null, eyebrow: row.eyebrow ?? '', summary: row.summary ?? '', to: row.to }
 }))
@@ -115,23 +120,7 @@ function isHomeSetupAction(value: unknown): value is HomeSetupAction {
 
 const showFirstHomeSetup = computed(() => canCreate.value && organization.value?.vertical === 'lodging' && catalog.value?.has_stays === false
   && (kind.value === 'stay' || (kind.value === 'all' && items.value.length === 0)))
-const loadsHomeSetup = computed(() => level.mode.value !== 'yield' && canCreate.value && organization.value?.vertical === 'lodging' && (kind.value === 'stay' || showFirstHomeSetup.value))
-const { data: setup, error: setupError, pending: setupPending } = await useAsyncData(
-  () => `first-home-setup:${organizationId}`,
-  () => loadsHomeSetup.value
-    ? dashboardApi('/api/dashboard/stay-homes', {
-        validate: (value): value is { first_home_setup: FirstHomeSetup | null; resume_home_setup: HomeSetupAction | null } => {
-          if (!isRecord(value)) return false
-          if (value.resume_home_setup !== null && !isHomeSetupAction(value.resume_home_setup)) return false
-          const setup = value.first_home_setup
-          return setup === null || (isRecord(setup) && typeof setup.title === 'string'
-            && isHomeSetupAction(setup.manual) && isRecord(setup.airbnb)
-            && typeof setup.airbnb.can_connect === 'boolean' && isHomeSetupAction(setup.airbnb))
-        },
-      })
-    : Promise.resolve({ first_home_setup: null, resume_home_setup: null }),
-  { server: false, watch: [loadsHomeSetup] },
-)
+const setup = computed(() => catalog.value?.listing_context)
 const firstHomeSetup = computed(() => setup.value?.first_home_setup)
 const firstHomeChoices = computed(() => firstHomeSetup.value ? [
   { ...firstHomeSetup.value.manual, icon: 'i-lucide-house-plus' },

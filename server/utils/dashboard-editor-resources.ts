@@ -315,7 +315,7 @@ function prepareDashboardProductMetadata(organizationId: { sql: string }, produc
         ...(access && organization.role.split(',').includes('owner') ? { listing_access: { staff_access_writes: staffAccessWritesEnabled(env), grants: listingAccessGrantsFromRows(rows[navigationEnd + 1 + (members?.queries.length ?? 0) + (schedule ? 1 : 0)]!.results) } } : {}),
         ...(members ? { member_options: members.read(rows.slice(navigationEnd + 1)) } : {}),
         ...(schedule ? { schedule: { location_id: concerns.scheduleLocation!, rules: rows[navigationEnd + 1 + (members?.queries.length ?? 0)]!.results as ProductAvailabilityRule[] } } : {}),
-        ...(editor ? { collections: product.stay ? details!.collections : [], preview_token: previewToken, locations: details!.locations, assigned_member_name: details!.assigned_member_name, pricing: details!.pricing } : {}),
+        ...(editor ? { collections: product.stay ? details!.collections : [], preview_token: previewToken, locations: details!.locations, assigned_member_name: details!.assigned_member_name, pricing: details!.pricing, kind_options: details!.kind_options } : {}),
         public_url: publicUrl, public_urls: publicUrls, preview_url: previewUrl, host_profile_published: hostProfilePublished,
         offering: details?.offering ?? null }
     },

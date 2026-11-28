@@ -5,7 +5,7 @@ import { assignedOperationsRoles, roleMatchesSql, rolesAllowing } from '~/utils/
 import type { H3Event } from 'nitro'
 import { HTTPError } from 'nitro'
 import { getRouterParam } from 'nitro/h3'
-import { executeBatch, queryFirst, type BatchQuery } from '~/server/db'
+import { executeBatch, type BatchQuery } from '~/server/db'
 import { agreementQueries, bookingAgreementFromRows } from '~/server/domain/agreements'
 import { dashboardMemberQuery, dashboardOrgQueryParam, getDashboardMemberContext, readDashboardMemberResources, prepareOrganizationLocations } from '~/server/utils/dashboard-context'
 import { readRequiredBody } from '~/server/utils/api-response'
@@ -324,12 +324,13 @@ export async function dashboardBookingCalendar(event: H3Event, query: BookingLis
 }
 
 export async function readCalendarPlacePresence(event: H3Event, orgSlug?: string) {
-  const { db, env, organization, userId } = await getDashboardMemberContext(event, { organizationSlug: orgSlug })
-  await stayAccessFor(memberAccessPrincipal(organization, { env, event }))
+  const slug = orgSlug ?? dashboardOrgQueryParam(event)
+  if (!slug) throw new HTTPError({ statusCode: 400, message: 'Choose a workspace', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
   const preloaded = event.context.dashboardCalendarPresence as { slug: string; has_places: boolean } | undefined
-  if (preloaded?.slug === organization.slug) return { has_places: preloaded.has_places }
-  const { query, params } = placesPresenceQuery({ query: '?', params: [organization.id] }, userId)
-  const row = await queryFirst<{ has_places: number }>(db, query, params)
+  if (preloaded?.slug === slug) return { has_places: preloaded.has_places }
+  const { env, organization, rows } = await readDashboardMemberResources(event, { slug }, [placesPresenceQuery({ query: BATCH_VIEWER.organization, params: [] }, { sql: BATCH_VIEWER.user })])
+  await stayAccessFor(memberAccessPrincipal(organization, { env, event }))
+  const row = rows[0]!.results[0] as { has_places: number } | undefined
   if (!row) throw new Error('Calendar places could not be read')
   return { has_places: row.has_places === 1 }
 }

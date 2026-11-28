@@ -5,7 +5,7 @@ import { prepareDashboardLocations } from '~/server/utils/dashboard-context'
 import { prepareCollectionList } from '~/server/utils/product-management'
 import { BATCH_VIEWER, isOrganizationWideRole, memberAccessPrincipal, roleAllows } from '~/server/utils/member-access'
 import { MEMBER_NAME_SQL } from '~/shared/member-scheduling'
-import { PRODUCT_KIND_LABELS, productDetailFields } from '~/shared/product-details'
+import { PRODUCT_KIND_LABELS, editableProductKinds, productDetailFields } from '~/shared/product-details'
 import { isCurrencyCode } from '~/shared/currencies'
 import { isMembershipProduct, offeredPrice } from '~/shared/memberships'
 import { formatProductMoney } from '~/utils/product-money'
@@ -51,7 +51,7 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
     const stock = (rows.at(-1)!.results as { available: number }[])[0]
     if (!stock || !Number.isSafeInteger(stock.available) || stock.available < 0) throw new Error('The offering stock could not be read')
     const stocked = stock.available
-    if (product.kind === 'stay') return { locations, collections, offering: null, assigned_member_name: assigned, pricing: null }
+    if (product.kind === 'stay') return { locations, collections, offering: null, assigned_member_name: assigned, pricing: null, kind_options: [] }
     const location = locationId ? locations.find(place => place.id === locationId && product.locations.some(binding => binding.location_id === place.id)) ?? missing('Offering not found at this location') : null
     const service = product.kind === 'service'
     const dish = product.kind === 'dish'
@@ -128,6 +128,6 @@ export function prepareDashboardOffering(organizationId: string | { sql: string 
       leaf('order-url', dish ? 'Ordering link' : item ? 'External link' : service ? 'External consultation link' : 'External booking link', product.order_url ?? undefined),
       ...(manages ? [leaf('kind', 'Type', PRODUCT_KIND_LABELS[product.kind])] : []),
     ] }
-    return { locations, collections, offering, assigned_member_name: assigned, pricing }
+    return { locations, collections, offering, assigned_member_name: assigned, pricing, kind_options: manages ? editableProductKinds(product.kind).map(value => ({ value, label: PRODUCT_KIND_LABELS[value] })) : [] }
   } }
 }

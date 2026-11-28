@@ -1,15 +1,10 @@
-import { roleMatchesSql } from '~/utils/organization-access'
+import { billingPlanActions } from '~/shared/billing-model'
 import { defineHandler, HTTPError } from 'nitro'
 import { getQuery } from 'nitro/h3'
 import { cloudflareEnv, jsonResponse } from '~/server/utils/api-response'
 import { useRuntimeConfig } from 'nitro/runtime-config'
 import { BATCH_VIEWER, assertRoleAllows  } from '~/server/utils/member-access'
-import { getCachedPlans } from '~/server/utils/billing-plans'
-import { prepareServices, type ServiceAgreement } from '~/server/utils/organization-services'
-import { strategyFromSubscription } from '~/server/utils/strategy-service'
-import { listCustomerCards } from '~/server/utils/billing-customer'
-import { SERVICES as offers, billingPlanActions  } from '~/shared/billing-model'
-import { prepareOrganizationBillingStatus, getStripe, getOrganizationBillingStatus, getOrganizationSubscriptionPrice, hasBillingUpdatePermission, scheduledPlanChange  } from '~/server/utils/billing'
+import { prepareOrganizationBillingScreen, getOrganizationBillingStatus, getOrganizationSubscriptionPrice, hasBillingUpdatePermission, scheduledPlanChange  } from '~/server/utils/billing'
 import { readDashboardMemberResources, resolveRequestedOrganization } from '~/server/utils/dashboard-context'
 import { getAuthSession } from '~/server/utils/auth'
 
@@ -22,31 +17,12 @@ export default defineHandler(async (event) => {
   if (screenQuery.view !== undefined && screenQuery.view !== 'screen') throw new HTTPError({ statusCode: 400, message: 'Choose a valid billing view', data: { code: 'INVALID_QUERY', field: 'view' } })
   if (screenQuery.view === 'screen') {
     if (typeof screenQuery.organization_id !== 'string' || !screenQuery.organization_id.trim()) throw new HTTPError({ statusCode: 400, message: 'Choose a workspace', data: { code: 'ORGANIZATION_REQUIRED', field: 'organization_id' } })
-    const plan = prepareOrganizationBillingStatus({ sql: BATCH_VIEWER.organization })
-    const services = prepareServices({ sql: BATCH_VIEWER.organization })
-    const { organization, rows } = await readDashboardMemberResources(event, screenQuery.organization_id, [...plan.queries, services.query, { query: `SELECT u.name, u.email FROM member m JOIN user u ON u.id = m.userId WHERE m.organizationId = ${BATCH_VIEWER.organization} AND ${roleMatchesSql('m.role', ['owner'])} ORDER BY m.id`, params: [] }])
+    const plan = prepareOrganizationBillingScreen({ sql: BATCH_VIEWER.organization })
+    const { organization, rows } = await readDashboardMemberResources(event, screenQuery.organization_id, plan.queries)
     if (screenQuery.org !== undefined && screenQuery.org !== organization.slug) throw new HTTPError({ statusCode: 400, message: 'Organization context conflict', data: { code: 'ORGANIZATION_CONTEXT_CONFLICT', field: 'org' } })
     await assertRoleAllows({ ...organization, permissions: { billing: ['read'] } })
     try {
-      const status = plan.read(rows.slice(0, plan.queries.length), organization.id)
-      const stripe = getStripe(env, env.DB)
-      const native = status.stripeSubscriptionId ? await stripe.subscriptions.retrieve(status.stripeSubscriptionId, { expand: ['items.data.price.product', 'items.data.price.tiers'] }) : null
-      const serviceRows = rows[plan.queries.length]!.results as ServiceAgreement[]
-      const owners = rows[plan.queries.length + 1]!.results as Array<{ name: string; email: string }>
-      if (!owners.length) throw new Error('This organization has no owner')
-      const owner_name = owners.map(owner => owner.name || owner.email).join(', ')
-      const [subscription_price, scheduled_plan, plans, payment_methods, homes] = await Promise.all([
-        getOrganizationSubscriptionPrice(env, status, native ?? undefined),
-        status.stripeScheduleId ? scheduledPlanChange(env, status.stripeScheduleId) : null,
-        getCachedPlans(env, useRuntimeConfig().app.buildId),
-        status.stripeCustomerId ? listCustomerCards(stripe, status.stripeCustomerId) : [],
-        plan.homes.read(rows.slice(1, plan.queries.length), env, organization.id, 0, native ?? undefined),
-      ])
-      return jsonResponse({ success: true, user_role: organization.role, organization_name: organization.name, owner_name,
-        billing: { ...status, subscription_price, scheduled_plan, organization_id: organization.id,
-          can_update: await hasBillingUpdatePermission(organization.id, organization.role), actions: billingPlanActions(status, scheduled_plan) },
-        plans, homes, payment_methods, services: { ...services.read(serviceRows), strategy: strategyFromSubscription(native, serviceRows.some(row => row.service as string === 'strategy')) }, offers,
-      }, { headers: { 'cache-control': 'private, no-store' } })
+      return jsonResponse(await plan.read(rows, organization, env, useRuntimeConfig().app.buildId), { headers: { 'cache-control': 'private, no-store' } })
     } catch (cause) {
       if (cause instanceof HTTPError) throw cause
       throw new HTTPError({ statusCode: 502, message: 'Plan and billing could not be read', data: { code: 'BILLING_SCREEN_UNAVAILABLE', field: 'billing' }, cause })

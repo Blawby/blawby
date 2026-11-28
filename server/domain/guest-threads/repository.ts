@@ -335,8 +335,8 @@ function previewFrom(message: LatestMessage, context: { guestName: string; viewe
  * the nav's dot: the list's access scope and the one unread statement, without
  * the page's filters.
  */
-function currentUnreadScope(organizationId: string | { sql: string } | null, userId: string | { sql: string }, now: Date) {
-  const scope = inboxScope(organizationId, { userId, buyerAudience: organizationId === null, mailbox: 'current' }, now.toISOString())
+function currentUnreadScope(organizationId: string | { sql: string } | null | undefined, userId: string | { sql: string }, now: Date) {
+  const scope = inboxScope(organizationId === undefined ? { sql: 'gt.organization_id' } : organizationId, { userId, buyerAudience: organizationId === null, mailbox: 'current' }, now.toISOString())
   const unread = unreadSql('gt', userId)
   return { from: scope.from, where: `${scope.where} AND ${unread.sql}`, params: [...scope.params, ...unread.params] }
 }
@@ -408,24 +408,44 @@ export async function readGuestInbox(db: DbClient, opts: ListGuestThreadsOptions
   return { threads: presentConversationList(list!.results as ListRow[], guest, now), has_unread: presentHasUnread(unread) }
 }
 
-/**
- * The app icon's number: the unread conversations a person sees in every
- * organization they belong to, and their own as a guest. It is sent with a
- * notification and is not read by any page.
- */
-export async function unreadBadge(db: DbClient, userId: string): Promise<number> {
-  const now = new Date()
+/** The unread count used by notifications and the app's cross-workspace badge. */
+export function unreadBadgeQuery(userId: string | { sql: string }, now = new Date()): BatchQuery {
   const guest = currentUnreadScope(null, userId, now)
-  const current = mailboxWhere('current', now.toISOString())
-  const memberAccess = participantGuard('gt', userId, 'member')
-  const unread = unreadSql('gt', userId)
-  const row = await queryFirst<{ count: number }>(db, `
-    SELECT (SELECT COUNT(*) FROM ${guest.from} WHERE ${guest.where})
-      + (SELECT COUNT(*) FROM ${guest.from}
-        WHERE ${memberAccess.sql} AND ${HAS_CONVERSATION_SQL}${current.sql} AND ${unread.sql}) AS count`,
-    [...guest.params, userId, ...memberAccess.params, ...current.params, ...unread.params])
-  if (!row) throw new Error('Unread conversations for the app badge could not be counted')
-  return Number(row.count)
+  const members = currentUnreadScope(undefined, userId, now)
+  return { query: `SELECT (SELECT COUNT(*) FROM ${guest.from} WHERE ${guest.where})
+      + (SELECT COUNT(*) FROM ${members.from} WHERE ${members.where}) AS count`,
+    params: [...guest.params, ...members.params] }
+}
+
+function unreadBadgeFrom(result: D1Result | undefined): number {
+  const row = result?.results[0] as { count: number } | undefined
+  if (!row || !Number.isSafeInteger(row.count) || row.count < 0) throw new Error('Unread conversations for the app badge could not be counted')
+  return row.count
+}
+
+export async function unreadBadge(db: DbClient, userId: string): Promise<number> {
+  const [result] = await executeBatch(db, [unreadBadgeQuery(userId)])
+  return unreadBadgeFrom(result)
+}
+
+/** The account and every current membership use the same unread scope, with no per-workspace requests. */
+export function prepareUnreadMailboxes(now = new Date()) {
+  const userId = { sql: 'badge_viewer.user_id' }
+  const account = hasUnreadQuery(null, userId, now)
+  const workspace = currentUnreadScope(undefined, userId, now)
+  const badge = unreadBadgeQuery(userId, now)
+  return { queries: [{ ...account, query: `${account.query} FROM viewer badge_viewer` }, {
+    query: `WITH unread_workspaces AS MATERIALIZED (
+        SELECT gt.organization_id FROM viewer badge_viewer CROSS JOIN ${workspace.from} WHERE ${workspace.where} GROUP BY gt.organization_id
+      ) SELECT mailbox_member.organizationId AS organization_id, unread_workspaces.organization_id IS NOT NULL AS has_unread
+      FROM member mailbox_member CROSS JOIN viewer badge_viewer LEFT JOIN unread_workspaces ON unread_workspaces.organization_id=mailbox_member.organizationId
+      WHERE mailbox_member.userId=${userId.sql} ORDER BY mailbox_member.organizationId`, params: workspace.params,
+  }, { ...badge, query: `${badge.query} FROM viewer badge_viewer` }], read([accountRows, organizationRows, badgeRows]: D1Result[]) {
+    return { account_has_unread: presentHasUnread(accountRows),
+      organizations: (organizationRows!.results as { organization_id: string; has_unread: number }[]).map(row => ({ organization_id: row.organization_id, has_unread: row.has_unread === 1 })),
+      badge_count: unreadBadgeFrom(badgeRows),
+    }
+  } }
 }
 
 /** Which of these conversations the viewer has unread, by the one statement. */

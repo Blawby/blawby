@@ -69,6 +69,12 @@ export function formatPlanPrice(cents: number): string {
   return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
 
+/** The existing plan-price formatter for views that already have their provider amount. */
+export function formatPlanRecurring(cents: number, currency: string): string {
+  if (currency.toUpperCase() !== 'USD') throw new Error(`Plan prices are sold in USD, not ${currency}`)
+  return `${formatPlanPrice(cents)}/mo`
+}
+
 /** A rate as the percent Stripe writes it: 0.014 → "1.4". */
 export function ratePercent(rate: number): string {
   return String(Math.round(rate * 1e6) / 1e4)
@@ -256,3 +262,36 @@ export const SURCHARGE_POLICY = Object.freeze({
   minimum_basis_points: 1,
   maximum_basis_points: 10_000,
 })
+
+/** Ordered service requirements and the permitted next step, shared by web and native. */
+export function billingServiceScreen(service: 'managed_ads' | 'strategy', requirements: Record<string, boolean>, input: { on: boolean; can_update: boolean; org_slug: string; subscription_status?: string }) {
+  const definitions = service === 'managed_ads' ? [
+    { id: 'google_ads_usd', label: 'Google Ads connected and billed in USD' },
+    { id: 'business_plan', label: 'Business subscription with managed-ads billing' },
+    { id: 'default_payment_method', label: 'Default billing payment method' },
+  ] : [{ id: 'paid_plan', label: 'Active paid subscription' }]
+  const rows = definitions.map(row => {
+    const met = requirements[row.id]
+    if (typeof met !== 'boolean') throw new Error(`Service requirement ${row.id} was not read`)
+    return { ...row, met }
+  })
+  const base = `/dashboard/${encodeURIComponent(input.org_slug)}`
+  let next_action: { id: 'connect_google_ads' | 'review_plan' | 'payment_method'; label: string; detail: string; to: string | null } | null = null
+  if (input.can_update && !input.on) {
+    if (service === 'managed_ads' && !requirements.google_ads_usd) next_action = {
+      id: 'connect_google_ads', label: 'Connect Google Ads', detail: 'Choose the Google Ads account you want Chris to manage. Managed ads uses accounts billed in USD.', to: `${base}/integrations/google-ads?service=managed-ads`,
+    }
+    else if (input.subscription_status === 'past_due') next_action = {
+      id: 'payment_method', label: 'Resolve overdue payment', detail: 'Review the unpaid subscription in Stripe before turning on this service.', to: null,
+    }
+    else if (service === 'managed_ads' ? !requirements.business_plan : !requirements.paid_plan) next_action = {
+      id: 'review_plan', label: service === 'managed_ads' ? 'Review Business plan' : 'Choose a plan',
+      detail: service === 'managed_ads' ? 'Business includes the billing support for managed ads.' : 'Choose a paid plan to add this service to your subscription.',
+      to: `${base}/billing/upgrade?service=${service === 'managed_ads' ? 'managed-ads' : 'strategy'}`,
+    }
+    else if (service === 'managed_ads' && !requirements.default_payment_method) next_action = {
+      id: 'payment_method', label: 'Add payment method', detail: 'Save a default payment method for your plan in Stripe.', to: null,
+    }
+  }
+  return { requirements: rows, next_action, can_agree: input.can_update && !input.on && rows.every(row => row.met), can_end: input.can_update && input.on }
+}

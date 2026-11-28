@@ -6,18 +6,16 @@
     this account delete; a new organization starts here.
   -->
   <DashboardIndexPanel id="account-organizations" title="Organizations">
-    <UAlert v-if="marksError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(marksError, 'Organization details could not be loaded.')" />
-    <UAlert v-if="permissionError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="permissionError" />
-    <UAlert v-if="setupError" class="mb-6" color="error" variant="soft" :description="getErrorMessage(setupError, 'Website setup could not be loaded.')">
-      <template #actions><UButton color="error" variant="soft" size="xs" @click="() => refreshSetup()">Retry</UButton></template>
+    <UAlert v-if="marksError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(marksError, 'Organization details could not be loaded.')">
+      <template #actions><UButton color="error" variant="soft" size="xs" @click="() => refreshOrganizations()">Retry</UButton></template>
     </UAlert>
-    <DashboardListEditor
+    <DashboardListEditor v-if="marksData"
       v-model:editing="editing"
       title="Organizations"
       :items="items"
       empty-title="No organizations yet"
       empty-illustration="/images/offers/home.webp"
-      add-label="New organization"
+      :add-label="createAction?.label"
       :addable="Boolean(createAction && !resumeAction)"
       :add-to="createAction?.to"
       :read-only="!deletable.size"
@@ -49,10 +47,9 @@
 <script setup lang="ts">
 import DashboardListEditor from '~/components/dashboard/DashboardListEditor.vue'
 import { dashboardScopeHeaderModelKey } from '~/lib/components/workspace/dashboard/dashboardScopeHeaderContext'
-import { useOrganizationDeletePermission } from '~/composables/useOrganizationDeletePermission'
 import { organizationRoleLabel } from '~/utils/organization-access'
 import { getVerticalLabel } from '~/utils/vertical-copy'
-import { readActiveWebsiteDraft } from '~/composables/useOnboardingDraft'
+import { WEBSITE_ONBOARDING_PATH, type WebsiteSetupAction } from '~/shared/onboarding-flow'
 import { onboardingLink } from '~/composables/useOnboardingFlow'
 
 definePageMeta({ layout: 'dashboard' })
@@ -61,15 +58,15 @@ const level = useRouteLevel()
 const route = useRoute()
 const model = inject(dashboardScopeHeaderModelKey)!
 const editing = ref(false)
-const organizations = computed(() => model.value.peers.filter((peer): peer is typeof peer & { id: string } => Boolean(peer.id)))
-const { deletable, permissionError } = await useOrganizationDeletePermission(computed(() => organizations.value.map(organization => organization.id)))
+const organizations = computed(() => model.value.peers.filter((peer): peer is typeof peer & { id: string } => Boolean(peer.id) && marks.value.has(peer.id!)).map(peer => ({...peer,label:marks.value.get(peer.id)!.name})))
 // Each organization's mark, as Airbnb's listing rows carry their picture, and what it is to this account: `Vacation rental · Owner`.
-type OrganizationMark = { id: string; image_url: string | null; vertical: string; role: string }
-const isOrganizationList = (value: unknown): value is { organizations: OrganizationMark[] } => isRecord(value) && Array.isArray(value.organizations) && value.organizations.every(row => isRecord(row) && typeof row.id === 'string' && (row.image_url === null || typeof row.image_url === 'string') && typeof row.vertical === 'string' && typeof row.role === 'string')
-const [{ data: marksData, error: marksError }, { data: setup, error: setupError, refresh: refreshSetup }] = await Promise.all([
-  useAsyncData('account-organizations', () => applicationFetch<{ organizations: OrganizationMark[] }>('/api/account/organizations', { validate: isOrganizationList })),
-  useAsyncData('account-organization-setup', () => readActiveWebsiteDraft()),
-])
+type OrganizationMark = { id: string; name: string; image_url: string | null; vertical: string; role: string; can_delete: boolean }
+type WorkspaceScreen = { organizations: OrganizationMark[]; website_setup_action: WebsiteSetupAction | null }
+const isOrganizationList = (value: unknown): value is WorkspaceScreen => isRecord(value) && Array.isArray(value.organizations)
+  && value.organizations.every(row => isRecord(row) && typeof row.id === 'string' && typeof row.name === 'string' && (row.image_url === null || typeof row.image_url === 'string') && typeof row.vertical === 'string' && typeof row.role === 'string' && typeof row.can_delete === 'boolean')
+  && (value.website_setup_action === null || isRecord(value.website_setup_action) && typeof value.website_setup_action.label === 'string' && value.website_setup_action.to === WEBSITE_ONBOARDING_PATH && (value.website_setup_action.kind === 'create' || value.website_setup_action.kind === 'resume'))
+const {data:marksData,error:marksError,refresh:refreshOrganizations} = await useAsyncData('account-organizations',()=>applicationFetch<WorkspaceScreen>('/api/account/organizations',{query:{view:'workspaces'},validate:isOrganizationList}))
+const deletable = computed(()=>new Set(marksData.value?.organizations.filter(row=>row.can_delete).map(row=>row.id) ?? []))
 const marks = computed(() => new Map((marksData.value?.organizations ?? []).map(row => [row.id, row])))
 const items = computed(() => organizations.value.map(organization => ({
   id: organization.id,
@@ -80,10 +77,9 @@ const items = computed(() => organizations.value.map(organization => ({
   select: () => organization.onSelect?.(),
   removable: deletable.value.has(organization.id),
 })))
-const resumeAction = computed(() => setup.value?.resume_action)
+const resumeAction = computed(() => marksData.value?.website_setup_action?.kind === 'resume' ? marksData.value.website_setup_action : null)
 const createAction = computed(() => {
-  if (!setup.value) return null
-  const action = resumeAction.value ?? model.value.createAction
+  const action = marksData.value?.website_setup_action
   return action ? { ...action, to: onboardingLink(action.to, route.fullPath) } : null
 })
 

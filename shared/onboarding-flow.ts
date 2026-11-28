@@ -5,6 +5,9 @@ import type { CurrencyCode } from '~/shared/currencies'
 
 export const WEBSITE_ONBOARDING_PATH = '/dashboard/onboarding'
 export const WEBSITE_ONBOARDING_EXIT_PATH = '/dashboard/account/profile/organizations'
+export const WEBSITE_ONBOARDING_CREATE_ACTION = { label: 'Set up your website', to: WEBSITE_ONBOARDING_PATH } as const
+export const WEBSITE_ONBOARDING_RESUME_ACTION = { label: 'Continue website setup', to: WEBSITE_ONBOARDING_PATH } as const
+export type WebsiteSetupAction = WebsiteOnboardingResumeAction & { kind: 'create' | 'resume' }
 
 export interface WebsiteOnboardingResumeAction {
   label: string

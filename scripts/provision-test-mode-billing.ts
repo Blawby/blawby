@@ -70,6 +70,8 @@ for (const row of rows) {
     // Only the row's own subscription settles its organization's customer.
     if (customerOf(existing) !== row.stripeCustomerId) throw new Error(`Subscription ${existing.id} belongs to ${customerOf(existing)}, not ${row.referenceId}'s customer ${row.stripeCustomerId}`)
     if (row.organizationCustomerId !== row.stripeCustomerId) d1(`UPDATE organization SET stripeCustomerId = ${sqlString(row.stripeCustomerId)} WHERE id = ${sqlString(row.referenceId)}`)
+    if (existing.metadata.subscriptionId && existing.metadata.subscriptionId !== row.id) throw new Error(`Subscription ${existing.id} belongs to a different Better Auth subscription`)
+    if (!existing.metadata.subscriptionId) await stripe.subscriptions.update(existing.id, { metadata: { subscriptionId: row.id } })
     continue
   }
   const plan = plans.get(row.plan)
@@ -102,7 +104,7 @@ for (const row of rows) {
       metadata: { ...source, blawby_source_subscription: row.stripeSubscriptionId!, referenceId: row.referenceId, plan: row.plan },
     }, { idempotencyKey: `test-mode-billing:subscription:v4:${row.stripeSubscriptionId}` })
   // A subscription found by its source ID is used only if it is the one made for this row.
-  if (customerOf(subscription) !== customer.id || subscription.metadata.referenceId !== row.referenceId || subscription.metadata.plan !== row.plan || !['active', 'trialing', 'past_due'].includes(subscription.status)) {
+  if (customerOf(subscription) !== customer.id || subscription.metadata.referenceId !== row.referenceId || subscription.metadata.plan !== row.plan || (subscription.metadata.subscriptionId && subscription.metadata.subscriptionId !== row.id) || !['active', 'trialing', 'past_due'].includes(subscription.status)) {
     throw new Error(`Test-mode subscription ${subscription.id} does not match ${row.referenceId}'s ${row.plan} subscription`)
   }
   // One made by an earlier run is brought to this run's prices: the catalog may have changed since.
@@ -115,6 +117,7 @@ for (const row of rows) {
   }
   d1(`UPDATE subscription SET stripeCustomerId = ${sqlString(customer.id)}, stripeSubscriptionId = ${sqlString(subscription.id)}, stripeScheduleId = NULL WHERE id = ${sqlString(row.id)};
 UPDATE organization SET stripeCustomerId = ${sqlString(customer.id)} WHERE id = ${sqlString(row.referenceId)};`)
+  if (!subscription.metadata.subscriptionId) await stripe.subscriptions.update(subscription.id, { metadata: { subscriptionId: row.id } })
   provisioned++
   console.log(`${row.name ?? row.referenceId}: ${row.plan} → ${subscription.id}`)
 }

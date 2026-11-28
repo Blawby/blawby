@@ -1,5 +1,3 @@
-import { STAY_HOME_ACCESSIBILITY_FEATURES, STAY_ROOM_ACCESSIBILITY_FEATURES } from './stay-accessibility'
-
 /**
  * The fixed vocabularies a place to stay is described in: what kind of place
  * it is, what it offers, how it cancels, how guests get in and what they do
@@ -456,22 +454,4 @@ export function stayNightlyGroups(nightly: readonly number[]): Array<{ price: nu
   const groups = new Map<number, number>()
   for (const price of nightly) groups.set(price, (groups.get(price) ?? 0) + 1)
   return [...groups].map(([price, nights]) => ({ price, nights }))
-}
-
-/** Ordered entries shared by the home editor and its vocabulary operation. */
-const entries = <T extends object>(vocabulary: Record<string, T>) => Object.entries(vocabulary).map(([code, entry]) => ({ code, ...entry }))
-
-export const STAY_HOME_VOCABULARY = {
-  property_type_groups: Object.entries(STAY_PROPERTY_TYPE_GROUPS).map(([code, group]) => ({
-    code, label: group.label, types: group.types.map(type => ({ code: type, ...STAY_PROPERTY_TYPES[type] })),
-  })),
-  amenity_groups: Object.entries(STAY_AMENITY_GROUPS).map(([code, group]) => ({
-    code, label: group.label, amenities: group.amenities.map(amenity => ({ code: amenity, ...STAY_AMENITIES[amenity] })),
-  })),
-  cancellation_policies: entries(STAY_CANCELLATION_POLICIES),
-  long_term_cancellation_policies: entries(STAY_LONG_TERM_CANCELLATION_POLICIES),
-  check_in_methods: entries(STAY_CHECK_IN_METHODS),
-  checkout_tasks: entries(STAY_CHECKOUT_TASKS),
-  accessibility_features: entries(STAY_HOME_ACCESSIBILITY_FEATURES),
-  room_accessibility_features: entries(STAY_ROOM_ACCESSIBILITY_FEATURES),
 }

@@ -3,8 +3,7 @@ import { getQuery, getRouterParam } from 'nitro/h3'
 import { jsonResponse } from '~/server/utils/api-response'
 import { dashboardOrgQueryParam, readDashboardMemberResources } from '~/server/utils/dashboard-context'
 import { memberAccessPrincipal } from '~/server/utils/member-access'
-import { prepareStayHomeDocument, stayAccessFor } from '~/server/domain/stays'
-import { STAY_HOME_VOCABULARY } from '~/shared/stay-listing'
+import { prepareStayHomeDocument, STAY_HOME_VOCABULARY, stayAccessFor } from '~/server/domain/stays'
 
 export default defineHandler(async event => {
   const productId = getRouterParam(event, 'product_id')

@@ -8,7 +8,7 @@ import { addLocalDays, formatCalendarRange, formatTimestamp, localDateAt } from 
 import { PRODUCT_DETAIL_FIELDS, type ProductKind } from '~/shared/product-details'
 import { platformLocale } from '~/shared/platform-locales'
 import { stayGuestFirstName } from '~/shared/bookings'
-import { UPCOMING_RESERVATION_DAYS, todayIcon, type TodayIcon } from '~/shared/dashboard-today'
+import { UPCOMING_RESERVATION_DAYS, todayIcon, type TodayDestination, type TodayIcon } from '~/shared/dashboard-today'
 
 /*
   What Today suggests, read from what the business has already stored: setup it
@@ -27,6 +27,7 @@ export interface OpportunityView {
   icon: TodayIcon
   /** Where the owner does it in the dashboard. */
   path: string
+  destination: TodayDestination | null
   product_id: string | null
   location_id: string | null
   /** The guest conversation a welcome is sent in; null for every setup item. */
@@ -38,10 +39,10 @@ export interface OpportunityView {
 
 /** The offering a business of each vertical starts its catalog with, and where it adds the first one. */
 const FIRST_OFFERING = {
-  lodging: { kind: 'stay', title: 'Add your first home', detail: 'Start your listing.', path: firstHomeSetupPath },
-  experience: { kind: 'experience', title: 'Add your first experience', detail: 'Give guests something to book.', path: firstExperienceSetupPath },
-  restaurant: { kind: 'dish', title: 'Add your first dish', detail: 'Start your menu.', path: (slug: string) => `${productEditorPath(slug, 'new')}?kind=dish` },
-  service: { kind: 'service', title: 'Add your first practice area', detail: 'Start with the name clients will see.', path: firstPracticeAreaPath },
+  lodging: { kind: 'stay', native: 'create-stay', title: 'Add your first home', detail: 'Start your listing.', path: firstHomeSetupPath },
+  experience: { kind: 'experience', native: 'guided-offering', title: 'Add your first experience', detail: 'Give guests something to book.', path: firstExperienceSetupPath },
+  restaurant: { kind: 'dish', native: 'create-offering', title: 'Add your first dish', detail: 'Start your menu.', path: (slug: string) => `${productEditorPath(slug, 'new')}?kind=dish` },
+  service: { kind: 'service', native: 'guided-offering', title: 'Add your first practice area', detail: 'Start with the name clients will see.', path: firstPracticeAreaPath },
 } as const
 const FIRST_KINDS = JSON.stringify(Object.fromEntries(Object.entries(FIRST_OFFERING).map(([vertical, offering]) => [vertical, offering.kind])))
 
@@ -85,7 +86,7 @@ export function setupQueries(organization: { sql: string; params?: unknown[] }, 
             ${locationId ? 'AND (pr.location_id IS NULL OR pr.location_id = ?)' : ''})
       ORDER BY p.created_at, p.id`, params: [...organization.params ?? [], ...(locationId ? [locationId] : []), at, at, ...(locationId ? [locationId] : [])] },
     { query: `SELECT * FROM (
-        SELECT p.id, p.name, NULL AS slug, 'product' AS owner_type,
+        SELECT p.id, p.name, p.kind, NULL AS slug, 'product' AS owner_type,
           CASE WHEN p.kind <> 'service' AND NOT EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = p.organization_id
             AND m.owner_type = 'product' AND m.owner_id = p.id AND m.slot IN ('image', 'gallery') AND m.status = 'active') THEN 'photo' ELSE 'description' END AS missing,
           (CASE WHEN trim(p.description) <> '' THEN 1 ELSE 0 END + CASE WHEN p.kind <> 'service' AND EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = p.organization_id AND m.owner_type = 'product' AND m.owner_id = p.id AND m.slot IN ('image', 'gallery') AND m.status = 'active') THEN 1 ELSE 0 END) AS completed,
@@ -94,7 +95,7 @@ export function setupQueries(organization: { sql: string; params?: unknown[] }, 
           ${locationId ? 'AND EXISTS (SELECT 1 FROM product_locations l WHERE l.organization_id = p.organization_id AND l.product_id = p.id AND l.location_id = ?)' : ''}
           AND (trim(p.description) = '' OR p.kind <> 'service' AND NOT EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = p.organization_id
             AND m.owner_type = 'product' AND m.owner_id = p.id AND m.slot IN ('image', 'gallery') AND m.status = 'active'))
-        UNION ALL SELECT l.id, l.title, l.slug, 'business_location', 'photo', 0 AS completed, 1 AS total FROM business_locations l
+        UNION ALL SELECT l.id, l.title, NULL AS kind, l.slug, 'business_location', 'photo', 0 AS completed, 1 AS total FROM business_locations l
         WHERE l.organization_id = ${organization.sql} AND l.status = 'active' ${locationId ? 'AND l.id = ?' : ''}
           AND NOT EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = l.organization_id
             AND m.owner_type = 'business_location' AND m.owner_id = l.id AND m.slot IN ('image', 'gallery') AND m.status = 'active')
@@ -108,27 +109,27 @@ export function setupViews(factRows: unknown[], unpricedRows: unknown[], improve
   if (!organization) return null
   const slug = organization.slug, organizationId = organization.id
   const items: OpportunityView[] = []
-  const offer = (id: string, statusLine: string, title: string, detail: string, path: string, icon: TodayIcon, productId: string | null = null, progress?: OpportunityView['progress']) =>
-    items.push({ ...(progress ? { progress } : {}), id, status_line: statusLine, title, detail, icon, path, product_id: productId, location_id: input.locationId ?? null, conversation_id: null, message: null })
+  const offer = (id: string, statusLine: string, title: string, detail: string, path: string, icon: TodayIcon, native: string, query: Record<string, string>, productId: string | null = null, progress?: OpportunityView['progress']) =>
+    items.push({ ...(progress ? { progress } : {}), id, status_line: statusLine, title, detail, icon, path, destination: { native, title, query }, product_id: productId, location_id: input.locationId ?? null, conversation_id: null, message: null })
 
   // Stripe is reviewing an account that is waiting on it; there is nothing for the owner to do yet.
   if (!organization.payments_ready && organization.stripe_status !== 'pending_review') {
-    offer(`payments.connect:${organizationId}`, 'Payments', organization.stripe_status ? 'Finish setting up payments' : 'Set up payments', 'Connect with Stripe.', `/dashboard/${encodeURIComponent(slug)}/payments/payout-method`, 'i-lucide-credit-card', null, { completed: 0, total: 1, label: 'Payments enabled' })
+    offer(`payments.connect:${organizationId}`, 'Payments', organization.stripe_status ? 'Finish setting up payments' : 'Set up payments', 'Connect with Stripe.', `/dashboard/${encodeURIComponent(slug)}/payments/payout-method`, 'i-lucide-credit-card', 'payments', {}, null, { completed: 0, total: 1, label: 'Payments enabled' })
   }
   const first = FIRST_OFFERING[organization.vertical as keyof typeof FIRST_OFFERING]
-  if (first && !organization.has_offering) offer(`product.create:${organizationId}`, 'Catalog', first.title, first.detail, first.path(slug), 'i-lucide-list-checks')
+  if (first && !organization.has_offering) offer(`product.create:${organizationId}`, 'Catalog', first.title, first.detail, first.path(slug), 'i-lucide-list-checks', first.native, { kind: first.kind })
   for (const product of unpricedRows as Array<{ id: string; name: string }>) {
-    offer(`product.readiness:${product.id}`, 'Catalog', `Set a booking price for “${product.name}”`, 'This experience needs a price before guests can book it on your site.', `${productEditorPath(slug, product.id)}/price`, 'i-lucide-list-checks', product.id)
+    offer(`product.readiness:${product.id}`, 'Catalog', `Set a booking price for “${product.name}”`, 'This experience needs a price before guests can book it on your site.', `${productEditorPath(slug, product.id)}/price`, 'i-lucide-list-checks', 'offering', { product_id: product.id, field: 'price' }, product.id)
   }
-  for (const row of improvementRows as Array<{ id: string; name: string; slug: string | null; owner_type: string; missing: string; completed: number; total: number }>) {
+  for (const row of improvementRows as Array<{ id: string; name: string; kind: ProductKind | null; slug: string | null; owner_type: string; missing: string; completed: number; total: number }>) {
     const location = row.owner_type === 'business_location'
     const path = location ? `${locationEditorPath(slug, row.slug!)}/photos` : `${productEditorPath(slug, row.id)}/${row.missing === 'photo' ? 'photo' : 'description'}`
     offer(`${row.owner_type}.${row.missing}:${row.id}`, location ? 'Location' : 'Catalog',
       row.missing === 'photo' ? `Add photos of “${row.name}”` : `Describe “${row.name}”`,
       row.missing === 'photo' ? 'Help people see what to expect.' : 'Help people decide whether it’s right for them.', path,
-      'i-lucide-list-checks', location ? null : row.id, { completed: row.completed, total: row.total, label: location ? 'Photos added' : 'Details completed' })
+      'i-lucide-list-checks', location ? 'business-location-photos' : row.kind === 'stay' ? 'stay' : 'offering', location ? { location_id: row.id } : { product_id: row.id, field: row.missing === 'photo' ? 'photo' : 'description' }, location ? null : row.id, { completed: row.completed, total: row.total, label: location ? 'Photos added' : 'Details completed' })
   }
-  if (!items.length && !organization.has_post) offer(`marketing.post:${organizationId}`, 'Marketing', 'Create a post for your business', 'Share something people can look forward to.', `/dashboard/${encodeURIComponent(slug)}/website/posts/new`, 'i-lucide-list-checks')
+  if (!items.length && !organization.has_post) offer(`marketing.post:${organizationId}`, 'Marketing', 'Create a post for your business', 'Share something people can look forward to.', `/dashboard/${encodeURIComponent(slug)}/website/posts/new`, 'i-lucide-list-checks', 'website-content', { kind: 'post' })
   return { slug, vertical: organization.vertical, opportunities: items }
 }
 
@@ -138,7 +139,7 @@ export function bookingWelcomeViews(rows: unknown[], input: { now: Date; slug: s
     id: `booking.welcome:${welcome.requestId}`, status_line: 'Messages',
     title: welcome.kind === 'stay' ? 'Share info about your place' : 'Share how to prepare',
     detail: `Help ${welcome.guestFirstName ?? `your ${welcome.kind === 'stay' ? 'guest' : resolveBookingPresentation(welcome.productKind, input.vertical).counterpartyNoun}`} get ready`,
-    icon: todayIcon(welcome.productKind), path: guestConversationPath(input.slug, welcome.requestId),
+    icon: todayIcon(welcome.productKind), path: guestConversationPath(input.slug, welcome.requestId), destination: null,
     product_id: welcome.productId, location_id: welcome.locationId, conversation_id: welcome.requestId, message: welcome.message,
   }))
 }

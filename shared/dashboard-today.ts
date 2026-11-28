@@ -52,6 +52,12 @@ export function guestGroup(name: string | null, party: number): string {
  * opens the conversation about that booking or job. Every string is formatted
  * on the server; web and the app draw it as it comes.
  */
+export interface TodayDestination {
+  native: string
+  title: string
+  query: Record<string, string>
+}
+
 export interface TodayItem {
   /** `booking:<id>`, `arrival:<id>`, `departure:<id>`, `class:<session>`, `task:<id>`. */
   id: string
@@ -69,6 +75,7 @@ export interface TodayItem {
   action: { title: string; detail: string }
   /** The conversation about it, its record when the viewer has no seat in one, or the editor that finishes a setup step; none for a task someone added. */
   to: string | null
+  destination: TodayDestination | null
   /** The welcome the conversation opens with, for the owner to review and send. */
   draft: string | null
   /** A task someone added closes from its card: POST `{}` to this path. */

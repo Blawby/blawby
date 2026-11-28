@@ -9,6 +9,7 @@ export const dashboardMenuSchema = z.object({
   navigation: z.array(navigationRow),
   permissions: z.object({ payments: z.boolean(), billing: z.boolean(), team: z.boolean(), invite: z.boolean() }),
   primary_action: navigationRow.nullable(),
+  promo: z.object({ id: z.string(), headline: z.string(), summary: z.string(), illustration: z.string(), to: z.string() }).nullable(),
   presentation: dashboardPresentationSchema,
   cards: z.array(z.object({ id: z.string(), title: z.string(), value: z.string(), detail: z.string(), symbol: z.string(), photos: z.array(z.string()), bars: z.array(z.number()) })),
   insights: insightsIndexSchema.nullable(),

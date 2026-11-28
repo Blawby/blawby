@@ -11,6 +11,9 @@ import { paymentMonths, paymentMonthsQuery } from '~/server/domain/payments/earn
 import { BATCH_VIEWER, roleAllows } from '~/server/utils/member-access'
 import { roleMatchesSql, rolesAllowing } from '~/utils/organization-access'
 import { paymentMoney } from '~/shared/payment-display'
+import { offerDestination, offerSummary, planOffers } from '~/shared/offers'
+import { prepareOrganizationPlan } from '~/server/utils/billing-access'
+import { getPlanEntitlements } from '~/server/utils/billing-entitlements'
 
 
 export function prepareDashboardMenu(native = false) {
@@ -19,11 +22,12 @@ export function prepareDashboardMenu(native = false) {
   const readsAnalytics = roleMatchesSql(BATCH_VIEWER.role!, rolesAllowing({ analytics: ['read'] }))
   const scope = { sql: `CASE WHEN ${readsPayments} THEN ${BATCH_VIEWER.organization} END` }
   const insights = prepareInsightsIndex()
+  const billing = prepareOrganizationPlan({ sql: BATCH_VIEWER.organization })
   const queries: BatchQuery[] = [paymentMonthsQuery(scope, year), ...insights.queries, {
     query: `SELECT COUNT(*) AS count, ROUND(AVG(r.rating), 2) AS rating FROM reviews r WHERE r.organization_id = CASE WHEN ${readsAnalytics} THEN ${BATCH_VIEWER.organization} END AND ${insightsReviewEligibility}`, params: [],
   }, mediaPlacementsQuery({ organizationId: { sql: `CASE WHEN ${readsAnalytics} THEN ${BATCH_VIEWER.organization} END` }, ownerType: 'product', includeOrganizationFallback: false,
     owners: { sql: `SELECT p.id FROM products p WHERE p.organization_id = ${BATCH_VIEWER.organization} AND p.active = 1 AND EXISTS (SELECT 1 FROM media_placements m WHERE m.organization_id = p.organization_id AND m.owner_type = 'product' AND m.owner_id = p.id AND m.status = 'active' AND m.slot IN ('image', 'gallery')) ORDER BY p.created_at, p.id LIMIT 3` },
-  }), { query: `SELECT role FROM user WHERE id = ${BATCH_VIEWER.user}`, params: [] }, organizationFeaturesQuery({ sql: BATCH_VIEWER.organization })]
+  }), { query: `SELECT role FROM user WHERE id = ${BATCH_VIEWER.user}`, params: [] }, organizationFeaturesQuery({ sql: BATCH_VIEWER.organization }), billing.query]
   return { queries, async read(organization: DashboardOrganizationRow, userId: string, rows: D1Result[], options?: { origin: string; impersonated: boolean }) {
   const principal = { organizationId: organization.id, role: organization.role }
   const earningsAllowed = await roleAllows({ ...principal, permissions: { payments: ['read'] } })
@@ -50,6 +54,10 @@ export function prepareDashboardMenu(native = false) {
     team: await roleAllows({ ...principal, permissions: { members: ['read'] } }), invite: await roleAllows({ ...principal, permissions: { members: ['invite'] } }),
   }
   const base = `/dashboard/${encodeURIComponent(organization.slug)}`
+  const offered = await roleAllows({ ...principal, permissions: { billing: ['update'] } })
+    ? planOffers(getPlanEntitlements(billing.read(rows.at(-1)!, organization.id)))[0] : null
+  const promo = offered && 'plan' in offered.unlock ? { id: offered.id, headline: offered.headline, summary: offerSummary(offered),
+    illustration: offered.illustration, to: offerDestination(offered, base) } : null
   const destination = (id: string, label: string, icon: string, native: string, to = `${base}/${id}`) => ({ id, label, icon, native, to })
   const navigation = [
     ...(await roleAllows({ ...principal, permissions: { content: ['read'] } }) ? [destination('website', 'Website', 'i-lucide-panels-top-left', 'website')] : []),
@@ -73,7 +81,7 @@ export function prepareDashboardMenu(native = false) {
   const primary_action = features.includes('stays') && await roleAllows({ ...principal, permissions: { products: ['create'] } })
     ? { ...destination('add-listing', 'Create a new listing', 'i-lucide-plus', 'create-stay', `${base}/products/new?kind=stay&setup=guided`), detail: 'Host a home on Blawby.' } : null
   return {
-    title: 'Menu', navigation, permissions, primary_action,
+    title: 'Menu', navigation, permissions, primary_action, promo,
     presentation: dashboardPresentation,
     cards: [
       ...(totals.length ? [{ id: 'earnings', photos: [], title: 'Earnings', value: totals.map(total => `${single ? '' : `${total.currency} `}${paymentMoney(total.amount, total.currency)}`).join(' · '), detail: `Direct payments for ${new Intl.DateTimeFormat('en', { month: 'long', timeZone: 'UTC' }).format(new Date(`${month}-01T00:00:00Z`))}`, symbol: 'chart.bar.fill', bars: single ? monthly[0]!.months.map(row => row.paid - row.refunded) : [], month, currency: single?.currency ?? null, amount: single?.amount ?? null, totals }] : []),

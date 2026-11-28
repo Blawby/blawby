@@ -33,7 +33,7 @@ import { executeRefund, requirePayment, type Payment } from '~/server/domain/pay
 import { paymentsStripe } from '~/server/utils/stripe-connect'
 import { isRecord } from '~/server/utils/type-guards'
 import { isStayCheckInMethod, STAY_ARRIVAL_TEXT_LIMITS, STAY_CHECKOUT_DETAILS_LIMIT, type StayArrivalGuide } from '~/shared/stay-arrival'
-import { stayNightlyGroups, AIRBNB_CANCELLATION_CATEGORIES, AIRBNB_LONG_TERM_CANCELLATION_IDS, isStayAmenity, parseStayAmenityAnswers, parseStayMapSharing, STAY_ALARM_DETAIL_KEYS, STAY_CANCELLATION_POLICIES, STAY_LONG_TERM_CANCELLATION_POLICIES, type StayAmenityAnswer, type StayMapSharing, STAY_CHECK_IN_METHODS, STAY_CHECKOUT_TASKS, type StayAmenity, type StayCancellationPolicy, type StayCheckInMethod, type StayCheckoutTask, type StayListingType, type StayLongTermCancellationPolicy, type StayPropertySizeUnit, type StayPropertyType, type StayPropertyTypeGroup } from '~/shared/stay-listing'
+import { stayNightlyGroups, AIRBNB_CANCELLATION_CATEGORIES, AIRBNB_LONG_TERM_CANCELLATION_IDS, isStayAmenity, parseStayAmenityAnswers, parseStayMapSharing, STAY_ALARM_DETAIL_KEYS, STAY_CANCELLATION_POLICIES, STAY_LONG_TERM_CANCELLATION_POLICIES, type StayAmenityAnswer, type StayMapSharing, STAY_CHECK_IN_METHODS, STAY_CHECKOUT_TASKS, STAY_AMENITIES, STAY_AMENITY_GROUPS, STAY_PROPERTY_TYPE_GROUPS, STAY_PROPERTY_TYPES, type StayAmenity, type StayCancellationPolicy, type StayCheckInMethod, type StayCheckoutTask, type StayListingType, type StayLongTermCancellationPolicy, type StayPropertySizeUnit, type StayPropertyType, type StayPropertyTypeGroup } from '~/shared/stay-listing'
 import { validateProductDetails, validateStayAlarmDetails, stayHouseRuleLines, type ProductDetails } from '~/shared/product-details'
 import { staySafetyLines, stayAlarmLines } from '~/shared/stay-safety'
 import { formatTime, isValidInstant, isValidTimezone, localDateAt, localDateTimeToInstant } from '~/utils/timezone'
@@ -61,7 +61,7 @@ import { sanitizeFilename, uploadResolvedMediaToAssetStore } from '~/server/util
 import { MAX_IMAGE_BYTES, RESOLVED_MEDIA_IMAGE_TYPES, sniffMediaMimeType } from '~/server/utils/media-mime'
 import { mediaStillUrl, MAX_ORDERED_MEDIA_ASSETS } from '~/shared/media-placement-contract'
 import { isStayPhotoRoomType, isStaySleepingArrangements, MAX_STAY_BEDS_PER_TYPE, type StayPhotoRoom, type StayPhotoRoomType } from '~/shared/stay-photos'
-import { isStayHomeAccessibility, isStayRoomAccessibility, type StayHomeAccessibility, type StayRoomAccessibility } from '~/shared/stay-accessibility'
+import { isStayHomeAccessibility, isStayRoomAccessibility, STAY_HOME_ACCESSIBILITY_FEATURES, STAY_ROOM_ACCESSIBILITY_FEATURES, type StayHomeAccessibility, type StayRoomAccessibility } from '~/shared/stay-accessibility'
 import { publicResourceCacheInvalidationQuery, purgePublicResourceCacheNow } from '~/server/utils/public-resource-cache'
 import { requireStays } from '~/server/utils/cms-capabilities'
 
@@ -285,6 +285,7 @@ export interface StayHome {
   turnover_checklist_items: number
   /** The member (member.id) who looks after the home; that member sees its stays. */
   assigned_member_id: string | null
+  assigned_member_name: string | null
   /**
    * The channel this home is connected to, if any. null is a home kept only in
    * Blawby: its night changes go nowhere else. A connected home pushes its
@@ -556,7 +557,7 @@ function stayHomeQueries(organization: BatchQuery, product: string | BatchQuery 
            c.listing_type, c.total_floors, c.listing_floor, c.year_built, c.property_size, c.property_size_unit, c.bedrooms, c.beds, c.bathrooms, c.amenities,
            b.cancellation_policy, b.long_term_cancellation_policy, c.check_in_method, c.check_in_instructions, c.wifi_network, c.wifi_password,
            p.tax_code, b.advance_notice_minutes, b.party_size_min, b.party_size_max, b.minimum_guest_age, b.accessibility_contact_required,
-           c.directions, c.house_manual, c.checkout_instructions, json_array_length(c.turnover_checklist) AS turnover_checklist_items, b.assigned_member_id, b.questions,
+           c.directions, c.house_manual, c.checkout_instructions, json_array_length(c.turnover_checklist) AS turnover_checklist_items, assigned_member.id AS assigned_member_id, assigned_user.name AS assigned_member_name, b.questions,
            EXISTS(SELECT 1 FROM member_scheduling ms WHERE ms.organization_id = c.organization_id
              AND ms.member_id = b.assigned_member_id AND ${PUBLISHED_PROFILE_SQL}) AS host_profile_published,
            COALESCE((SELECT pp.published FROM product_publications pp WHERE pp.organization_id = c.organization_id AND pp.product_id = c.product_id), 0) AS published,
@@ -570,6 +571,8 @@ function stayHomeQueries(organization: BatchQuery, product: string | BatchQuery 
       JOIN product_booking_configs b ON b.organization_id = c.organization_id AND b.product_id = c.product_id
       JOIN business_locations l ON l.organization_id = c.organization_id AND l.id = c.location_id
       JOIN organization o ON o.id = c.organization_id
+      LEFT JOIN member assigned_member ON assigned_member.organizationId = b.organization_id AND assigned_member.id = b.assigned_member_id
+      LEFT JOIN user assigned_user ON assigned_user.id = assigned_member.userId
       LEFT JOIN product_channel_mappings m ON m.organization_id = c.organization_id AND m.product_id = c.product_id AND m.provider = 'channex'
      WHERE c.organization_id = ${organization.query} ${target ? `AND c.product_id IN (${target.query})` : 'AND p.active = 1'} AND ${scope.sql}
      ORDER BY c.internal_name, p.id`,
@@ -592,6 +595,8 @@ async function stayHomeRows(db: DbClient, organizationId: string, productId: str
 /** Homes from their rows and prices, each checked as it is read. */
 function stayHomesFrom(rows: Array<Record<string, unknown>>, prices: Array<Price & { product_id: string }>): StayHomeCore[] {
   return rows.map((row) => {
+    // A member who has left is nobody's responsibility; the stored id waits for reconcileResponsibilities to release it.
+    if (row.assigned_member_id !== null && (typeof row.assigned_member_name !== 'string' || !row.assigned_member_name.trim())) fail(409, 'INVALID_HOME_RESPONSIBILITY', 'The assigned member has no name', 'assigned_member_id')
     if (typeof row.internal_name !== 'string' || !row.internal_name.trim()) throw new Error(`Home ${row.product_id} has no internal name`)
     const variants = JSON.parse(String(row.variant_ids)) as string[]
     if (variants.length !== 1) throw new Error(`Home ${row.product_id} has ${variants.length} variants; a home has exactly one`)
@@ -630,6 +635,7 @@ function stayHomesFrom(rows: Array<Record<string, unknown>>, prices: Array<Price
       turnover_checklist_items: Number(row.turnover_checklist_items),
       host_profile_published: Number(row.host_profile_published) === 1,
       assigned_member_id: row.assigned_member_id === null ? null : String(row.assigned_member_id),
+      assigned_member_name: row.assigned_member_id === null ? null : row.assigned_member_name as string,
       ...(() => { const questions = parseStoredFormQuestions(String(row.questions)); return { questions, questions_revision: formQuestionsRevision(questions) } })(),
       channel: row.channel_stage === null ? null : {
         provider: 'channex',
@@ -4016,4 +4022,22 @@ export function channelReservationAmounts(result: D1Result, from: string, until:
     }
   }
   return rows
+}
+
+/** The vocabularies a home is described in, in editor order: the home editor read and the vocabulary operation share it. */
+const entries = <T extends object>(vocabulary: Record<string, T>) => Object.entries(vocabulary).map(([code, entry]) => ({ code, ...entry }))
+
+export const STAY_HOME_VOCABULARY = {
+  property_type_groups: Object.entries(STAY_PROPERTY_TYPE_GROUPS).map(([code, group]) => ({
+    code, label: group.label, types: group.types.map(type => ({ code: type, ...STAY_PROPERTY_TYPES[type] })),
+  })),
+  amenity_groups: Object.entries(STAY_AMENITY_GROUPS).map(([code, group]) => ({
+    code, label: group.label, amenities: group.amenities.map(amenity => ({ code: amenity, ...STAY_AMENITIES[amenity] })),
+  })),
+  cancellation_policies: entries(STAY_CANCELLATION_POLICIES),
+  long_term_cancellation_policies: entries(STAY_LONG_TERM_CANCELLATION_POLICIES),
+  check_in_methods: entries(STAY_CHECK_IN_METHODS),
+  checkout_tasks: entries(STAY_CHECKOUT_TASKS),
+  accessibility_features: entries(STAY_HOME_ACCESSIBILITY_FEATURES),
+  room_accessibility_features: entries(STAY_ROOM_ACCESSIBILITY_FEATURES),
 }

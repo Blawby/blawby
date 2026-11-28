@@ -93,6 +93,10 @@ export function isTransactionsView(value:unknown):value is {payments:Transaction
   &&['amount','captured_amount','refunded_amount'].every(field=>Number.isSafeInteger(row[field]))&&typeof row.title==='string'&&typeof row.to==='string'
   &&[row.image_url,row.buyer_name,row.starts_at,row.ends_at,row.timezone].every(field=>field===null||typeof field==='string'))
 }
+export type TransactionsScreen = { payments: TransactionRow[]; next_cursor: string | null; locations: Array<{ id: string; title: string; image_url: string | null }> }
+export function isTransactionsScreen(value: unknown): value is TransactionsScreen {
+ return isTransactionsView(value) && 'locations' in value && Array.isArray(value.locations) && value.locations.every(row => record(row) && typeof row.id === 'string' && typeof row.title === 'string' && (row.image_url === null || typeof row.image_url === 'string'))
+}
 /** Rows to a CSV file the browser saves, as Airbnb's "Export CSV". */
 export function downloadCsv(filename:string,header:string[],rows:Array<Array<string|number>>):void {
  // A buyer writes their own name, so text a spreadsheet would run as a formula is kept as text.

@@ -12,7 +12,7 @@ import { paymentMoney } from '~/shared/payment-display'
 import { addLocalDays, isValidCalendarDate } from '~/utils/timezone'
 import type { CloudflareEnv } from '~/server/utils/auth'
 import { roleAllows } from '~/server/utils/member-access'
-import { authorizePayments, type FinancialPrincipal, type Payment, type VisiblePayment } from './index'
+import { authorizePayments, preparePaymentList, type PaymentListInput, type FinancialPrincipal, type Payment, type VisiblePayment } from './index'
 import { channelReservationAmountQuery, channelReservationAmounts } from '~/server/domain/stays'
 
 /**
@@ -38,7 +38,7 @@ function paymentSnapshot(payment: Pick<Payment, 'id' | 'price_snapshot_json'>) {
 }
 
 /** The payment's immutable title, its subject's picture and dates, and the buyer when the list presents them: named by what they typed, never an anonymous account's "Anonymous". */
-function preparePaymentPictures(organizationId: string, selection: { sql: string; params: unknown[] }, includeBuyer: boolean) {
+function preparePaymentPictures(organizationId: string | { sql: string }, selection: { sql: string; params: unknown[] }, includeBuyer: boolean) {
   const subjects: BatchQuery = {
     query: `
     SELECT p.id, b.id AS booking_id, ${paymentProductSql} AS product_id, pr.name, b.starts_at, b.ends_at, b.timezone,
@@ -61,7 +61,9 @@ function preparePaymentPictures(organizationId: string, selection: { sql: string
   const products = media('product', `SELECT ${paymentProductSql} FROM payments p ${paymentBookingJoin} WHERE ${selection.sql}`)
   const locations = media('business_location', `SELECT p.location_id FROM payments p ${paymentBookingJoin} WHERE ${selection.sql} AND b.id IS NULL AND json_type(p.price_snapshot_json, '$.stay') IS NOT NULL`)
   return {
-    queries: [subjects, products, locations], read(payments: readonly Pick<Payment, 'id' | 'location_id' | 'price_snapshot_json'>[], [subjectRows, productMedia, locationMedia]: D1Result[]) {
+    queries: [subjects, products, locations], read(payments: readonly Pick<Payment, 'id' | 'location_id' | 'price_snapshot_json'>[], [subjectRows, productMedia, locationMedia]: D1Result[], resolvedId?: string) {
+      const id = resolvedId ?? (typeof organizationId === 'string' ? organizationId : null)
+      if (!id) throw new Error('Payment pictures require a resolved organization')
       const subjects = subjectRows!.results as PaymentSubject[]
       const byId = new Map(subjects.map(row => [row.id, row]))
       const entries = payments.map(payment => {
@@ -72,8 +74,8 @@ function preparePaymentPictures(organizationId: string, selection: { sql: string
       })
       const productIds = entries.flatMap(({ subject }) => subject.product_id ? [subject.product_id] : [])
       const locationIds = entries.flatMap(({ locationId }) => locationId ? [locationId] : [])
-      const products = ownerPicturesFromRows(organizationId, 'product', productIds, productMedia!.results, false)
-      const locations = ownerPicturesFromRows(organizationId, 'business_location', locationIds, locationMedia!.results, false)
+      const products = ownerPicturesFromRows(id, 'product', productIds, productMedia!.results, false)
+      const locations = ownerPicturesFromRows(id, 'business_location', locationIds, locationMedia!.results, false)
       return new Map(entries.map(({ id, title, subject, locationId }) => {
         const { product_id, booking_id, buyer_name, name, starts_at, ends_at, timezone } = subject
         const image = product_id ? products.get(product_id) : locationId ? locations.get(locationId) : null
@@ -331,6 +333,21 @@ export async function paymentTransactionDestination(db: DbClient, organizationId
 /** The month's transactions as Airbnb's list reads them: the picture, the buyer, and the record each opens. */
 export async function paymentTransactions(db: DbClient, principal: FinancialPrincipal, organizationSlug: string, page: { payments: VisiblePayment[]; next_cursor: string | null }) {
   const pictures = await paymentPictures(db, principal.organizationId, page.payments, true)
+  return paymentTransactionsFrom(organizationSlug, page, pictures)
+}
+
+export function preparePaymentTransactions(organization: string | { sql: string }, input: PaymentListInput) {
+  const payments = preparePaymentList(organization, { ...input, newestFirst: true })
+  const pictures = preparePaymentPictures(organization, { sql: `p.id IN (SELECT id FROM (${payments.query.query}))`, params: payments.query.params ?? [] }, true)
+  const cursor = input.after ? { query: `SELECT id FROM payments WHERE organization_id=${typeof organization === 'string' ? '?' : organization.sql} AND id=?`, params: [...(typeof organization === 'string' ? [organization] : []), input.after] } : null
+  return { queries: [payments.query, ...pictures.queries, ...(cursor ? [cursor] : [])], read(rows: D1Result[], organizationId: string, organizationSlug: string) {
+    if (cursor && !rows.at(-1)!.results[0]) throw new HTTPError({ statusCode: 404, message: 'Transaction cursor not found', data: { code: 'PAYMENT_CURSOR_NOT_FOUND', field: 'after' } })
+    const page = payments.read(rows[0]!, organizationId)
+    return paymentTransactionsFrom(organizationSlug, page, pictures.read(page.payments, rows.slice(1, 1 + pictures.queries.length), organizationId))
+  } }
+}
+
+function paymentTransactionsFrom(organizationSlug: string, page: { payments: VisiblePayment[]; next_cursor: string | null }, pictures: Map<string, PaymentPicture>) {
   return {
     next_cursor: page.next_cursor,
     payments: page.payments.map((payment) => {

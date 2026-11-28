@@ -195,17 +195,33 @@ export async function readPaymentDetails(db:DbClient,env:CloudflareEnv,organizat
  return {payment,refunds,disputes:stripeFacts?stripeFacts.disputes.map(dispute=>{const row=disputeRows.find(item=>item.stripe_dispute_id===dispute.id);return {id:row?.id??dispute.id,stripe_dispute_id:dispute.id,amount:dispute.amount,currency:dispute.currency.toUpperCase(),reason:dispute.reason,status:dispute.status,evidence_due_at:dispute.evidence_details?.due_by?new Date(dispute.evidence_details.due_by*1000).toISOString():null,updated_at:row?.updated_at??new Date(dispute.created*1000).toISOString()}}):disputeRows,visit:booking?.conversation_id?{kind:payment.subject_type,conversation_id:booking.conversation_id}:null}
 }
 export type PaymentsEarningsType = 'paid' | 'refunded'
-export async function listPayments(db: DbClient, principal: FinancialPrincipal, input: { from: string; to: string; after?: string; limit?: number; location_id?: string; earnings_type?: PaymentsEarningsType }) {
-  await authorizePayments(principal, 'read')
+export interface PaymentListInput { from: string; to: string; after?: string; limit?: number; location_id?: string; earnings_type?: PaymentsEarningsType; newestFirst?: boolean }
+export function preparePaymentList(organization: string | { sql: string }, input: PaymentListInput) {
   const from = new Date(input.from), to = new Date(input.to)
-  if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from >= to) throw new HTTPError({ statusCode: 400, statusMessage: 'Valid UTC period is required' })
+  if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from >= to) throw new HTTPError({ statusCode: 400, statusMessage: 'Valid UTC period is required', data: { code: 'INVALID_EARNINGS_PERIOD', field: 'from' } })
   const limit = Math.min(input.limit ?? 50, 100)
-  if (!Number.isInteger(limit) || limit < 1) throw new HTTPError({statusCode:400,statusMessage:'Page size must be a positive integer'})
-  if (input.earnings_type !== undefined && input.earnings_type !== 'paid' && input.earnings_type !== 'refunded') throw new HTTPError({ statusCode: 400, statusMessage: 'earnings_type must be paid or refunded' })
-  const rows = await queryAll<Payment>(db, `SELECT * FROM payments WHERE organization_id = ? AND created_at >= ? AND created_at < ? AND id > ? AND NOT (subject_type = 'order' AND captured_amount = 0) AND (? IS NULL OR location_id = ?) AND (? IS NULL OR (CASE WHEN ? = 'refunded' THEN refunded_amount > 0 ELSE refunded_amount < captured_amount END)) ORDER BY id LIMIT ?`,
-    [principal.organizationId, from.toISOString(), to.toISOString(), input.after ?? '', input.location_id ?? null, input.location_id ?? null, input.earnings_type ?? null, input.earnings_type ?? null, limit + 1])
-  return { organization_id: principal.organizationId, timezone: 'UTC', from: from.toISOString(), to: to.toISOString(), payments: rows.slice(0, limit).map(visiblePayment), next_cursor: rows.length > limit ? rows[limit - 1]!.id : null }
+  if (!Number.isInteger(limit) || limit < 1) throw new HTTPError({statusCode:400,statusMessage:'Page size must be a positive integer',data:{code:'INVALID_QUERY',field:'limit'}})
+  if (input.earnings_type !== undefined && input.earnings_type !== 'paid' && input.earnings_type !== 'refunded') throw new HTTPError({ statusCode: 400, statusMessage: 'earnings_type must be paid or refunded', data: { code: 'INVALID_QUERY', field: 'earnings_type' } })
+  const org = typeof organization === 'string' ? '?' : organization.sql
+  const orgParams = typeof organization === 'string' ? [organization] : []
+  const cursor = input.newestFirst
+    ? { sql: `(? IS NULL OR (created_at,id) < (SELECT created_at,id FROM payments WHERE organization_id=${org} AND id=?))`, params: [input.after ?? null, ...orgParams, input.after ?? null] }
+    : { sql: 'id > ?', params: [input.after ?? ''] }
+  const query: BatchQuery = { query: `SELECT * FROM payments WHERE organization_id = ${org} AND created_at >= ? AND created_at < ? AND ${cursor.sql} AND NOT (subject_type = 'order' AND captured_amount = 0) AND (? IS NULL OR location_id = ?) AND (? IS NULL OR (CASE WHEN ? = 'refunded' THEN refunded_amount > 0 ELSE refunded_amount < captured_amount END)) ORDER BY ${input.newestFirst ? 'created_at DESC,id DESC' : 'id'} LIMIT ?`,
+    params: [...orgParams, from.toISOString(), to.toISOString(), ...cursor.params, input.location_id ?? null, input.location_id ?? null, input.earnings_type ?? null, input.earnings_type ?? null, limit + 1] }
+
+  return { query, read(result: D1Result, organizationId: string) {
+    const rows = result.results as unknown as Payment[]
+    return { organization_id: organizationId, timezone: 'UTC', from: from.toISOString(), to: to.toISOString(), payments: rows.slice(0, limit).map(visiblePayment), next_cursor: rows.length > limit ? rows[limit - 1]!.id : null }
+  } }
 }
+export async function listPayments(db: DbClient, principal: FinancialPrincipal, input: PaymentListInput) {
+  await authorizePayments(principal, 'read')
+  const plan = preparePaymentList(principal.organizationId, input)
+  const [rows] = await executeBatch(db, [plan.query])
+  return plan.read(rows!, principal.organizationId)
+}
+
 export async function paymentSummary(db: DbClient, principal: FinancialPrincipal, from: string, to: string) {
   await authorizePayments(principal, 'read')
   if (!Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(from) >= Date.parse(to)) throw new HTTPError({ statusCode: 400, statusMessage: 'Valid UTC period is required' })

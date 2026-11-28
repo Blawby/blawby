@@ -1,24 +1,22 @@
 import { HTTPError } from 'nitro'
-import { execute, executeBatch, queryFirst, type DbClient } from '~/server/db'
+import { execute, executeBatch, type DbClient } from '~/server/db'
 import { parseOnboardingDraftPayload, type OnboardingDraftPayload } from '~/server/utils/onboarding-drafts'
-import { memberSchedulingList, writeMemberScheduling } from '~/server/domain/member-scheduling'
+import { writeMemberScheduling } from '~/server/domain/member-scheduling'
 import { PRODUCT_LIMITS } from '~/shared/product-limits'
 import { majorAmountToMinor, minorAmountToMajor } from '~/shared/prices'
 import type { OfferingSetupAnswer, OfferingSetupField, OfferingSetupResponse } from '~/shared/offering-setup'
-import { listDashboardLocations } from '~/server/utils/dashboard-context'
 import { catalogPath, firstPracticeAreaPath } from '~/server/utils/dashboard-links'
-import { bookingConfigurationWriteError, firstBookableOpening, listAvailabilityRules, prepareProductBookingConfig, replaceWeeklySchedule, requireBookingConfig, setProductBookingConfig } from '~/server/utils/availability'
+import { bookingConfigurationWriteError, firstBookableOpening, prepareProductBookingConfig, replaceWeeklySchedule, requireBookingConfig, setProductBookingConfig } from '~/server/utils/availability'
 import type { CloudflareEnv } from '~/server/utils/auth'
-import { bookingScheduleScopes, createProduct, getProduct, listOrganizationProducts, organizationDefaultCurrency, prepareProductLocation, productLocationWriteError, resolveVariantPrice, updateProduct } from '~/server/utils/product-management'
+import { createProduct, prepareProductLocation, productLocationWriteError, resolveVariantPrice, updateProduct } from '~/server/utils/product-management'
 import { requireTrimmedProductString } from '~/server/utils/product-validation'
 import { purgePublicResourceCacheNow } from '~/server/utils/public-resource-cache'
 import { isValidTimezone, MINUTE_TIME_PATTERN } from '~/utils/timezone'
-import { getLocation } from '~/server/utils/location-management'
 import { creationRequestHash } from '~/server/utils/organization-events'
 import { offeringAddressFields, offeringHasStreetAddress, saveOfferingAddress } from '~/server/utils/offering-address'
 import {
   currencySymbol, invalidOfferingAnswer, offeringDestination, offeringField, offeringScreen, offeringSetupChanged,
-  offeringProductCreation, offeringTimezone, offeringToday, submittedValue, type OfferingSetupContext,
+  offeringTimezone, offeringToday, submittedValue, type OfferingSetupContext,
 } from '~/server/utils/offering-setup'
 
 const productKey = 'first-practice-area-setup'
@@ -29,16 +27,9 @@ const requestPolicy = { confirmation_mode: 'review', online_payment_required: fa
 const weekdayChoices = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
   .map((label, index) => ({ value: String(index), label }))
 
-async function readPracticeArea(context: OfferingSetupContext, productId: string) {
-  const { db, env, organizationId, actorId } = context
-  const [product, { members }, offices, draft, currency, scopes] = await Promise.all([
-    getProduct(db, organizationId, productId),
-    memberSchedulingList({ env, organizationId, userId: actorId }),
-    listDashboardLocations(db, organizationId),
-    queryFirst<{ id: string; payload_json: string }>(db, "SELECT id, payload_json FROM onboarding_drafts WHERE organization_id = ? AND status = 'committed' AND vertical = 'service'", [organizationId]),
-    organizationDefaultCurrency(db, organizationId),
-    bookingScheduleScopes(db, organizationId, [productId]),
-  ])
+function readPracticeArea(context: OfferingSetupContext, productId: string) {
+  const product = context.read.product(productId)
+  const { members, locations: offices, draft, currency, scopes } = context.read
   if (product.kind !== 'service' || !product.page?.path || product.order_url || product.publications.some(row => row.published)) return null
   const booking = product.booking
   const payload = draft ? parseOnboardingDraftPayload(draft.payload_json) : null
@@ -52,7 +43,7 @@ async function readPracticeArea(context: OfferingSetupContext, productId: string
   const offeredOffices = activeOffices.filter(candidate => product.locations.some(location => location.location_id === candidate.id && location.active))
   if (offeredOffices.length > 1) return null
   const office = offeredOffices[0]
-  const officeRules = office ? await listAvailabilityRules(db, organizationId, productId, office.id) : []
+  const officeRules = office ? context.read.rules.filter(row => row.product_id === productId && row.location_id === office.id) : []
   const officeTime = officeRules.length === 1 ? officeRules[0] : undefined
   const pendingMeeting = payload?.first_practice_area_meeting
   const format = (pendingMeeting?.product_id === productId ? pendingMeeting.format : undefined)
@@ -101,7 +92,7 @@ export async function firstPracticeAreaSetup(context: OfferingSetupContext, prod
   const exitTo = context.exitTo ?? offeringToday(orgSlug)
   const start = firstPracticeAreaPath(orgSlug)
   if (!productId) {
-    const areas = await listOrganizationProducts(db, { organizationId, kind: 'service', window: { limit: 2, offset: 0 } })
+    const areas = context.read.products.slice(0, 3)
     if (areas.length === 1 && areas[0]!.page?.path && !areas[0]!.order_url) {
       return answer?.action === 'exit' ? { to: exitTo } : { to: `${start}/${encodeURIComponent(areas[0]!.id)}`, guide: true }
     }
@@ -115,7 +106,7 @@ export async function firstPracticeAreaSetup(context: OfferingSetupContext, prod
     const value = submittedValue(answer, 'name')
     if (!value && answer.action === 'exit') return { to: exitTo }
     const name = requireTrimmedProductString(value, 'practice area name', PRODUCT_LIMITS.name)
-    const creation = await offeringProductCreation(db, organizationId, productKey)
+    const creation = context.read.creation(productKey)
     if (creation.productId) return answer.action === 'exit' ? { to: exitTo } : { to: `${start}/${encodeURIComponent(creation.productId)}`, guide: true }
     const product = await createProduct(db, { organizationId, env, actor, product: { kind: 'service', name, active: false }, publication: { published: false }, idempotencyKey: creation.key })
     return answer.action === 'exit' ? { to: exitTo } : { to: `${start}/${encodeURIComponent(product.id)}`, guide: true }
@@ -123,7 +114,7 @@ export async function firstPracticeAreaSetup(context: OfferingSetupContext, prod
 
   const guide = `${start}/${encodeURIComponent(productId)}`
   const stepPath = (id: StepId) => `${guide}?step=${id}`
-  const state = await readPracticeArea(context, productId)
+  const state = readPracticeArea(context, productId)
   if (!state) return answer?.action === 'exit' ? { to: exitTo } : offeringDestination(orgSlug, 'service', productId)
   const { product, booking, attorney, members, schedule, office, activeOffices, officeRules, officeTime, scope, format, variant, currency, price, draft, intake, progress, complete } = state
   const resume = steps.find(step => !complete[step])
@@ -198,7 +189,7 @@ export async function firstPracticeAreaSetup(context: OfferingSetupContext, prod
     ...field, value: matchingPartial.values[field.key] ?? field.value,
   })) : question.fields
   const location = (step === 'office-address' || step === 'office-times') && office
-    ? await getLocation(env.DB, organizationId, office.id)
+    ? context.read.fullLocations.get(office.id) ?? null
     : null
   const locationRevision = typeof location?.updated_at === 'string' ? location.updated_at : undefined
   const revision = await creationRequestHash({

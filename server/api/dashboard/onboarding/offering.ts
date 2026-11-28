@@ -2,7 +2,8 @@ import { defineHandler, HTTPError } from 'nitro'
 import { getQuery, readBody } from 'nitro/h3'
 import { z } from 'zod'
 import { offeringReturnTo, offeringSetupAnswer, type OfferingSetupResponse } from '~/shared/offering-setup'
-import { getDashboardMemberContext } from '~/server/utils/dashboard-context'
+import { dashboardOrgQueryParam, readDashboardMemberResources } from '~/server/utils/dashboard-context'
+import { prepareOfferingSetup } from '~/server/utils/offering-setup'
 import { firstExperienceSetup } from '~/server/utils/experience-setup'
 import { firstMenuSetup } from '~/server/utils/first-menu-setup'
 import { firstPracticeAreaSetup } from '~/server/utils/practice-area-setup'
@@ -11,9 +12,12 @@ import { assertOrganizationWideAccess, assertRoleAllows, memberAccessPrincipal }
 const scope = z.object({ location_id: z.string().min(1).optional(), product_id: z.string().min(1).optional(), step: z.string().min(1).optional(), return_to: z.string().max(2048).optional() })
 
 export default defineHandler(async (event): Promise<OfferingSetupResponse> => {
-  const { db, env, organization, userId } = await getDashboardMemberContext(event)
+  const slug = dashboardOrgQueryParam(event)
+  if (!slug) throw new HTTPError({ statusCode: 400, message: 'Choose a workspace', data: { code: 'ORGANIZATION_REQUIRED', field: 'org' } })
+  const plan = prepareOfferingSetup()
+  const { db, env, organization, userId, rows } = await readDashboardMemberResources(event, { slug }, plan.queries)
   if (organization.onboarding_status !== 'active' || organization.status === 'suspended') {
-    throw new HTTPError({ statusCode: 404, statusMessage: 'Offering setup is unavailable for this website' })
+    throw new HTTPError({ statusCode: 404, statusMessage: 'Offering setup is unavailable for this website', data: { code: 'OFFERING_SETUP_UNAVAILABLE', field: 'organization_id' } })
   }
   if (event.req.method !== 'GET' && event.req.method !== 'POST') throw new HTTPError({ statusCode: 405, statusMessage: 'Method not allowed' })
   const query = scope.safeParse(getQuery(event))
@@ -28,11 +32,11 @@ export default defineHandler(async (event): Promise<OfferingSetupResponse> => {
   if (answer) await assertRoleAllows({ ...principal, permissions: { products: ['update'] } })
   const exitTo = offeringReturnTo(query.data.return_to, organization.slug)
   if (query.data.return_to !== undefined && !exitTo) throw new HTTPError({ statusCode: 400, statusMessage: 'Invalid offering setup return destination' })
-  const context = { db, env, organizationId: organization.id, orgSlug: organization.slug, actorId: userId, principal, exitTo }
+  const context = { db, env, organizationId: organization.id, orgSlug: organization.slug, actorId: userId, principal, exitTo, read: plan.read(rows) }
   switch (organization.vertical) {
     case 'restaurant': return firstMenuSetup(context, query.data.location_id, requested, answer)
     case 'experience': return firstExperienceSetup(context, requested, answer)
     case 'service': return firstPracticeAreaSetup(context, query.data.product_id, requested, answer)
-    default: throw new HTTPError({ statusCode: 404, statusMessage: 'Offering setup is unavailable for this business type' })
+    default: throw new HTTPError({ statusCode: 404, statusMessage: 'Offering setup is unavailable for this business type', data: { code: 'OFFERING_SETUP_UNAVAILABLE', field: 'vertical' } })
   }
 })

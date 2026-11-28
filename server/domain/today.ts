@@ -430,7 +430,7 @@ async function presentToday(
       const address = `${origin}/`
       const preview = new URL(address)
       const secret = previewSecretOf(presentation.env)
-      if (!secret) throw new Error('Website preview signing is unavailable')
+      if (!secret) throw new HTTPError({ statusCode: 500, message: 'Website preview signing is unavailable', data: { code: 'TODAY_WEBSITE_PREVIEW_UNAVAILABLE', field: 'website.preview_url' } })
       preview.searchParams.set(PREVIEW_TOKEN_QUERY, await createPreviewToken(secret, viewer.organization_id, now.getTime() + PREVIEW_TOKEN_TTL_MS))
       website = {
         address, preview_url: preview.toString(), preview_label: 'Website preview', status_label: privateSite ? 'Private' : 'Live',

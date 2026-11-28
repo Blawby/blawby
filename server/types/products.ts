@@ -210,7 +210,7 @@ export interface Product {
 
 /** The page a product owns: its source document's id, public path and title. */
 export type CatalogProduct = Pick<Product, 'id' | 'name' | 'kind' | 'active' | 'variants' | 'collections' | 'locations' | 'publications' | 'image'>
-  & { stay: Pick<ProductStayConfig, 'internal_name'> | null; booking: Pick<ProductBookingConfig, 'held_online'> | null }
+  & { stay: Pick<ProductStayConfig, 'internal_name'> | null; booking: Pick<ProductBookingConfig, 'held_online' | 'duration_minutes'> | null }
 
 export interface ProductPage {
   id: string

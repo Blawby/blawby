@@ -2811,7 +2811,7 @@ export function prepareEditorCatalog(input: { organizationId: string | { sql: st
         id: product.id, name: product.name, kind: product.kind, active: product.active, variants: product.variants,
         collections: product.collections, locations: product.locations, publications: product.publications, image: image ?? null,
         stay: internalName === null ? null : { internal_name: internalName },
-        booking: product.booking ? { held_online: product.booking.held_online } : null,
+        booking: product.booking ? { held_online: product.booking.held_online, duration_minutes: product.booking.duration_minutes } : null,
       })),
     }
   } }

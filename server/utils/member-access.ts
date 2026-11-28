@@ -553,13 +553,13 @@ export async function assertProductAccess(db: DbClient, input: MemberAccessPrinc
   const assigned = await queryFirst<{ kind: string; scheduling_mode: string; assigned_member_id: string | null; held_online: number }>(db, `SELECT p.kind, c.scheduling_mode, c.assigned_member_id, c.held_online
     FROM products p JOIN product_booking_configs c ON c.product_id = p.id AND c.organization_id = p.organization_id
     WHERE p.organization_id = ? AND p.id = ? AND (${ASSIGNED_SERVICE_SQL})`, [input.organizationId, input.productId, input.userId])
-  if (!assigned) throw new HTTPError({ statusCode: 404, message: 'Offering not found or access denied' })
-  if (input.patch?.kind !== undefined && input.patch.kind !== assigned.kind) throw new HTTPError({ statusCode: 403, message: 'Offering kind requires admin access' })
+  if (!assigned) throw new HTTPError({ statusCode: 404, message: 'Offering not found or access denied', data: { code: 'PRODUCT_NOT_FOUND', field: 'product_id' } })
+  if (input.patch?.kind !== undefined && input.patch.kind !== assigned.kind) throw new HTTPError({ statusCode: 403, message: 'Offering kind requires admin access', data: { code: 'FORBIDDEN', field: 'kind' } })
   const booking = input.patch?.booking && typeof input.patch.booking === 'object' ? input.patch.booking as Record<string, unknown> : input.patch
   for (const field of ['scheduling_mode', 'assigned_member_id', 'held_online']) {
-    if (booking?.[field] !== undefined && booking[field] !== (field === 'held_online' ? assigned[field as keyof typeof assigned] === 1 : assigned[field as keyof typeof assigned])) throw new HTTPError({ statusCode: 403, message: 'Offering assignment requires admin access' })
+    if (booking?.[field] !== undefined && booking[field] !== (field === 'held_online' ? assigned[field as keyof typeof assigned] === 1 : assigned[field as keyof typeof assigned])) throw new HTTPError({ statusCode: 403, message: 'Offering assignment requires admin access', data: { code: 'FORBIDDEN', field: input.patch?.booking !== undefined ? `booking.${field}` : field } })
   }
-  if (input.patch?.booking !== undefined) throw new HTTPError({ statusCode: 403, message: 'Offering creation requires admin access; edit saved booking settings and schedule separately' })
+  if (input.patch?.booking !== undefined) throw new HTTPError({ statusCode: 403, message: 'Offering creation requires admin access; edit saved booking settings and schedule separately', data: { code: 'FORBIDDEN', field: 'booking' } })
 }
 
 /**
@@ -593,7 +593,7 @@ export async function assertCanOperateBookingProduct(db: DbClient, principal: Me
   const product = await queryFirst(db, `SELECT 1 FROM products p JOIN member m ON m.organizationId = p.organization_id AND m.id = ?
     WHERE p.organization_id = ? AND p.id = ? AND ${bookingListingScopeSql('p.organization_id', 'p.id', 'm.id', 'm.role', 'update')}`,
   [principal.memberId, principal.organizationId, productId])
-  if (!product) throw new HTTPError({ statusCode: 404, message: 'Offering not found or access denied' })
+  if (!product) throw new HTTPError({ statusCode: 404, message: 'Offering not found or access denied', data: { code: 'PRODUCT_NOT_FOUND', field: 'product_id' } })
 }
 
 /** A booking is its product's assigned member's. Who sees a conversation is conversations.ts conversationAccessSql. */
@@ -610,13 +610,13 @@ export async function assertAssignedBookingAccess(db: DbClient, input: MemberAcc
 export async function assertLocationAccess(db: DbClient, input: MemberAccessPrincipal & { locationId: string; patch?: Record<string, unknown> }): Promise<void> {
   if (await roleAllows({ ...input, permissions: { locations: ['update'] } })) {
     const location = await findLocation(db, { organizationId: input.organizationId, locationId: input.locationId })
-    if (!location) throw new HTTPError({ statusCode: 404, message: 'Resource not found' })
+    if (!location) throw new HTTPError({ statusCode: 404, message: 'Resource not found', data: { code: 'LOCATION_NOT_FOUND', field: 'location_id' } })
     return
   }
   await assertRoleAllows({ ...input, permissions: { locations: ['assigned'] } })
   const assigned = await queryFirst<{ id: string }>(db, `SELECT bl.id FROM business_locations bl
     WHERE bl.organization_id = ? AND bl.id = ? AND ${locationMemberSql('bl.organization_id', 'bl.id')}`, [input.organizationId, input.locationId, input.userId])
-  if (!assigned) throw new HTTPError({ statusCode: 404, message: 'Location not found or access denied' })
+  if (!assigned) throw new HTTPError({ statusCode: 404, message: 'Location not found or access denied', data: { code: 'LOCATION_NOT_FOUND', field: 'location_id' } })
 }
 
 export function locationAccessSql(viewer: ViewerTerms, alias: string) {

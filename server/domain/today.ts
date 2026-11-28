@@ -141,8 +141,8 @@ async function presentToday(
   const cards: Card[] = []
   const byBooking = new Map<string, Card>()
   const byClass = new Map<string, { card: Card; party: number }>()
-  const add = (input: Omit<Card, 'done'> & { done?: Card['done'] }) => {
-    const card: Card = { done: null, ...input }
+  const add = (input: Omit<Card, 'done' | 'destination'> & { done?: Card['done']; destination?: Card['destination'] }) => {
+    const card: Card = { done: null, destination: null, ...input }
     cards.push(card)
     for (const id of card.bookings) byBooking.set(id, card)
     return card
@@ -201,7 +201,8 @@ async function presentToday(
       }
       const card = add({ ...base, id: `class:${record.product_session_id}`, noun: 'class', order: [0, record.starts_at], draft: null, when: visitWhen(record.starts_at, zone), headline: '',
         to: `/dashboard/${encodeURIComponent(viewer.slug)}/calendar/sessions/${encodeURIComponent(record.product_session_id)}?${new URLSearchParams({ date: start, product_id: record.product_id })}`,
-        action: { title: 'Message the class', detail: 'See who is coming' } })
+        destination: { native: 'session', title: 'Edit availability', query: { product_id: record.product_id, product_session_id: record.product_session_id, date: start } },
+        action: { title: 'Review availability', detail: 'See this scheduled session' } })
       byClass.set(record.product_session_id, { card, party: record.party_size })
       continue
     }
@@ -392,7 +393,7 @@ async function presentToday(
   const opportunities = (range === 'today' || quiet ? suggestions : []).filter(step => quiet || step.id.startsWith('payments.connect:') || step.id.startsWith('product.create:') || step.id.startsWith('product.readiness:')).slice(0, 3)
   for (const [index, step] of opportunities.entries()) {
     add({ id: step.id, noun: 'setup', order: [2, String(index).padStart(4, '0')], bookings: [], day: '', when: null, image_url: null, icon: step.icon,
-      headline: step.title, line: null, action: { title: step.detail.replace(/\.$/, ''), detail: step.status_line }, to: step.path, draft: null })
+      headline: step.title, line: null, action: { title: step.detail.replace(/\.$/, ''), detail: step.status_line }, to: step.path, destination: step.destination, draft: null })
   }
 
   cards.sort((a, b) => a.order[0] - b.order[0] || a.order[1].localeCompare(b.order[1]) || a.id.localeCompare(b.id))

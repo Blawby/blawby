@@ -192,7 +192,7 @@ test('Today shows every booking type as one card for its own business, with the 
     assert.deepEqual([law.title, law.cards[0]!.when], ['You have 2 upcoming consultations', visit(estate.startsAt)])
     // A class is one card for everyone booked into it.
     assert.deepEqual(studio.cards.map(shape), [
-      { id: `class:${pottery.session.id}`, headline: 'Wheel Throwing Class', line: 'studio office · 3 guests', action: { title: 'Message the class', detail: 'See who is coming' },
+      { id: `class:${pottery.session.id}`, headline: 'Wheel Throwing Class', line: 'studio office · 3 guests', action: { title: 'Review availability', detail: 'See this scheduled session' },
         to: `/dashboard/studio/calendar/sessions/${pottery.session.id}?date=${inTwoDays}&product_id=${pottery.product.id}` },
     ])
     assert.equal(studio.title, 'You have 1 upcoming class')

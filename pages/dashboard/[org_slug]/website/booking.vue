@@ -31,11 +31,10 @@
 
     <URadioGroup
       v-else-if="isService"
-      :model-value="editor.form.native_consultations ? 'online' : 'offline'"
-      :items="consultationChoices"
+      v-model="editor.form.consultation_mode"
+      :items="editor.consultationChoices.value"
       :aria-label="panelTitle"
       variant="card"
-      @update:model-value="editor.form.native_consultations = $event === 'online'"
     />
 
     <!-- Chevron Row: Intake Questions -->
@@ -72,16 +71,7 @@ const route = useRoute()
 const vertical = computed(() => editor.vertical.value)
 const isService = computed(() => vertical.value === 'service')
 
-const panelTitle = computed(() => {
-  if (isService.value) return 'Consultation settings'
-  if (vertical.value === 'restaurant') return 'Reservation settings'
-  return 'Booking settings'
-})
-
-const consultationChoices = [
-  { value: 'online', label: 'Accept consultation requests online', description: 'Clients can select a practice area and submit consultation requests with intake details online.' },
-  { value: 'offline', label: 'Inquiries only (offline scheduling)', description: 'Clients contact your office directly via phone or email to schedule consultations.' },
-]
+const panelTitle = computed(() => editor.bookingTitle.value)
 
 const payoutPath = computed(() => `/dashboard/${route.params.org_slug}/payments/payout-method`)
 const questionsPath = computed(() => `/dashboard/${route.params.org_slug}/website/inquiry-form`)

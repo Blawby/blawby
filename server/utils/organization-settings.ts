@@ -2,13 +2,13 @@ import { HTTPError } from 'nitro'
 import { isLodgingConfirmationMode, LODGING_BOOKING_CHOICES } from '~/shared/lodging-booking'
 import { LODGING_BOOKING_POLICY_COLUMNS, lodgingBookingPolicy } from '~/server/utils/lodging-booking-policy'
 import { isLegalPracticeSite, isPlatformSite, resolvePublicSite } from '~/utils/site-routing'
-import { publicConsultationFromJson } from '~/server/utils/professional-services'
+import { publicConsultationChoices, publicConsultationFromJson } from '~/server/utils/professional-services'
 import { CONFIG_COLUMNS, deleteConfig, getConfig, parseConfig, setConfig, type ConfigRow } from '~/server/utils/organization-config'
 import { createSystemSubdomain, isSystemSubdomainSpent } from '~/server/utils/domains'
 import { reconcileZarazAnalytics } from '~/server/utils/zaraz-analytics'
 import { isCurrencyCode, type CurrencyCode } from '~/shared/currencies'
 import { isValidTimezone } from '~/utils/timezone'
-import { ORGANIZATION_FONT_PRESETS, isOrganizationFontPreset, resolveOrganizationFontPreset } from '~/shared/organization-fonts'
+import { ORGANIZATION_FONT_OPTIONS, ORGANIZATION_FONT_PRESETS, isOrganizationFontPreset, resolveOrganizationFontPreset } from '~/shared/organization-fonts'
 import { purgeOrganizationCaches, purgePublicResourceCacheNow } from '~/server/utils/public-resource-cache'
 import type { UpdateOrganizationSettingsRequest } from '~/server/types/organization'
 import { integrationSummary, integrationsFromRows, integrationsQuery } from '~/server/utils/organization-integrations'
@@ -26,6 +26,7 @@ import { tenantOrganizationOrigin } from '~/utils/tenant-organization-origin'
 import { pageTasks, prepareTenantPages } from '~/server/utils/content/pages'
 import { recentArticleCards, recentArticleCardsQuery } from '~/server/utils/content/publishing'
 import { recentPostCardsQuery } from '~/server/utils/post-management'
+import { ALL_VERTICALS, getVerticalLabel, type OrganizationVertical } from '~/utils/vertical-copy'
 
 type SetupEnv = Parameters<typeof createSystemSubdomain>[0]
 
@@ -174,18 +175,36 @@ export function prepareSettingsPayload(organizationId: string | { sql: string },
     if (!updatedOrganization) throw new HTTPError({ statusCode: 404, statusMessage: 'Organization not found' })
     const id = updatedOrganization.id
     const siteConfig = parseConfig(updatedOrganization)
+    if (siteConfig.font_preset !== undefined && !isOrganizationFontPreset(siteConfig.font_preset)) throw new HTTPError({ statusCode: 409, message: 'The website font is invalid', data: { code: 'INVALID_WEBSITE_SETTINGS', field: 'font_preset' } })
+    const font_preset = resolveOrganizationFontPreset(siteConfig.font_preset)
     const site = resolvePublicSite({ themeId: updatedOrganization.theme_id }).slug
     const isLegal = isLegalPracticeSite({ vertical: updatedOrganization.vertical, themeId: updatedOrganization.theme_id })
     const consultation = isLegal ? publicConsultationFromJson(updatedOrganization.consultation_settings_json) : null
-    if (isLegal && !consultation) throw new HTTPError({ statusCode: 500, statusMessage: 'Professional-service consultation settings are missing', data: { code: 'CONSULTATION_SETTINGS_MISSING' } })
+    if (isLegal && !consultation) throw new HTTPError({ statusCode: 500, statusMessage: 'Legal consultation settings are missing', data: { code: 'CONSULTATION_SETTINGS_MISSING', field: 'consultation_mode' } })
     const media = groupMediaPlacements(placements!.results).get(id) ?? []
     const questions = updatedOrganization.questions === null ? [] : parseStoredFormQuestions(updatedOrganization.questions)
+    const status_label = ({ active: 'Published', inactive: 'Draft', suspended: 'Suspended' } as Record<string, string>)[updatedOrganization.status]
+    if (!status_label) throw new HTTPError({ statusCode: 409, message: 'The website status is invalid', data: { code: 'INVALID_WEBSITE_SETTINGS', field: 'status' } })
+    if (!ALL_VERTICALS.includes(updatedOrganization.vertical as OrganizationVertical)) throw new HTTPError({ statusCode: 409, message: 'The website business type is invalid', data: { code: 'INVALID_WEBSITE_SETTINGS', field: 'vertical' } })
+    const lodging_booking = updatedOrganization.vertical === 'lodging' ? lodgingBookingPolicy(id, updatedOrganization) : null
+    const lodgingChoice = lodging_booking ? LODGING_BOOKING_CHOICES.find(choice => choice.value === lodging_booking.confirmation_mode) : null
+    if (lodging_booking && !lodgingChoice) throw new HTTPError({ statusCode: 409, message: 'The stay confirmation choice is missing', data: { code: 'INVALID_WEBSITE_SETTINGS', field: 'lodging_booking.confirmation_mode' } })
+    const display = {
+      status_label,
+      font_label: ORGANIZATION_FONT_OPTIONS.find(option => option.value === font_preset)!.label,
+      vertical_label: getVerticalLabel(updatedOrganization.vertical),
+      booking_title: updatedOrganization.vertical === 'service' ? 'Consultation settings' : updatedOrganization.vertical === 'restaurant' ? 'Reservation settings' : 'Booking settings',
+      booking_summary: consultation
+        ? { native: 'Accepting consultation requests online', native_disabled: 'Inquiries only (offline scheduling)', external_url: 'Scheduling through an external website' }[consultation.mode]
+        : lodgingChoice ? lodgingChoice.label : questions.length ? `${questions.length} intake ${questions.length === 1 ? 'question' : 'questions'} configured` : 'Contact fields only',
+    }
 
     return {
       id: updatedOrganization.id,
       subdomain: updatedOrganization.subdomain,
       theme: site,
       status: updatedOrganization.status,
+      display,
 
       public_url: updatedOrganization.public_url ? tenantOrganizationOrigin({
         platformDomain: env.NUXT_PUBLIC_PLATFORM_DOMAIN ?? '',
@@ -212,14 +231,16 @@ export function prepareSettingsPayload(organizationId: string | { sql: string },
       canonical_url: updatedOrganization.canonical_url,
       // The website's booking switch exists only where consultation settings do.
       consultation_mode: consultation?.mode ?? updatedOrganization.consultation_mode,
+      consultation_choices: consultation ? publicConsultationChoices(consultation) : null,
       ...(updatedOrganization.vertical === 'lodging' ? {
-        lodging_booking: lodgingBookingPolicy(id, updatedOrganization),
+        lodging_booking: lodging_booking!,
         lodging_booking_choices: LODGING_BOOKING_CHOICES,
       } : {}),
       ...(consultation ? { address_visibility: updatedOrganization.address_visibility === 'visible' ? 'visible' as const : 'hidden' as const } : {}),
       palette: site !== 'platform' ? resolveSitePalette(siteConfig.palette) : null,
       palette_source: site !== 'platform' ? (siteConfig.palette ? 'custom' : 'default') : null,
-      font_preset: resolveOrganizationFontPreset(siteConfig.font_preset),
+      font_preset,
+      font_choices: ORGANIZATION_FONT_OPTIONS,
       // A choice the site has not made reads as absent: the Default applies.
       ...parseSiteRecipe(siteConfig),
       default_currency: updatedOrganization.default_currency,

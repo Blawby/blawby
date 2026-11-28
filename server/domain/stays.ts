@@ -285,6 +285,7 @@ export interface StayHome {
   turnover_checklist_items: number
   /** The member (member.id) who looks after the home; that member sees its stays. */
   assigned_member_id: string | null
+  assigned_member_name: string | null
   /**
    * The channel this home is connected to, if any. null is a home kept only in
    * Blawby: its night changes go nowhere else. A connected home pushes its
@@ -556,7 +557,7 @@ function stayHomeQueries(organization: BatchQuery, product: string | BatchQuery 
            c.listing_type, c.total_floors, c.listing_floor, c.year_built, c.property_size, c.property_size_unit, c.bedrooms, c.beds, c.bathrooms, c.amenities,
            b.cancellation_policy, b.long_term_cancellation_policy, c.check_in_method, c.check_in_instructions, c.wifi_network, c.wifi_password,
            p.tax_code, b.advance_notice_minutes, b.party_size_min, b.party_size_max, b.minimum_guest_age, b.accessibility_contact_required,
-           c.directions, c.house_manual, c.checkout_instructions, json_array_length(c.turnover_checklist) AS turnover_checklist_items, b.assigned_member_id, b.questions,
+           c.directions, c.house_manual, c.checkout_instructions, json_array_length(c.turnover_checklist) AS turnover_checklist_items, b.assigned_member_id, assigned_user.name AS assigned_member_name, b.questions,
            EXISTS(SELECT 1 FROM member_scheduling ms WHERE ms.organization_id = c.organization_id
              AND ms.member_id = b.assigned_member_id AND ${PUBLISHED_PROFILE_SQL}) AS host_profile_published,
            COALESCE((SELECT pp.published FROM product_publications pp WHERE pp.organization_id = c.organization_id AND pp.product_id = c.product_id), 0) AS published,
@@ -570,6 +571,8 @@ function stayHomeQueries(organization: BatchQuery, product: string | BatchQuery 
       JOIN product_booking_configs b ON b.organization_id = c.organization_id AND b.product_id = c.product_id
       JOIN business_locations l ON l.organization_id = c.organization_id AND l.id = c.location_id
       JOIN organization o ON o.id = c.organization_id
+      LEFT JOIN member assigned_member ON assigned_member.organizationId = b.organization_id AND assigned_member.id = b.assigned_member_id
+      LEFT JOIN user assigned_user ON assigned_user.id = assigned_member.userId
       LEFT JOIN product_channel_mappings m ON m.organization_id = c.organization_id AND m.product_id = c.product_id AND m.provider = 'channex'
      WHERE c.organization_id = ${organization.query} ${target ? `AND c.product_id IN (${target.query})` : 'AND p.active = 1'} AND ${scope.sql}
      ORDER BY c.internal_name, p.id`,
@@ -592,6 +595,7 @@ async function stayHomeRows(db: DbClient, organizationId: string, productId: str
 /** Homes from their rows and prices, each checked as it is read. */
 function stayHomesFrom(rows: Array<Record<string, unknown>>, prices: Array<Price & { product_id: string }>): StayHomeCore[] {
   return rows.map((row) => {
+    if (row.assigned_member_id !== null && (typeof row.assigned_member_name !== 'string' || !row.assigned_member_name.trim())) fail(409, 'INVALID_HOME_RESPONSIBILITY', 'The assigned host could not be read', 'assigned_member_id')
     if (typeof row.internal_name !== 'string' || !row.internal_name.trim()) throw new Error(`Home ${row.product_id} has no internal name`)
     const variants = JSON.parse(String(row.variant_ids)) as string[]
     if (variants.length !== 1) throw new Error(`Home ${row.product_id} has ${variants.length} variants; a home has exactly one`)
@@ -630,6 +634,7 @@ function stayHomesFrom(rows: Array<Record<string, unknown>>, prices: Array<Price
       turnover_checklist_items: Number(row.turnover_checklist_items),
       host_profile_published: Number(row.host_profile_published) === 1,
       assigned_member_id: row.assigned_member_id === null ? null : String(row.assigned_member_id),
+      assigned_member_name: row.assigned_member_id === null ? null : row.assigned_member_name as string,
       ...(() => { const questions = parseStoredFormQuestions(String(row.questions)); return { questions, questions_revision: formQuestionsRevision(questions) } })(),
       channel: row.channel_stage === null ? null : {
         provider: 'channex',

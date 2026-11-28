@@ -9,7 +9,7 @@
     @save="editor.save"
   >
     <UFormField label="Website font">
-      <USelect v-model="editor.form.font_preset" :items="fontItems" value-key="value" label-key="label" class="w-full" />
+      <USelect v-model="editor.form.font_preset" :items="editor.fontChoices.value" value-key="value" label-key="label" class="w-full" />
     </UFormField>
     <UCard variant="subtle" class="mt-6" :ui="{ body: 'space-y-3 leading-relaxed' }" :data-font-template="editor.theme.value" :data-font-preset="editor.form.font_preset" data-testid="site-font-preview">
       <p lang="en" class="font-[family-name:var(--font-heading)] [font-weight:var(--font-heading-weight)] text-3xl">Welcome · 123</p>
@@ -22,13 +22,11 @@
 </template>
 
 <script setup lang="ts">
-import { ORGANIZATION_FONT_OPTIONS } from '~/shared/organization-fonts'
 import { organizationSettingsEditorKey } from '~/lib/components/workspace/settings/OrganizationSettingsPage.vue'
 
 definePageMeta({ layout: 'dashboard' })
 
 const editor = inject(organizationSettingsEditorKey)!
-const fontItems = [...ORGANIZATION_FONT_OPTIONS]
 </script>
 
 <style>

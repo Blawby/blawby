@@ -24,6 +24,14 @@ const consultationSettingsSchema = z.object({
   }
 })
 
+export function publicConsultationChoices(settings: PublicConsultationSettings) {
+  return [
+    { value: 'native' as const, label: 'Accept consultation requests online', description: 'Clients can select a practice area and submit consultation requests with intake details online.' },
+    { value: 'native_disabled' as const, label: 'Inquiries only (offline scheduling)', description: 'Clients contact your office directly via phone or email to schedule consultations.' },
+    { value: 'external_url' as const, label: 'Use the connected external scheduler', description: 'Clients schedule through the external website configured for this practice.' },
+  ].filter(choice => consultationSettingsSchema.safeParse({ ...settings, mode: choice.value }).success)
+}
+
 
 export async function initializePublicConsultationSettings(db: DbClient, organizationId: string, settings: Omit<NonNullable<import('~/shared/organization-settings').OrganizationSettings['consultation']>, 'created_at' | 'updated_at' | 'updated_by'>, writeGuard?: BatchQuery) {
   const validated = consultationSettingsSchema.parse(settings)

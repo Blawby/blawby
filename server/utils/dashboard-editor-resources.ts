@@ -256,9 +256,9 @@ export function prepareDashboardProductRead(productId: string, editor = true, sa
   })
   return { queries, async read(rows: D1Result[], context: ProductEditorContext, locationId: string | null) {
     if (!await roleAllows({ ...context.organization, permissions: { products: ['update'] } })) await assertRoleAllows({ ...context.organization, permissions: { products: ['assigned'] } })
-    if (saved && rows[0]!.results.length !== 1) throw new HTTPError({ statusCode: 404, statusMessage: 'Product not found' })
+    if (saved && rows[0]!.results.length !== 1) throw new HTTPError({ statusCode: 404, message: 'Product not found', data: { code: 'PRODUCT_NOT_FOUND', field: 'product_id' } })
     const product = saved ?? record!.read(rows.slice(0, recordQueries.length))[0]
-    if (!product || product.organization_id !== context.organization.id) throw new HTTPError({ statusCode: 404, statusMessage: 'Product not found' })
+    if (!product || product.organization_id !== context.organization.id) throw new HTTPError({ statusCode: 404, message: 'Product not found', data: { code: 'PRODUCT_NOT_FOUND', field: 'product_id' } })
     const document = await metadata.read(rows.slice(recordQueries.length, recordQueries.length + metadata.queries.length), product, locationId, context)
     if (!slots) return document
     const locations = document.locations!.filter(place => product.locations.some(binding => binding.location_id === place.id))
@@ -293,7 +293,7 @@ function prepareDashboardProductMetadata(organizationId: { sql: string }, produc
       const organizationId = organization.id
       const canPreview = await roleAllows({ organizationId, role: organization.role, permissions: { content: ['read'] } })
       if (locationId !== null && !product.locations.some(entry => entry.location_id === locationId)) {
-        throw new HTTPError({ statusCode: 404, statusMessage: 'Product not found at this location' })
+        throw new HTTPError({ statusCode: 404, message: 'Product not found at this location', data: { code: 'PRODUCT_LOCATION_NOT_FOUND', field: 'location_id' } })
       }
       const [hydrated] = await hydrateProductMedia(db, organizationId, [product], media.read(rows.slice(0, mediaEnd), organizationId))
       const { publicUrl, publicUrls } = await links.read(rows.slice(mediaEnd, linksEnd), db, env, product, organization.default_currency)

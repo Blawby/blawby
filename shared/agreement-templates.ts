@@ -1,3 +1,4 @@
+import { isRecord } from '~/utils/api-clients'
 import type { ProductKind } from '~/shared/product-details'
 
 /**
@@ -24,6 +25,22 @@ const KIND_LABELS: Partial<Record<ProductKind, Partial<Record<AgreementTemplateF
   service: { business_name: 'Firm name', client_name: 'Client name', client_email: 'Client email', host_name: 'Attorney', offering: 'Practice area', address: 'Office address', start_date: 'Consultation date', end_date: 'Consultation ends', price: 'Fee', deposit: 'Retainer in trust' },
   experience: { client_name: 'Participant name', client_email: 'Participant email', offering: 'Experience', start_date: 'Date', end_date: 'Ends' },
   table: { client_name: 'Guest name', offering: 'Reservation', start_date: 'Date', end_date: 'Ends' },
+}
+
+export function agreementTemplatePresentation(kind: ProductKind) {
+  return {
+    agreement_template_fields: AGREEMENT_TEMPLATE_FIELDS.map(key => ({ key, label: agreementTemplateFieldLabel(kind, key) })),
+    agreement_template_max_length: MAX_AGREEMENT_TEMPLATE_LENGTH,
+    agreement_template_intro: kind === 'service' ? 'What clients sign for this consultation.' : 'What guests sign for this listing.',
+  }
+}
+export type AgreementTemplateRead = ReturnType<typeof agreementTemplatePresentation> & { agreement_template_text: string | null }
+export function isAgreementTemplateRead(value: unknown): value is AgreementTemplateRead {
+  return isRecord(value) && (value.agreement_template_text === null || typeof value.agreement_template_text === 'string')
+    && typeof value.agreement_template_intro === 'string' && Boolean(value.agreement_template_intro.trim())
+    && typeof value.agreement_template_max_length === 'number' && Number.isSafeInteger(value.agreement_template_max_length) && value.agreement_template_max_length > 0
+    && Array.isArray(value.agreement_template_fields) && value.agreement_template_fields.length > 0
+    && value.agreement_template_fields.every(field => isRecord(field) && AGREEMENT_TEMPLATE_FIELDS.some(key => key === field.key) && typeof field.label === 'string' && Boolean(field.label.trim()))
 }
 
 /** The field's name as this kind of business says it. */

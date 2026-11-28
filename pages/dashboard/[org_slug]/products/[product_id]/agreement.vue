@@ -5,7 +5,7 @@
     </template>
     <UAlert v-if="p.loadError.value || error" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="p.loadError.value || error || ''" />
     <template v-if="product && loaded">
-      <p class="text-sm text-muted">What {{ guests }} sign for this {{ product.kind === 'service' ? 'consultation' : 'listing' }}.</p>
+      <p class="text-sm text-muted">{{ p.agreementTemplate.value?.agreement_template_intro }}</p>
       <URadioGroup v-model="mode" variant="card" class="mt-6" :items="modes" :disabled="busy" data-testid="agreement-mode" />
 
       <!-- A PDF every guest signs on their booking, as today. -->
@@ -21,10 +21,10 @@
       <!-- The business's own text, filled from each booking when it is sent. -->
       <template v-else-if="mode === 'template'">
         <div class="mt-6 flex flex-wrap gap-2" data-testid="template-fields">
-          <UButton v-for="field in AGREEMENT_TEMPLATE_FIELDS" :key="field" size="xs" color="neutral" variant="outline" :disabled="busy" :label="agreementTemplateFieldLabel(product.kind, field)" @click="insert(field)" />
+          <UButton v-for="field in p.agreementTemplate.value!.agreement_template_fields" :key="field.key" size="xs" color="neutral" variant="outline" :disabled="busy" :label="field.label" @click="insert(field.key)" />
         </div>
-        <UTextarea ref="editor" v-model="draft" class="mt-3 w-full" :disabled="busy" :rows="18" :maxlength="MAX_AGREEMENT_TEMPLATE_LENGTH" placeholder="Write your wording here. Choose a field above to fill it in from each booking." data-testid="template-text" />
-        <p class="mt-2 text-xs text-muted">{{ draft.length.toLocaleString() }} / {{ MAX_AGREEMENT_TEMPLATE_LENGTH.toLocaleString() }}. Start a line with # for a heading. Signature lines are added for each signer when you send it.</p>
+        <UTextarea ref="editor" v-model="draft" class="mt-3 w-full" :disabled="busy" :rows="18" :maxlength="p.agreementTemplate.value!.agreement_template_max_length" placeholder="Write your wording here. Choose a field above to fill it in from each booking." data-testid="template-text" />
+        <p class="mt-2 text-xs text-muted">{{ draft.length.toLocaleString() }} / {{ p.agreementTemplate.value!.agreement_template_max_length.toLocaleString() }}. Start a line with # for a heading. Signature lines are added for each signer when you send it.</p>
         <UButton class="mt-5 w-full justify-center" label="Save" color="neutral" size="lg" :loading="busy" :disabled="busy || !draft.trim() || draft === saved" data-testid="template-save" @click="saveTemplate" />
       </template>
 
@@ -37,7 +37,7 @@
 <script setup lang="ts">
 import { productEditorKey } from '~/components/dashboard/ProductEditorPage.vue'
 import { agreementLabel } from '~/shared/agreements'
-import { AGREEMENT_TEMPLATE_FIELDS, MAX_AGREEMENT_TEMPLATE_LENGTH, agreementTemplateFieldLabel, type AgreementTemplateField } from '~/shared/agreement-templates'
+import type { AgreementTemplateField } from '~/shared/agreement-templates'
 import { getErrorMessage } from '~/utils/errors'
 import { isRecord } from '~/utils/api-clients'
 
@@ -50,7 +50,6 @@ const router = useRouter()
 const dashboardApi = useDashboardApi()
 const product = computed(() => p.product.value)
 const label = computed(() => product.value ? agreementLabel(product.value.kind) : 'Agreement')
-const guests = computed(() => product.value?.kind === 'service' ? 'clients' : 'guests')
 const api = `/api/editor/organizations/${encodeURIComponent(p.organizationId)}`
 const templateApi = computed(() => `${api}/products/${encodeURIComponent(product.value!.id)}/agreement-template`)
 const { upload } = useMediaUpload(api)
@@ -70,21 +69,15 @@ const modes = computed(() => [
   { value: 'none', label: 'None', description: 'Send a document from a booking when you need one.' },
 ])
 
-const isTemplateAnswer = (value: unknown): value is { text: string | null } => isRecord(value) && (value.text === null || typeof value.text === 'string')
-
-async function load() {
-  error.value = ''
-  try {
-    const answer = await dashboardApi(templateApi.value, { validate: isTemplateAnswer })
-    saved.value = answer.text
-    draft.value = answer.text ?? ''
-    mode.value = answer.text !== null ? 'template' : product.value?.agreement ? 'pdf' : 'none'
-    loaded.value = true
-  } catch (failure) {
-    error.value = getErrorMessage(failure, 'The agreement could not be read')
-  }
+function load() {
+  const answer = p.agreementTemplate.value
+  if (!answer) { loaded.value = false; return }
+  saved.value = answer.agreement_template_text
+  draft.value = answer.agreement_template_text ?? ''
+  mode.value = answer.agreement_template_text !== null ? 'template' : product.value?.agreement ? 'pdf' : 'none'
+  loaded.value = true
 }
-watch(() => product.value?.id, id => { if (id) void load() }, { immediate: true })
+watch(p.agreementTemplate, load, { immediate: true })
 
 function insert(field: AgreementTemplateField) {
   const token = `{{${field}}}`
@@ -103,7 +96,7 @@ async function run(work: () => Promise<void>, message: string) {
   try {
     await work()
     await p.reload()
-    await load()
+    load()
   } catch (failure) {
     error.value = getErrorMessage(failure, message)
   } finally {
@@ -115,6 +108,7 @@ const placePdf = (assetId: string | null) => dashboardApi(`${api}/media/placemen
   method: 'PUT', validate: isRecord,
   body: { placement: { owner_type: 'product', owner_id: product.value!.id, slot: 'agreement' }, asset_id: assetId },
 })
+const isTemplateAnswer = (value: unknown): value is { text: string | null } => isRecord(value) && (value.text === null || typeof value.text === 'string')
 const putTemplate = (text: string | null) => dashboardApi(templateApi.value, { method: 'PUT', body: { text }, validate: isTemplateAnswer })
 
 // The listing has one agreement: the server removes an uploaded PDF in the same write.

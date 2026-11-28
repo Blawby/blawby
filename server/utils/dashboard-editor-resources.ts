@@ -1,3 +1,4 @@
+import { agreementTemplatePresentation } from '~/shared/agreement-templates'
 import { prepareAgreementTemplate } from '~/server/domain/agreement-templates'
 import { listMediaAssetsQuery, groupMediaPlacements, mediaPlacementsQuery, type MediaAsset } from '~/server/utils/media-asset-manager'
 import { dashboardLocationQuery, readDashboardMemberResources, type DashboardLocationContextRow, type DashboardOrganizationRow } from '~/server/utils/dashboard-context'
@@ -311,7 +312,9 @@ function prepareDashboardProductMetadata(organizationId: { sql: string }, produc
         previewUrl = url.toString()
       }
       return { success: true as const, product: hydrated!,
-        ...(template ? { agreement_template_text: await template.read(env, rows.at(-1)!) } : {}),
+        ...(template ? { agreement_template_text: await template.read(env, rows.at(-1)!),
+          ...agreementTemplatePresentation(product.kind),
+        } : {}),
         ...(access && organization.role.split(',').includes('owner') ? { listing_access: { staff_access_writes: staffAccessWritesEnabled(env), grants: listingAccessGrantsFromRows(rows[navigationEnd + 1 + (members?.queries.length ?? 0) + (schedule ? 1 : 0)]!.results) } } : {}),
         ...(members ? { member_options: members.read(rows.slice(navigationEnd + 1)) } : {}),
         ...(schedule ? { schedule: { location_id: concerns.scheduleLocation!, rules: rows[navigationEnd + 1 + (members?.queries.length ?? 0)]!.results as ProductAvailabilityRule[] } } : {}),

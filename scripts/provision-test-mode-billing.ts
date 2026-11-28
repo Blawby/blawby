@@ -15,6 +15,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
+import { parseArgs } from 'node:util'
 import Stripe from 'stripe'
 import { getBetterAuthStripePlans } from '../server/utils/better-auth-stripe.ts'
 
@@ -34,9 +35,13 @@ const d1 = <T>(sql: string): T[] => {
 const sqlString = (value: string) => `'${value.replaceAll("'", "''")}'`
 
 type Row = { id: string; referenceId: string; plan: string; stripeSubscriptionId: string | null; stripeCustomerId: string | null; name: string | null; organizationCustomerId: string | null }
+const { values } = parseArgs({ options: { 'organization-id': { type: 'string', multiple: true } }, strict: true })
+const organizations = values['organization-id']
+if (organizations?.some(id => !id.trim())) throw new Error('Provide non-empty organization IDs.')
 const rows = d1<Row>(`SELECT s.id, s.referenceId, s.plan, s.stripeSubscriptionId, s.stripeCustomerId, o.name, o.stripeCustomerId AS organizationCustomerId
   FROM subscription s LEFT JOIN organization o ON o.id = s.referenceId
- WHERE s.status NOT IN ('canceled', 'incomplete_expired') AND s.stripeSubscriptionId IS NOT NULL`)
+ WHERE s.status NOT IN ('canceled', 'incomplete_expired') AND s.stripeSubscriptionId IS NOT NULL
+   ${organizations ? `AND s.referenceId IN (${organizations.map(sqlString).join(',')})` : ''}`)
 
 // Each plan's price as the app configures Better Auth with it: the first entry is
 // an offered plan's current offer, and a retired plan's contract price, which is

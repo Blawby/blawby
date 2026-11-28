@@ -261,12 +261,12 @@ export function prepareDashboardProductRead(productId: string, editor = true, sa
     if (!product || product.organization_id !== context.organization.id) throw new HTTPError({ statusCode: 404, statusMessage: 'Product not found' })
     const document = await metadata.read(rows.slice(recordQueries.length, recordQueries.length + metadata.queries.length), product, locationId, context)
     if (!slots) return document
-    const calendar = slotCalendars(context.env, slots, rows.slice(recordQueries.length + metadata.queries.length)).get(productId)
-    if (!calendar) throw new HTTPError({ statusCode: 409, message: 'This offering has no session calendar', data: { code: 'NO_SESSION_CALENDAR', field: 'product.booking' } })
     const locations = document.locations!.filter(place => product.locations.some(binding => binding.location_id === place.id))
     for (const place of locations) if (!place.timezone || !isValidTimezone(place.timezone)) {
       throw new HTTPError({ statusCode: 409, message: `Set an IANA timezone for ${place.title} before opening its calendar`, data: { code: 'LOCATION_TIMEZONE_REQUIRED', field: 'locations.timezone', location_id: place.id } })
     }
+    const calendar = slotCalendars(context.env, slots, rows.slice(recordQueries.length + metadata.queries.length)).get(productId)
+    if (!calendar) throw new HTTPError({ statusCode: 409, message: 'This offering has no session calendar', data: { code: 'NO_SESSION_CALENDAR', field: 'product.booking' } })
     return { ...document, locations, calendar: { from: slots.fromInstant, to: slots.toInstant,
       sessions: scheduleSessions(calendar, await calendar.places(), slots) } }
   } }

@@ -1,3 +1,4 @@
+import { publishBusinessInvalidation } from '~/server/cloudflare/guest-inbox-events'
 import { SURCHARGE_POLICY } from '~/shared/billing-model'
 import { defineHandler, HTTPError } from 'nitro'
 import { dashboardOrgQueryParam, readDashboardMemberResources } from '~/server/utils/dashboard-context'
@@ -23,7 +24,10 @@ export default defineHandler(async (event) => {
   // owner and admin, per utils/organization-access.ts.
   await assertRoleAllows({ organizationId: organization.id, role: organization.role, permissions: { payments: ['integration'] } })
   let account = stripeConnectedAccountFromRow(rows[0]!.results[0])
-  if (account?.stripe_account_id && account.status !== 'ready') account = await refreshStripeConnectedAccount(db, paymentsStripe(env, account.livemode), account)
+  if (account?.stripe_account_id && account.status !== 'ready') {
+    account = await refreshStripeConnectedAccount(db, paymentsStripe(env, account.livemode), account)
+    await publishBusinessInvalidation(env, organization.id)
+  }
   const answer = (rows[1]!.results[0] as { country: string | null } | undefined)?.country
   const countries = STRIPE_CONNECT_ONBOARDING_COUNTRIES
   const suggested_country = answer && countries.includes(answer) ? answer : null

@@ -21,7 +21,7 @@ export default defineHandler(async event=>{
      mediaPlacementsQuery({ organizationId: { sql: 'mp.owner_id' }, ownerType: 'organization', owners, slot: 'logo' })]
  }
  const document: DashboardAuthRead = { queries: token => queries(dashboardSessionUserQuery(token)) }
- const session=await getAuthSession(event,env,{document})
+ const session=await getAuthSession(event,env,{document,forwardCookies:true})
  if(!session)throw new HTTPError({statusCode:401,statusMessage:'Sign in to view your organizations'})
  const [members, media] = document.results ?? await executeBatch(env.DB, queries({query:'?',params:[session.user.id]}), { operation: 'Read account workspaces' })
  const rows = members!.results as Array<{id:string;slug:string;name:string;vertical:string;default_currency:string;role:string;calendar_json:string}>

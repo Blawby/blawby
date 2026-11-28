@@ -4,12 +4,8 @@
       <p v-if="!dashboard.canUpdateBilling.value" class="mb-6 text-sm text-muted" data-testid="billing-owner-line">
         Only the organization owner can manage billing.<template v-if="owner"> Contact {{ owner }} to change or cancel your plan.</template>
       </p>
-      <UAlert v-if="billingError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(billingError, 'Failed to load billing')" />
+      <UAlert v-if="screenError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(screenError, 'Plan and billing could not be loaded')" />
       <p v-if="dashboard.hasFeature('stays') && homesPending" role="status" class="mb-6 text-sm text-muted">Loading home cost…</p>
-      <UAlert v-else-if="homesError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(homesError, 'Homes could not be loaded')" />
-      <UAlert v-if="servicesError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(servicesError, 'Services could not be loaded')" />
-      <UAlert v-if="methodsError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(methodsError, 'Payment methods could not be loaded')" />
-      <UAlert v-if="ownerError" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="getErrorMessage(ownerError, 'The owner could not be loaded')" />
       <UAlert v-if="errorMessage" class="mb-6" color="error" variant="soft" icon="i-lucide-triangle-alert" :description="errorMessage" />
       <UAlert v-if="successMessage" class="mb-6" color="success" variant="soft" icon="i-lucide-circle-check" :description="successMessage" />
 
@@ -80,13 +76,13 @@ const { formatExactDateTime } = useHumanTime()
 
 const organizationId = useDashboardOrganizationId()
 const { data: screen, error: screenError, status: screenStatus, refresh: refreshBilling } = await useOrganizationBillingScreen(organizationId)
+if (screenError.value) throw screenError.value
 const { plans, formatPrice, formatRecurring } = await usePlans(() => screen.value?.plans)
 const billing = computed(() => screen.value?.billing ?? null)
 const services = computed(() => screen.value?.services)
 const methods = computed(() => screen.value ? { payment_methods: screen.value.payment_methods } : null)
 const homes = computed(() => screen.value?.homes)
 const owner = computed(() => screen.value?.owner_name)
-const billingError = screenError, servicesError = screenError, methodsError = screenError, homesError = screenError, ownerError = screenError
 const homesPending = computed(() => screenStatus.value === 'pending')
 
 const errorMessage = ref('')
@@ -121,7 +117,7 @@ const planLine = computed(() => {
     if (status.cancelAtPeriodEnd) parts.push(`${planName.value} ends with the trial`)
     else if (scheduledPlan.value) parts.push(`Changes to ${nameOf(scheduledPlan.value.plan)} on ${formatExactDateTime(scheduledPlan.value.at)}`)
     // Only a card list that loaded can say there is no card; a failed load shows its own error above.
-    else if (methods.value && !methodsError.value && !card.value) parts.push(TRIAL_WITHOUT_CARD[trial.missing_payment_method](planName.value))
+    else if (methods.value && !screenError.value && !card.value) parts.push(TRIAL_WITHOUT_CARD[trial.missing_payment_method](planName.value))
   } else if (status.status === 'past_due') parts.push('Payment past due')
   else if (scheduledPlan.value) parts.push(`Changes to ${nameOf(scheduledPlan.value.plan)} on ${formatExactDateTime(scheduledPlan.value.at)}`)
   else if (status.periodEnd) parts.push(`${status.cancelAtPeriodEnd ? 'Ends' : 'Renews'} ${formatExactDateTime(status.periodEnd)}`)

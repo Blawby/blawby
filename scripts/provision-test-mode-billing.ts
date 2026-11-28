@@ -7,9 +7,11 @@
 // This gives every current subscription in the copy its test-mode equivalent in
 // the target's Stripe account: the same plan at the price Better Auth knows it by
 // (an offered plan's current price; a retired plan's own contract price) at
-// quantity 1 and the plan's metered prices, which carry no quantity, billed by
-// invoice so no card is needed. The rows are then pointed at those objects. A rerun finds the
-// objects it made before by the live IDs they carry, so nothing is duplicated.
+// quantity 1 and the plan's metered prices, which carry no quantity, charged
+// automatically to Stripe's test Visa as production charges its customers, so a
+// renewal is paid instead of leaving the copy past due. The rows are then pointed
+// at those objects. A rerun finds the objects it made before by the live IDs they
+// carry, so nothing is duplicated, and settles anything they left unpaid.
 //
 //   corepack yarn billing:test-mode
 
@@ -59,6 +61,29 @@ const readable = async (id: string): Promise<Stripe.Subscription | null> => {
 }
 const customerOf = (subscription: Stripe.Subscription) => typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
 
+// Stripe's test Visa as the customer's default card, kept across reruns.
+const testCard = async (customer: string) => {
+  const current = await stripe.customers.retrieve(customer)
+  if (current.deleted) throw new Error(`Customer ${customer} is deleted`)
+  const saved = current.invoice_settings.default_payment_method
+  if (saved) return typeof saved === 'string' ? saved : saved.id
+  const card = await stripe.paymentMethods.attach('pm_card_visa', { customer })
+  await stripe.customers.update(customer, { invoice_settings: { default_payment_method: card.id } })
+  return card.id
+}
+// An earlier run billed by invoice, which nobody paid, so renewals went past due:
+// charge the subscription to the test card and pay what it left open.
+const chargeAutomatically = async (subscription: Stripe.Subscription) => {
+  const card = await testCard(customerOf(subscription))
+  if (subscription.collection_method !== 'charge_automatically' || !subscription.default_payment_method) {
+    await stripe.subscriptions.update(subscription.id, { collection_method: 'charge_automatically', default_payment_method: card })
+  }
+  for await (const invoice of stripe.invoices.list({ subscription: subscription.id, status: 'open' })) {
+    const paid = await stripe.invoices.pay(invoice.id, { payment_method: card })
+    if (paid.status !== 'paid') throw new Error(`Invoice ${invoice.id} for ${subscription.id} is ${paid.status} after payment`)
+  }
+}
+
 let provisioned = 0
 for (const row of rows) {
   // D1 does not make the two updates below one transaction: a run that stopped
@@ -72,6 +97,11 @@ for (const row of rows) {
     if (row.organizationCustomerId !== row.stripeCustomerId) d1(`UPDATE organization SET stripeCustomerId = ${sqlString(row.stripeCustomerId)} WHERE id = ${sqlString(row.referenceId)}`)
     if (existing.metadata.subscriptionId && existing.metadata.subscriptionId !== row.id) throw new Error(`Subscription ${existing.id} belongs to a different Better Auth subscription`)
     if (!existing.metadata.subscriptionId) await stripe.subscriptions.update(existing.id, { metadata: { subscriptionId: row.id } })
+    // Only a subscription this script made is test billing to settle; a readable original is left as it is.
+    if ((existing.metadata.blawby_source_subscription ?? existing.metadata.krabiclaw_source_subscription) && (existing.collection_method !== 'charge_automatically' || existing.status === 'past_due')) {
+      await chargeAutomatically(existing)
+      console.log(`${row.name ?? row.referenceId}: ${existing.id} charged automatically and settled`)
+    }
     continue
   }
   const plan = plans.get(row.plan)
@@ -81,7 +111,7 @@ for (const row of rows) {
   // The plan's metered prices, as its Checkout adds them; what they bill is reported to their meters.
   const lineItems = (plan.lineItems ?? []).map(item => ({ price: item.price as string }))
   const source = { blawby_source_customer: row.stripeCustomerId, blawby_organization: row.referenceId }
-  // Invoice billing needs an address; example.com receives nothing.
+  // The test customer's receipts go to an address that receives nothing.
   const email = `test-mode-billing+${row.referenceId.toLowerCase().replace(/[^a-z0-9-]/g, '')}@example.com`
   const customers = await stripe.customers.search({
     query: `metadata['blawby_source_customer']:'${row.stripeCustomerId}' OR metadata['krabiclaw_source_customer']:'${row.stripeCustomerId}'`,
@@ -98,26 +128,38 @@ for (const row of rows) {
   if (subscriptions.has_more || active.length > 1) throw new Error(`Multiple test-mode subscriptions match ${row.referenceId}'s source subscription`)
   const subscription = active[0] ?? await stripe.subscriptions.create({
       customer: customer.id,
+      default_payment_method: await testCard(customer.id),
       items: [{ price: planPrice, quantity: 1 }, ...lineItems],
-      collection_method: 'send_invoice',
-      days_until_due: 30,
       metadata: { ...source, blawby_source_subscription: row.stripeSubscriptionId!, referenceId: row.referenceId, plan: row.plan },
-    }, { idempotencyKey: `test-mode-billing:subscription:v4:${row.stripeSubscriptionId}` })
+    }, { idempotencyKey: `test-mode-billing:subscription:v5:${row.stripeSubscriptionId}` })
   // A subscription found by its source ID is used only if it is the one made for this row.
-  if (customerOf(subscription) !== customer.id || subscription.metadata.referenceId !== row.referenceId || subscription.metadata.plan !== row.plan || (subscription.metadata.subscriptionId && subscription.metadata.subscriptionId !== row.id) || !['active', 'trialing', 'past_due'].includes(subscription.status)) {
+  if (customerOf(subscription) !== customer.id || subscription.metadata.referenceId !== row.referenceId || (subscription.metadata.subscriptionId && subscription.metadata.subscriptionId !== row.id) || !['active', 'trialing', 'past_due'].includes(subscription.status)) {
     throw new Error(`Test-mode subscription ${subscription.id} does not match ${row.referenceId}'s ${row.plan} subscription`)
   }
-  // One made by an earlier run is brought to this run's prices: the catalog may have changed since.
+  // One made by an earlier run is brought to this run's plan and prices: the copied row or the catalog may have changed since.
   const wanted: Array<{ price: string; quantity?: number }> = [{ price: planPrice, quantity: 1 }, ...lineItems]
   const has = subscription.items.data.map(item => ({ price: item.price.id, quantity: item.price.recurring?.usage_type === 'metered' ? undefined : item.quantity ?? 1 }))
   const key = (items: Array<{ price: string; quantity?: number }>) => items.map(item => `${item.price}×${item.quantity ?? 'metered'}`).sort().join(',')
-  if (key(has) !== key(wanted)) {
-    await stripe.subscriptions.update(subscription.id, { items: [...subscription.items.data.map(item => ({ id: item.id, deleted: true })), ...wanted], proration_behavior: 'none' })
+  if (key(has) !== key(wanted) || subscription.metadata.plan !== row.plan) {
+    // A retired plan's prices are inactive, and Stripe attaches only active ones; production's
+    // subscription kept them from before retirement, so each price and product is active just for this attach.
+    const prices = await Promise.all(wanted.map(item => stripe.prices.retrieve(item.price, { expand: ['product'] })))
+    const retiredProducts = [...new Set(prices.map(price => price.product as Stripe.Product).filter(product => !product.active).map(product => product.id))]
+    const retiredPrices = prices.filter(price => !price.active).map(price => price.id)
+    for (const product of retiredProducts) await stripe.products.update(product, { active: true })
+    for (const price of retiredPrices) await stripe.prices.update(price, { active: true })
+    try {
+      await stripe.subscriptions.update(subscription.id, { items: [...subscription.items.data.map(item => ({ id: item.id, deleted: true })), ...wanted], proration_behavior: 'none', metadata: { plan: row.plan } })
+    } finally {
+      for (const price of retiredPrices) await stripe.prices.update(price, { active: false })
+      for (const product of retiredProducts) await stripe.products.update(product, { active: false })
+    }
     console.log(`${row.name ?? row.referenceId}: ${subscription.id} brought to ${key(wanted)}`)
   }
   d1(`UPDATE subscription SET stripeCustomerId = ${sqlString(customer.id)}, stripeSubscriptionId = ${sqlString(subscription.id)}, stripeScheduleId = NULL WHERE id = ${sqlString(row.id)};
 UPDATE organization SET stripeCustomerId = ${sqlString(customer.id)} WHERE id = ${sqlString(row.referenceId)};`)
   if (!subscription.metadata.subscriptionId) await stripe.subscriptions.update(subscription.id, { metadata: { subscriptionId: row.id } })
+  await chargeAutomatically(subscription)
   provisioned++
   console.log(`${row.name ?? row.referenceId}: ${row.plan} → ${subscription.id}`)
 }
